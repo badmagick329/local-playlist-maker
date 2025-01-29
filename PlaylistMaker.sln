@@ -1,0 +1,36 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "src", "src", "{6A9DC57B-AB3F-4F12-B8F6-3AA9738C77D8}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlaylistMaker", "src\PlaylistMaker.Console\PlaylistMaker.csproj", "{17BC8CA8-09D7-4F6F-8CDF-6C7A20DC5C28}"
+EndProject
+Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "tests", "tests", "{0FFD3612-5907-4EAD-8C2A-EF28852577F3}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "PlaylistMaker.Tests", "tests\PlaylistMaker.Tests\PlaylistMaker.Tests.csproj", "{66D45633-E1CF-425F-9A7A-F6CF828CFFED}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{17BC8CA8-09D7-4F6F-8CDF-6C7A20DC5C28}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{17BC8CA8-09D7-4F6F-8CDF-6C7A20DC5C28}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{17BC8CA8-09D7-4F6F-8CDF-6C7A20DC5C28}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{17BC8CA8-09D7-4F6F-8CDF-6C7A20DC5C28}.Release|Any CPU.Build.0 = Release|Any CPU
+		{66D45633-E1CF-425F-9A7A-F6CF828CFFED}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{66D45633-E1CF-425F-9A7A-F6CF828CFFED}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{66D45633-E1CF-425F-9A7A-F6CF828CFFED}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{66D45633-E1CF-425F-9A7A-F6CF828CFFED}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(NestedProjects) = preSolution
+		{17BC8CA8-09D7-4F6F-8CDF-6C7A20DC5C28} = {6A9DC57B-AB3F-4F12-B8F6-3AA9738C77D8}
+		{66D45633-E1CF-425F-9A7A-F6CF828CFFED} = {0FFD3612-5907-4EAD-8C2A-EF28852577F3}
+	EndGlobalSection
+EndGlobal

@@ -1,0 +1,28 @@
+using YamlDotNet.Serialization;
+using YamlDotNet.Serialization.NamingConventions;
+
+namespace PlaylistMaker.Core;
+
+public class Config
+{
+    public string MusicVideoToAudioMap { get; set; }
+    public string MusicShowVideoToAudioMap { get; set; }
+    public string FlacsMegaPlaylist { get; set; }
+    public string FlacCacheFile { get; set; }
+}
+
+public class ConfigReader(string configPath)
+{
+    public string ConfigPath { get; init; } = configPath;
+
+    public Config ReadConfig()
+    {
+        IDeserializer deserializer = new DeserializerBuilder()
+            .WithNamingConvention(CamelCaseNamingConvention.Instance)
+            .Build();
+
+        string rawYaml = File.ReadAllText(ConfigPath);
+        Config config = deserializer.Deserialize<Config>(rawYaml);
+        return config;
+    }
+}
