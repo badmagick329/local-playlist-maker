@@ -9,8 +9,8 @@ namespace PlaylistMaker.Infrastructure;
 
 public class VorbisReader : IVorbisReader
 {
-    private IFlacPathsReader FlacsReader { get; init; }
-    private string CachePath { get; init; }
+    private IFlacPathsReader FlacsReader { get; }
+    private string CachePath { get; }
 
     private List<VorbisData> Data { get; set; } = [];
 

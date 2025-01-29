@@ -4,16 +4,16 @@ using PlaylistMaker.Core;
 
 namespace PlaylistMaker.Infrastructure;
 
-public class VideoToAudioMapReader : IVideoToAudioMapReader
+public class ImportedVideoToAudioMap : IImportedVideoToAudioMap
 {
     private readonly List<string> _fileNames;
 
-    public VideoToAudioMapReader(List<string> fileNames)
+    public ImportedVideoToAudioMap(List<string> fileNames)
     {
         _fileNames = fileNames;
     }
 
-    public Dictionary<string, string> ReadMapper()
+    public Dictionary<string, string> Import()
     {
         var jsonData = new Dictionary<string, string>();
         foreach (var fileName in _fileNames)

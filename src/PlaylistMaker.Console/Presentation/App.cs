@@ -6,17 +6,17 @@ namespace PlaylistMaker.Presentation;
 public class App
 {
     private readonly IVorbisReader _vorbisReader;
-    private readonly IVideoToAudioMapReader _videoToAudioMapper;
+    private readonly IImportedVideoToAudioMap _importedVideoToAudioMap;
     private readonly IUserInputReader _userInputReader;
     private readonly IPlaylistPlayer _flacPlaylistPlayer;
     private readonly IPlaylistPlayer _videoPlaylistPlayer;
 
-    public App(IVorbisReader reader, IVideoToAudioMapReader videoToAudioMapReader, IUserInputReader userInputReader,
+    public App(IVorbisReader reader, IImportedVideoToAudioMap importedVideoToAudioMap, IUserInputReader userInputReader,
         IPlaylistPlayer flacPlaylistPlayer,
         IPlaylistPlayer videoPlaylistPlayer)
     {
         _vorbisReader = reader;
-        _videoToAudioMapper = videoToAudioMapReader;
+        _importedVideoToAudioMap = importedVideoToAudioMap;
         _userInputReader = userInputReader;
         _flacPlaylistPlayer = flacPlaylistPlayer;
         _videoPlaylistPlayer = videoPlaylistPlayer;
@@ -59,7 +59,7 @@ public class App
     private void RunVideoPlaylistApp()
     {
         var fzfReader = new FzfReader();
-        var musicVideoList = new MusicVideoList(_vorbisReader, _videoToAudioMapper.ReadMapper());
+        var musicVideoList = new MusicVideoList(_vorbisReader, _importedVideoToAudioMap.Import());
         var missingPaths = musicVideoList.ReadAllPaths().Where(p => !File.Exists(p)).ToList();
         if (missingPaths.Count > 0)
         {

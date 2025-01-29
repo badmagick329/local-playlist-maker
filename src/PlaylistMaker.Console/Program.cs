@@ -22,7 +22,7 @@ static class Program
         var vorbisReader =
             new VorbisReader(flacPathsReader, Config.FlacCacheFile);
         var videoToAudioMapReader =
-            new VideoToAudioMapReader([
+            new ImportedVideoToAudioMap([
                 Config.MusicVideoToAudioMap, Config.MusicShowVideoToAudioMap
             ]);
         var app = new App(

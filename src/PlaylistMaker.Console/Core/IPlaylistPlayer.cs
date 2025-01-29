@@ -1,4 +1,4 @@
-﻿namespace PlaylistMaker.Application;
+﻿namespace PlaylistMaker.Core;
 
 public interface IPlaylistPlayer
 {
