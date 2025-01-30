@@ -3,7 +3,7 @@ using PlaylistMaker.Application;
 
 namespace PlaylistMaker.Presentation;
 
-public class FzfReader : IChoicesSelecter
+public class FzfSelector : IChoicesSelecter
 {
     public List<string> AskStringsContainedIn(string prompt, List<string> choices)
     {

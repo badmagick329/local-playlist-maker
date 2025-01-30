@@ -58,7 +58,7 @@ public class App
 
     private void RunVideoPlaylistApp()
     {
-        var fzfReader = new FzfReader();
+        var fzfSelector = new FzfSelector();
         var musicVideoList = new MusicVideoList(_vorbisReader, _importedVideoToAudioMap.Import());
         var missingPaths = musicVideoList.ReadAllPaths().Where(p => !File.Exists(p)).ToList();
         if (missingPaths.Count > 0)
@@ -72,7 +72,7 @@ public class App
             return;
         }
 
-        var view = new VideoPlaylistController(fzfReader, musicVideoList, _userInputReader);
+        var view = new VideoPlaylistController(fzfSelector, musicVideoList, _userInputReader);
         view.AskForVideosAndAudios(PlayVideosAndAudios);
     }
 

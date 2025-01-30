@@ -4,7 +4,7 @@ using PlaylistMaker.Infrastructure;
 
 namespace PlaylistMaker.Presentation;
 
-class PlaybackHandler
+class PlaybackPreProcessor
 {
     private readonly IMusicVideoList _musicVideoList;
     private readonly IPrimitivesEnquirer _userInputReader;
@@ -13,7 +13,7 @@ class PlaybackHandler
     private bool _oneVideoPerTrack;
     private int _maxInPlaylist;
 
-    public PlaybackHandler(IMusicVideoList musicVideoList, IPrimitivesEnquirer userInputReader)
+    public PlaybackPreProcessor(IMusicVideoList musicVideoList, IPrimitivesEnquirer userInputReader)
     {
         _musicVideoList = musicVideoList;
         _userInputReader = userInputReader;
@@ -69,19 +69,23 @@ class PlaybackHandler
     public List<string> PreProcessList(List<string> videos)
     {
         var temp = new List<string>();
+        // Handle video multiplier
         Enumerable.Range(0, _videoMultiplier).ToList().ForEach(_ => temp.AddRange(videos));
         videos = temp;
 
+        // Handle random play
         if (_randomPlay)
         {
             videos = videos.OrderBy(_ => Guid.NewGuid()).ToList();
         }
 
+        // Handle one video per track
         if (!_oneVideoPerTrack)
         {
             return videos;
         }
 
+        // Create video to flac mapping
         Dictionary<string, List<string>> flacToVideosMap = [];
         foreach (var video in videos)
         {
@@ -96,9 +100,12 @@ class PlaybackHandler
             }
         }
 
+        // Pick videos at random
         var rng = new Random();
         var query = flacToVideosMap.Values
             .Select(associatedVideos => associatedVideos[rng.Next(associatedVideos.Count)]);
+        
+        // Handle max in playlist
         if (_maxInPlaylist > 0)
         {
             query = query.Take(_maxInPlaylist);

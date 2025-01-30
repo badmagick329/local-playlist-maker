@@ -10,7 +10,7 @@ public class VideoPlaylistController
     private readonly IChoicesSelecter _choicesSelecter;
     private readonly IMusicVideoList _musicVideoList;
     private readonly DisplayedVideos _displayedVideos;
-    private readonly PlaybackHandler _playbackHandler;
+    private readonly PlaybackPreProcessor _playbackPreProcessor;
 
     public VideoPlaylistController(IChoicesSelecter choicesSelecter, IMusicVideoList musicVideoList,
         IUserInputReader userInputReader)
@@ -18,7 +18,7 @@ public class VideoPlaylistController
         _choicesSelecter = choicesSelecter;
         _musicVideoList = musicVideoList;
         _displayedVideos = new DisplayedVideos(_musicVideoList, userInputReader);
-        _playbackHandler = new PlaybackHandler(_musicVideoList, userInputReader);
+        _playbackPreProcessor = new PlaybackPreProcessor(_musicVideoList, userInputReader);
     }
 
     public void AskForVideosAndAudios(Action<(List<string> videos, List<string> audios)> callback)
@@ -33,7 +33,7 @@ public class VideoPlaylistController
                 return;
             }
 
-            if (_playbackHandler.TryUpdatePlayMethod(choices))
+            if (_playbackPreProcessor.TryUpdatePlayMethod(choices))
             {
                 continue;
             }
@@ -43,12 +43,12 @@ public class VideoPlaylistController
                 continue;
             }
 
-            if (!_playbackHandler.IsInvertedSelection(choices))
+            if (!_playbackPreProcessor.IsInvertedSelection(choices))
             {
                 _displayedVideos.SetWithoutActions(choices);
             }
 
-            var playbackVideos = _playbackHandler.PreProcessList(_displayedVideos.Videos);
+            var playbackVideos = _playbackPreProcessor.PreProcessList(_displayedVideos.Videos);
             callback((videos: playbackVideos.Select(c => _musicVideoList.VideoPathFor(c)).ToList(),
                 audios: playbackVideos.Select(c => _musicVideoList.AudioPathFor(c)).ToList()));
         }
