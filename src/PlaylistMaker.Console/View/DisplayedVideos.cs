@@ -46,6 +46,6 @@ public class DisplayedVideos
         return false;
     }
 
-    public void SetWithoutActions(List<string> choices) =>
-        Videos = VideoListActions.RemoveActionsFromList(choices);
+    public static List<string> GetWithoutActions(List<string> choices) =>
+        VideoListActions.RemoveActionsFromList(choices);
 }

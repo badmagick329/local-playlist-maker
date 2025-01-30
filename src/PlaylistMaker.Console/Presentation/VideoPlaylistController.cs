@@ -43,12 +43,11 @@ public class VideoPlaylistController
                 continue;
             }
 
-            if (!_playbackPreProcessor.IsInvertedSelection(choices))
-            {
-                _displayedVideos.SetWithoutActions(choices);
-            }
+            var selectedVideos = _playbackPreProcessor.IsInvertedSelection(choices)
+                ? DisplayedVideos.GetWithoutActions(choices)
+                : _displayedVideos.Videos;
 
-            var playbackVideos = _playbackPreProcessor.PreProcessList(_displayedVideos.Videos);
+            var playbackVideos = _playbackPreProcessor.PreProcessList(selectedVideos);
             callback((videos: playbackVideos.Select(c => _musicVideoList.VideoPathFor(c)).ToList(),
                 audios: playbackVideos.Select(c => _musicVideoList.AudioPathFor(c)).ToList()));
         }
