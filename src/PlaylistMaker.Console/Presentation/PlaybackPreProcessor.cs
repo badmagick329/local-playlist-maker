@@ -66,7 +66,7 @@ class PlaybackPreProcessor
         return false;
     }
 
-    public List<string> PreProcessList(List<string> videos)
+    public List<string> Process(List<string> videos)
     {
         var temp = new List<string>();
         // Handle video multiplier
@@ -104,7 +104,7 @@ class PlaybackPreProcessor
         var rng = new Random();
         var query = flacToVideosMap.Values
             .Select(associatedVideos => associatedVideos[rng.Next(associatedVideos.Count)]);
-        
+
         // Handle max in playlist
         if (_maxInPlaylist > 0)
         {
@@ -113,6 +113,4 @@ class PlaybackPreProcessor
 
         return query.ToList();
     }
-
-    public bool IsInvertedSelection(List<string> choices) => choices is [VideoListActions.InvertSelection];
 }

@@ -19,6 +19,7 @@ public class DisplayedVideos
     }
 
     public static bool IsExiting(List<string> choices) => choices is [VideoListActions.Back] or [VideoListActions.Quit];
+    public static bool IsInvertedSelection(List<string> choices) => choices is [VideoListActions.InvertSelection];
 
     public bool TryUpdateState(List<string> choices)
     {

@@ -2,7 +2,7 @@
 using PlaylistMaker.Application;
 using PlaylistMaker.Core;
 
-namespace PlaylistMaker.Presentation;
+namespace PlaylistMaker.Infrastructure;
 
 public class UserInputReader : IUserInputReader
 {

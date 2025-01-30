@@ -1,7 +1,7 @@
 ﻿using System.Diagnostics;
 using PlaylistMaker.Application;
 
-namespace PlaylistMaker.Presentation;
+namespace PlaylistMaker.Infrastructure;
 
 public class FzfSelector : IChoicesSelecter
 {
