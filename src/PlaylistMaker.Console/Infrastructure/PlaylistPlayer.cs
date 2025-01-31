@@ -5,9 +5,13 @@ using PlaylistMaker.Core;
 
 namespace PlaylistMaker.Infrastructure;
 
-public class FlacPlaylistPlayer : IPlaylistPlayer
+public class PlaylistPlayer : IPlaylistPlayer
 {
-    private string _playlistName;
+    private string PlaylistName { get; set; }
+    private PlaylistPlayerConfig Config { get; }
+
+
+    public PlaylistPlayer(PlaylistPlayerConfig config) => Config = config;
 
     public void Play(string playlistPath)
     {
@@ -15,9 +19,8 @@ public class FlacPlaylistPlayer : IPlaylistPlayer
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = @"C:\Program Files\foobar2000\foobar2000.exe",
-                Arguments = playlistPath,
-                WindowStyle = ProcessWindowStyle.Hidden,
+                FileName = Config.PlaylistCommand.Program,
+                Arguments = Config.PlaylistCommand.ParsedArguments(),
                 UseShellExecute = true,
                 CreateNoWindow = false
             }
@@ -32,12 +35,13 @@ public class FlacPlaylistPlayer : IPlaylistPlayer
             return;
         }
 
-        _playlistName = GenerateTimestampName();
-        File.WriteAllLines(_playlistName, trackPaths, encoding: Encoding.UTF8);
-        Play(_playlistName);
+        PlaylistName = GenerateTimestampName();
+        Config.PlaylistCommand.SetArgumentSubstitution(Config.PlaylistArgumentTemplate, PlaylistName);
+        File.WriteAllLines(PlaylistName, trackPaths, encoding: Encoding.UTF8);
+        Play(PlaylistName);
     }
 
-    private static string GenerateTimestampName()
+    private string GenerateTimestampName()
     {
         var now = DateTime.UtcNow
             .ToString(CultureInfo.InvariantCulture)
@@ -45,6 +49,6 @@ public class FlacPlaylistPlayer : IPlaylistPlayer
             .Replace(' ', '_')
             .Replace('\\', '-')
             .Replace('/', '-');
-        return Path.Combine("data", $"{now}_audios.m3u8");
+        return Path.Combine(Config.PlaylistDirectory, $"{now}{Config.PlaylistSuffix}");
     }
 }
