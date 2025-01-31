@@ -44,8 +44,8 @@ public class VideoPlaylistController
             }
 
             var selectedVideos = DisplayedVideos.IsInvertedSelection(choices)
-                ? DisplayedVideos.GetWithoutActions(choices)
-                : _displayedVideos.Videos;
+                ? _displayedVideos.Videos
+                : DisplayedVideos.GetWithoutActions(choices);
 
             var playbackVideos = _playbackPreProcessor.Process(selectedVideos);
             callback((videos: playbackVideos.Select(c => _musicVideoList.VideoPathFor(c)).ToList(),

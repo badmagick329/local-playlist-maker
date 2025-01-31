@@ -50,20 +50,21 @@ class VideoSorter
             VideoListActions.OrderByMTimeDesc => OrderListByMTime(videos, true),
             VideoListActions.OrderByArtist => OrderListByArtist(videos, false),
             VideoListActions.OrderByArtistDesc => OrderListByArtist(videos, true),
+            VideoListActions.OrderByReleaseDate => OrderListByReleaseDate(videos, false),
+            VideoListActions.OrderByReleaseDateDesc => OrderListByReleaseDate(videos, true),
             _ => throw new ArgumentOutOfRangeException()
         };
 
 
-    // ReSharper disable once MemberCanBeMadeStatic.Global
-    public List<string> OrderListByName(List<string> videos, bool descending) => descending
+    private static List<string> OrderListByName(List<string> videos, bool descending) => descending
         ? videos.OrderByDescending(v => v).ToList()
         : videos.OrderBy(v => v).ToList();
 
-    public List<string> OrderListByMTime(List<string> videos, bool descending) => descending
+    private List<string> OrderListByMTime(List<string> videos, bool descending) => descending
         ? videos.OrderByDescending(v => File.GetLastWriteTime(_musicVideoList.VideoPathFor(v))).ToList()
         : videos.OrderBy(v => File.GetLastWriteTime(_musicVideoList.VideoPathFor(v))).ToList();
 
-    public List<string> OrderListByArtist(List<string> videos, bool descending)
+    private List<string> OrderListByArtist(List<string> videos, bool descending)
     {
         var videoNameAndMusicVideo = new List<(string videoName, MusicVideo musicVideo)>();
         videos.ForEach(videoName =>
@@ -77,4 +78,8 @@ class VideoSorter
             .ThenBy(v => v.musicVideo.FullDate)
             .Select(v => v.videoName).ToList();
     }
+
+    private List<string> OrderListByReleaseDate(List<string> videos, bool descending) => descending
+        ? videos.OrderByDescending(v => _musicVideoList.MusicVideoFor(v).Track.FullDate).ToList()
+        : videos.OrderBy(v => _musicVideoList.MusicVideoFor(v).Track.FullDate).ToList();
 }
