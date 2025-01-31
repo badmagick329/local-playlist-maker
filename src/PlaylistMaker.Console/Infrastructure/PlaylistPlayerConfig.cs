@@ -5,6 +5,7 @@ namespace PlaylistMaker.Infrastructure;
 public class PlaylistPlayerConfig
 {
     public ICliCommand PlaylistCommand { get; set; }
+    public ICliCommand? SingleFileCommand { get; set; }
     private string _playlistArgumentTemplate;
 
     public string PlaylistArgumentTemplate
@@ -51,5 +52,12 @@ public class PlaylistPlayerConfig
 
             _playlistSuffix = value;
         }
+    }
+
+    public override string ToString()
+    {
+        return $"PlaylistCommand: {PlaylistCommand}, SingleFileCommand: {SingleFileCommand}, " +
+               $"PlaylistArgumentTemplate: {PlaylistArgumentTemplate}, PlaylistDirectory: {PlaylistDirectory}, " +
+               $"PlaylistSuffix: {PlaylistSuffix}";
     }
 }

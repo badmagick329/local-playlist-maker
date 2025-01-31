@@ -53,9 +53,11 @@ static class Program
     private static PlaylistPlayer CreateVideoPlaylistPlayer()
     {
         var videoPlaylistCommand = CliCommand.CreateFromList(Config.VideoPlaylistCommand);
+        var videoSingleFileCommand = CliCommand.CreateFromList(Config.VideoSingleFileCommand);
         var videoPlaylistPlayerConfig = new PlaylistPlayerConfig
         {
             PlaylistCommand = videoPlaylistCommand,
+            SingleFileCommand = videoSingleFileCommand,
             PlaylistDirectory = Config.DataDirectory,
             PlaylistSuffix = Config.VideoPlaylistSuffix,
             PlaylistArgumentTemplate = Config.PlaylistTemplate
@@ -66,9 +68,11 @@ static class Program
     private static PlaylistPlayer CreateAudioPlaylistPlayer()
     {
         var audioPlaylistCommand = CliCommand.CreateFromList(Config.AudioPlaylistCommand);
+        var audioSingleFileCommand = CliCommand.CreateFromList(Config.AudioSingleFileCommand);
         var audioPlaylistPlayerConfig = new PlaylistPlayerConfig
         {
             PlaylistCommand = audioPlaylistCommand,
+            SingleFileCommand = audioSingleFileCommand,
             PlaylistDirectory = Config.DataDirectory,
             PlaylistSuffix = Config.AudioPlaylistSuffix,
             PlaylistArgumentTemplate = Config.PlaylistTemplate

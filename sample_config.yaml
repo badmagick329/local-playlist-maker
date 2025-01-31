@@ -8,3 +8,5 @@ videoPlaylistCommand: ["mpv.exe","--fullscreen","--playlist={playlistPath}"]
 videoPlaylistSuffix: "_videos.txt"
 audioPlaylistCommand: ["C:\\Program Files\\foobar2000\\foobar2000.exe","{playlistPath}"]
 audioPlaylistSuffix: "_audios.m3u8"
+videoSingleFileCommand: ["mpv.exe","--no-terminal","--fullscreen","--screen=1"]
+audioSingleFileCommand: ["C:\\Program Files\\foobar2000\\foobar2000.exe"]

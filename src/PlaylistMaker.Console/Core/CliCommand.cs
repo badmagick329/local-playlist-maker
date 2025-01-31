@@ -29,8 +29,19 @@ public class CliCommand : ICliCommand
     public void SetArgumentSubstitution(string template, string concrete) =>
         _templateSubstitutions[template] = concrete;
 
-    public string ParsedArguments() =>
-        string.Join(' ',
+    public string ParsedArguments()
+    {
+        if (!Arguments.Any())
+        {
+            return string.Empty;
+        }
+
+        if (_templateSubstitutions.Count == 0)
+        {
+            return string.Join(' ', Arguments);
+        }
+
+        return string.Join(' ',
             Arguments.Select(arg =>
             {
                 var argBuilder = new StringBuilder(arg);
@@ -42,4 +53,21 @@ public class CliCommand : ICliCommand
                 return argBuilder.ToString();
             })
         );
+    }
+
+    public string ArgumentsWith(string arg)
+    {
+        var parsedArguments = ParsedArguments();
+        if (string.IsNullOrWhiteSpace(parsedArguments))
+        {
+            return arg;
+        }
+
+        return parsedArguments + $" {arg}";
+    }
+
+    public override string ToString()
+    {
+        return $"Program: {Program}, Arguments: {string.Join(' ', Arguments)}";
+    }
 }

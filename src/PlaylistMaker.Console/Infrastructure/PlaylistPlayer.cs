@@ -35,10 +35,37 @@ public class PlaylistPlayer : IPlaylistPlayer
             return;
         }
 
+        if (trackPaths.Count == 1 && Config.SingleFileCommand is not null)
+        {
+            PlaySingle(trackPaths[0]);
+            return;
+        }
+
         PlaylistName = GenerateTimestampName();
         Config.PlaylistCommand.SetArgumentSubstitution(Config.PlaylistArgumentTemplate, PlaylistName);
         File.WriteAllLines(PlaylistName, trackPaths, encoding: Encoding.UTF8);
         Play(PlaylistName);
+    }
+
+    private void PlaySingle(string trackPath)
+    {
+        if (Config.SingleFileCommand is null)
+        {
+            throw new InvalidOperationException("Single file command not set");
+        }
+
+        trackPath = $"\"{trackPath}\"";
+        var process = new Process
+        {
+            StartInfo = new ProcessStartInfo
+            {
+                FileName = Config.SingleFileCommand.Program,
+                Arguments = Config.SingleFileCommand.ArgumentsWith(trackPath),
+                UseShellExecute = true,
+                CreateNoWindow = false
+            }
+        };
+        process.Start();
     }
 
     private string GenerateTimestampName()
