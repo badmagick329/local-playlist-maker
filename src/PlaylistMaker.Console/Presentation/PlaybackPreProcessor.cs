@@ -38,7 +38,7 @@ class PlaybackPreProcessor
                     _userInputReader.AskInt($"Enter the number of times to repeat a video (max: 10)");
                 _videoMultiplier = maybeVideoMultiplier is null
                     ? 1
-                    : Math.Min(1, Math.Max(maybeVideoMultiplier.Value, 10));
+                    : Math.Max(1, Math.Min(maybeVideoMultiplier.Value, 10));
                 Console.WriteLine($"Video multiplier: {_videoMultiplier}");
                 return true;
             case VideoListActions.ToggleOneVideoPerTrack:
