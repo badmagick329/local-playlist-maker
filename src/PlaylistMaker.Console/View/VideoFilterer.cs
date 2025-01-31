@@ -44,6 +44,7 @@ class VideoFilterer
             case VideoListActions.ToggleConcertOnly:
             case VideoListActions.ToggleMusicShow:
             case VideoListActions.ToggleMusicShowOnly:
+            case VideoListActions.ToggleLiveAudio:
                 var actionResult = ParsedCategoryFilterAction.ReadAction(action) ??
                                    throw new InvalidOperationException($"Action {action} not found");
                 _categoryFilters.Update(actionResult);

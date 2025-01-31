@@ -61,6 +61,7 @@ public class CategoryFilters
                 CategoryFilterNames.Concert => musicVideos.Where(TypeOfMusicVideo.IsConcert).ToList(),
                 CategoryFilterNames.MusicShow => musicVideos.Where(TypeOfMusicVideo.IsMusicShow).ToList(),
                 CategoryFilterNames.MusicVideo => musicVideos.Where(TypeOfMusicVideo.IsMusicVideo).ToList(),
+                CategoryFilterNames.LiveAudio => musicVideos.Where(TypeOfMusicVideo.IsLiveAudio).ToList(),
                 _ => []
             };
 

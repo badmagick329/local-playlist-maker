@@ -26,6 +26,7 @@ public static class ParsedCategoryFilterAction
             VideoListActions.ToggleConcertOnly => (CategoryFilterNames.Concert, ToggleType.Only),
             VideoListActions.ToggleMusicShow => (CategoryFilterNames.MusicShow, ToggleType.Show),
             VideoListActions.ToggleMusicShowOnly => (CategoryFilterNames.MusicShow, ToggleType.Only),
+            VideoListActions.ToggleLiveAudio => (CategoryFilterNames.LiveAudio, ToggleType.Show),
             _ => null
         };
 }

@@ -27,7 +27,11 @@ public static partial class TypeOfMusicVideo
 
     public static bool IsMusicVideo(MusicVideo musicVideo) =>
         !IsBandLive(musicVideo) && !IsPerformance(musicVideo) && !IsChoreography(musicVideo) && !IsRelay(musicVideo) &&
-        !IsBeOriginal(musicVideo) && !IsFancam(musicVideo) && !IsConcert(musicVideo) && !IsMusicShow(musicVideo);
+        !IsBeOriginal(musicVideo) && !IsFancam(musicVideo) && !IsConcert(musicVideo) && !IsMusicShow(musicVideo) &&
+        !IsLiveAudio(musicVideo);
+
+    public static bool IsLiveAudio(MusicVideo musicVideo) =>
+        LiveAudioRegex().Match(Path.GetFileNameWithoutExtension(musicVideo.FilePath)).Success;
 
     public static bool IsMusicShow(MusicVideo musicVideo) => musicVideo.FilePath.Contains(@"Music\uhdkpop");
 
@@ -52,4 +56,7 @@ public static partial class TypeOfMusicVideo
 
     [GeneratedRegex(@"(?i).+\s+-\s+.+\(.*concert.*\)$")]
     private static partial Regex ConcertRegex();
+
+    [GeneratedRegex(@"(?i).+\s+-\s+.+\(.*live audio.*\)$")]
+    private static partial Regex LiveAudioRegex();
 }

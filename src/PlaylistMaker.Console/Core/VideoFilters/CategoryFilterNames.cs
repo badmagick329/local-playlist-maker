@@ -11,7 +11,9 @@ public static class CategoryFilterNames
         BeOriginal = "Be Original",
         Fancam = "Fancam",
         Concert = "Concert",
-        MusicShow = "Music Show";
+        MusicShow = "Music Show",
+        LiveAudio = "Live Audio";
+
 
     public static List<string> AllCategories() =>
     [
@@ -23,6 +25,7 @@ public static class CategoryFilterNames
         BeOriginal,
         Fancam,
         Concert,
-        MusicShow
+        MusicShow,
+        LiveAudio
     ];
 }
