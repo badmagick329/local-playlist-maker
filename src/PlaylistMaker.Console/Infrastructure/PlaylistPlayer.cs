@@ -41,7 +41,7 @@ public class PlaylistPlayer : IPlaylistPlayer
             return;
         }
 
-        PlaylistName = GenerateTimestampName();
+        PlaylistName = GenerateNonRandomName();
         Config.PlaylistCommand.SetArgumentSubstitution(Config.PlaylistArgumentTemplate, PlaylistName);
         File.WriteAllLines(PlaylistName, trackPaths, encoding: Encoding.UTF8);
         Play(PlaylistName);
@@ -78,4 +78,7 @@ public class PlaylistPlayer : IPlaylistPlayer
             .Replace('/', '-');
         return Path.Combine(Config.PlaylistDirectory, $"{now}{Config.PlaylistSuffix}");
     }
+
+    private string GenerateNonRandomName() =>
+        Path.Combine(Config.PlaylistDirectory, $"playlist_{Config.PlaylistSuffix}");
 }
