@@ -36,6 +36,12 @@ class VideoSorter
             case VideoListActions.OrderByArtistDesc:
                 _currentSorting = VideoListActions.OrderByArtistDesc;
                 return true;
+            case VideoListActions.OrderByReleaseDate:
+                _currentSorting = VideoListActions.OrderByReleaseDate;
+                return true;
+            case VideoListActions.OrderByReleaseDateDesc:
+                _currentSorting = VideoListActions.OrderByReleaseDateDesc;
+                return true;
             default:
                 return false;
         }
