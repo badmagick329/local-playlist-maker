@@ -51,7 +51,6 @@ class PlaybackPreProcessor
                     $"Enter the max number of songs in playlist (0=no limit)"
                 );
                 _maxInPlaylist = maybeSongNum is null ? 0 : Math.Max(0, maybeSongNum.Value);
-                Console.WriteLine($"Set _maxInPlaylist to {_maxInPlaylist}");
                 return true;
             // TODO: Move this into another handler?
             case VideoListActions.PrintTopArtistCount:
@@ -81,11 +80,10 @@ class PlaybackPreProcessor
             videos = ApplyRandom(videos);
         }
 
-        if (!_oneVideoPerTrack)
+        if (_oneVideoPerTrack)
         {
             videos = ApplyOneVideoPerTrack(videos);
         }
-
         return _maxInPlaylist > 0 ? videos.Take(_maxInPlaylist).ToList() : videos;
     }
 
