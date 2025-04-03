@@ -34,8 +34,9 @@ class PlaybackPreProcessor
                 Console.WriteLine($"Random play: {_randomPlay}");
                 return true;
             case VideoListActions.MultiAdd:
-                var maybeVideoMultiplier =
-                    _userInputReader.AskInt($"Enter the number of times to repeat a video (max: 10)");
+                var maybeVideoMultiplier = _userInputReader.AskInt(
+                    $"Enter the number of times to repeat a video (max: 10)"
+                );
                 _videoMultiplier = maybeVideoMultiplier is null
                     ? 1
                     : Math.Max(1, Math.Min(maybeVideoMultiplier.Value, 10));
@@ -46,9 +47,11 @@ class PlaybackPreProcessor
                 Console.WriteLine($"One video per track: {_oneVideoPerTrack}");
                 return true;
             case VideoListActions.MaxInPlaylist:
-                var maybeSongNum =
-                    _userInputReader.AskInt($"Enter the max number of songs in playlist (0=no limit)");
+                var maybeSongNum = _userInputReader.AskInt(
+                    $"Enter the max number of songs in playlist (0=no limit)"
+                );
                 _maxInPlaylist = maybeSongNum is null ? 0 : Math.Max(0, maybeSongNum.Value);
+                Console.WriteLine($"Set _maxInPlaylist to {_maxInPlaylist}");
                 return true;
             // TODO: Move this into another handler?
             case VideoListActions.PrintTopArtistCount:
@@ -68,25 +71,28 @@ class PlaybackPreProcessor
 
     public List<string> Process(List<string> videos)
     {
-        var temp = new List<string>();
-        // Handle video multiplier
-        Enumerable.Range(0, _videoMultiplier).ToList().ForEach(_ => temp.AddRange(videos));
-        videos = temp;
+        if (_videoMultiplier > 1)
+        {
+            videos = ApplyVideoMultiplier(videos);
+        }
 
-        // Handle random play
         if (_randomPlay)
         {
-            videos = videos.OrderBy(_ => Guid.NewGuid()).ToList();
+            videos = ApplyRandom(videos);
         }
 
-        // Handle one video per track
         if (!_oneVideoPerTrack)
         {
-            return videos;
+            videos = ApplyOneVideoPerTrack(videos);
         }
 
-        // Create video to flac mapping
-        Dictionary<string, List<string>> flacToVideosMap = [];
+        return _maxInPlaylist > 0 ? videos.Take(_maxInPlaylist).ToList() : videos;
+    }
+
+    private List<string> ApplyOneVideoPerTrack(List<string> videos)
+    {
+        // Group videos by audio
+        var flacToVideosMap = new Dictionary<string, List<string>>();
         foreach (var video in videos)
         {
             var audioPath = _musicVideoList.AudioPathFor(video);
@@ -102,15 +108,24 @@ class PlaybackPreProcessor
 
         // Pick videos at random
         var rng = new Random();
-        var query = flacToVideosMap.Values
-            .Select(associatedVideos => associatedVideos[rng.Next(associatedVideos.Count)]);
+        var newVideos = flacToVideosMap
+            .Values.Select(associatedVideos => associatedVideos[rng.Next(associatedVideos.Count)])
+            .ToList();
+        return newVideos;
+    }
 
-        // Handle max in playlist
-        if (_maxInPlaylist > 0)
-        {
-            query = query.Take(_maxInPlaylist);
-        }
+    private List<string> ApplyVideoMultiplier(List<string> videos)
+    {
+        var expandedVideos = new List<string>();
+        Enumerable
+            .Range(0, _videoMultiplier)
+            .ToList()
+            .ForEach(_ => expandedVideos.AddRange(videos));
+        return expandedVideos;
+    }
 
-        return query.ToList();
+    private List<string> ApplyRandom(List<string> videos)
+    {
+        return videos.OrderBy(_ => Guid.NewGuid()).ToList();
     }
 }
