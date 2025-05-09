@@ -10,7 +10,6 @@ public class PlaylistPlayer : IPlaylistPlayer
     private string PlaylistName { get; set; }
     private PlaylistPlayerConfig Config { get; }
 
-
     public PlaylistPlayer(PlaylistPlayerConfig config) => Config = config;
 
     public void Play(string playlistPath)
@@ -22,14 +21,15 @@ public class PlaylistPlayer : IPlaylistPlayer
                 FileName = Config.PlaylistCommand.Program,
                 Arguments = Config.PlaylistCommand.ParsedArguments(),
                 UseShellExecute = true,
-                CreateNoWindow = false
-            }
+                CreateNoWindow = false,
+            },
         };
         process.Start();
     }
 
     public void CreateAndPlay(List<string> trackPaths)
     {
+        trackPaths = trackPaths.Where(tp => Path.Exists(tp)).ToList();
         if (trackPaths.Count < 1)
         {
             return;
@@ -42,7 +42,10 @@ public class PlaylistPlayer : IPlaylistPlayer
         }
 
         PlaylistName = GenerateNonRandomName();
-        Config.PlaylistCommand.SetArgumentSubstitution(Config.PlaylistArgumentTemplate, PlaylistName);
+        Config.PlaylistCommand.SetArgumentSubstitution(
+            Config.PlaylistArgumentTemplate,
+            PlaylistName
+        );
         File.WriteAllLines(PlaylistName, trackPaths, encoding: Encoding.UTF8);
         Play(PlaylistName);
     }
@@ -62,16 +65,16 @@ public class PlaylistPlayer : IPlaylistPlayer
                 FileName = Config.SingleFileCommand.Program,
                 Arguments = Config.SingleFileCommand.ArgumentsWith(trackPath),
                 UseShellExecute = true,
-                CreateNoWindow = false
-            }
+                CreateNoWindow = false,
+            },
         };
         process.Start();
     }
 
     private string GenerateTimestampName()
     {
-        var now = DateTime.UtcNow
-            .ToString(CultureInfo.InvariantCulture)
+        var now = DateTime
+            .UtcNow.ToString(CultureInfo.InvariantCulture)
             .Replace(':', '_')
             .Replace(' ', '_')
             .Replace('\\', '-')

@@ -12,9 +12,13 @@ public class App
     private readonly IPlaylistPlayer _flacPlaylistPlayer;
     private readonly IPlaylistPlayer _videoPlaylistPlayer;
 
-    public App(IVorbisReader reader, IImportedVideoToAudioMap importedVideoToAudioMap, IUserInputReader userInputReader,
+    public App(
+        IVorbisReader reader,
+        IImportedVideoToAudioMap importedVideoToAudioMap,
+        IUserInputReader userInputReader,
         IPlaylistPlayer flacPlaylistPlayer,
-        IPlaylistPlayer videoPlaylistPlayer)
+        IPlaylistPlayer videoPlaylistPlayer
+    )
     {
         _vorbisReader = reader;
         _importedVideoToAudioMap = importedVideoToAudioMap;
@@ -61,7 +65,7 @@ public class App
     {
         var fzfSelector = new FzfSelector();
         var musicVideoList = new MusicVideoList(_vorbisReader, _importedVideoToAudioMap.Import());
-        var missingPaths = musicVideoList.ReadAllPaths().Where(p => !File.Exists(p)).ToList();
+        var missingPaths = musicVideoList.ReadVideoPath().Where(p => !File.Exists(p)).ToList();
         if (missingPaths.Count > 0)
         {
             Console.WriteLine("Missing paths:");

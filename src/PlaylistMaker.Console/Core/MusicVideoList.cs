@@ -10,10 +10,12 @@ public class MusicVideoList : IMusicVideoList
     {
         foreach (var (videoPath, audioPath) in mapper)
         {
-            var vorbisData = reader.VorbisDataFor(audioPath) ??
-                             throw new VideoPlayerException($"No vorbis data found for {audioPath}");
-            var track = TrackFactory.FromVorbisData(vorbisData) ??
-                        throw new VideoPlayerException($"Track is null. {audioPath}");
+            var vorbisData =
+                reader.VorbisDataFor(audioPath)
+                ?? throw new VideoPlayerException($"No vorbis data found for {audioPath}");
+            var track =
+                TrackFactory.FromVorbisData(vorbisData)
+                ?? throw new VideoPlayerException($"Track is null. {audioPath}");
             var musicVideo = new MusicVideo(videoPath, track);
             Videos.Add(Path.GetFileName(videoPath), musicVideo);
         }
@@ -31,15 +33,15 @@ public class MusicVideoList : IMusicVideoList
     public List<string> VideoList() => Videos.Keys.ToList();
 
     public List<string> ReadAllPaths() =>
-        Videos.Values
-            .SelectMany(v => new[] { v.FilePath, v.Track.FilePath })
-            .Distinct()
-            .ToList();
+        Videos.Values.SelectMany(v => new[] { v.FilePath, v.Track.FilePath }).Distinct().ToList();
+
+    public List<string> ReadVideoPath() =>
+        Videos.Values.Select(v => v.FilePath).Distinct().ToList();
 
     public IEnumerable<(string artist, int count)> TopArtists(int i)
     {
-        return Videos.Values
-            .GroupBy(v => v.Track.Artist)
+        return Videos
+            .Values.GroupBy(v => v.Track.Artist)
             .Select(g => (g.Key, g.Count()))
             .OrderByDescending(t => t.Item2)
             .Take(i);

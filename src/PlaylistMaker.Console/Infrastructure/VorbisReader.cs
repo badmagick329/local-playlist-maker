@@ -72,28 +72,23 @@ public class VorbisReader : IVorbisReader
 
         if (File.Exists((CachePath)))
         {
-            Data = JsonSerializer.Deserialize<List<VorbisData>>(
-                File.ReadAllText(CachePath), new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                }) ?? throw new FlacReaderException(
-                "Failed to deserialize cache file");
+            Data =
+                JsonSerializer.Deserialize<List<VorbisData>>(
+                    File.ReadAllText(CachePath),
+                    new JsonSerializerOptions { PropertyNameCaseInsensitive = true }
+                ) ?? throw new FlacReaderException("Failed to deserialize cache file");
 
             return;
         }
 
-
         var flacPaths = FlacsReader.ReadFlacPaths();
         Data = flacPaths
-            .Select(filePath => new
-                { filePath, comment = ReadVorbisComment(filePath) })
+            .Select(filePath => new { filePath, comment = ReadVorbisComment(filePath) })
             .Where(x => x.comment is not null)
-            .Select(x =>
-                CreateVorbisDataFromVorbisComment(x.filePath, x.comment!))
+            .Select(x => CreateVorbisDataFromVorbisComment(x.filePath, x.comment!))
             .ToList();
         Save();
     }
-
 
     private static VorbisComment? ReadVorbisComment(string file)
     {
@@ -108,40 +103,46 @@ public class VorbisReader : IVorbisReader
         }
     }
 
-
-    private VorbisData CreateVorbisDataFromVorbisCommentAndSave(string filePath,
-        VorbisComment vorbisComment)
+    private VorbisData CreateVorbisDataFromVorbisCommentAndSave(
+        string filePath,
+        VorbisComment vorbisComment
+    )
     {
-        var newVorbisData =
-            CreateVorbisDataFromVorbisComment(filePath, vorbisComment);
+        var newVorbisData = CreateVorbisDataFromVorbisComment(filePath, vorbisComment);
         Data.Add(newVorbisData);
         Save();
         return newVorbisData;
     }
 
-    private static VorbisData CreateVorbisDataFromVorbisComment(string filePath,
-        VorbisComment vorbisComment)
+    private static VorbisData CreateVorbisDataFromVorbisComment(
+        string filePath,
+        VorbisComment vorbisComment
+    )
     {
-        var releaseDate =
-            DateParser.TryParseReleaseDate(vorbisComment.Date.Value);
+        var releaseDate = DateParser.TryParseReleaseDate(vorbisComment.Date.Value);
         var date = releaseDate is not null ? releaseDate.AsString : "";
         var now = DateTime.Now.ToString(CultureInfo.InvariantCulture);
-        int trackNumber =
-            int.TryParse(vorbisComment.TrackNumber.Value, out var number)
-                ? number
-                : 1;
-        return new VorbisData(filePath, vorbisComment.Artist.Value,
+        int trackNumber = int.TryParse(vorbisComment.TrackNumber.Value, out var number)
+            ? number
+            : 1;
+        return new VorbisData(
+            filePath,
+            vorbisComment.Artist.Value,
             vorbisComment.Title.Value,
-            date, trackNumber, now);
+            date,
+            trackNumber,
+            now
+        );
     }
 
-    private void Save()  {
-        
+    private void Save()
+    {
         var parent = Directory.GetParent(CachePath);
-        if (parent is not null && !parent.Exists) {
+        if (parent is not null && !parent.Exists)
+        {
             Directory.CreateDirectory(parent.FullName);
         }
-        
-        File.WriteAllText(CachePath,
-        JsonSerializer.Serialize(Data), Encoding.UTF8);}
+
+        File.WriteAllText(CachePath, JsonSerializer.Serialize(Data), Encoding.UTF8);
+    }
 }
