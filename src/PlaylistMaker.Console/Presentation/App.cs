@@ -29,30 +29,7 @@ public class App
 
     public void Run()
     {
-        while (true)
-        {
-            Console.WriteLine("Choose an option:");
-            Console.WriteLine("1. Flac Playlist");
-            Console.WriteLine("2. Video Playlist");
-            Console.WriteLine("3. Quit");
-            var option = _userInputReader.AskInt("Enter option");
-
-            switch (option)
-            {
-                case 1:
-                    RunFlacPlaylistApp();
-                    return;
-                case 2:
-                    RunVideoPlaylistApp();
-                    return;
-                case 3:
-                    Environment.Exit(0);
-                    break;
-                default:
-                    Console.WriteLine("Invalid option");
-                    break;
-            }
-        }
+        RunVideoPlaylistApp();
     }
 
     private void RunFlacPlaylistApp()

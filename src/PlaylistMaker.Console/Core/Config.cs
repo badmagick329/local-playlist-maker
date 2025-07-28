@@ -6,8 +6,7 @@ namespace PlaylistMaker.Core;
 public class Config
 {
     public string DataDirectory { get; set; }
-    public string MusicVideoToAudioMap { get; set; }
-    public string MusicShowVideoToAudioMap { get; set; }
+    public List<string> MusicVideoToAudioMap { get; set; }
     public string FlacsMegaPlaylist { get; set; }
     public string FlacCacheFile { get; set; }
     public string PlaylistTemplate { get; set; }

@@ -1,10 +1,12 @@
 dataDirectory: data
-musicVideoToAudioMap: C:\path\to\avinfo.json
-musicShowVideoToAudioMap: C:\path\to\music_show\avinfo.json 
-flacsMegaPlaylist: C:\Music\audio_playlist.m3u8
+musicVideoToAudioMap:
+  - 'C:\path\to\avinfo.json'
+  - 'C:\path\to\music_show\avinfo.json'
+flacsMegaPlaylist: F:\Music\ALL.m3u8
+# flacsMegaPlaylist: G:\Music\ALL.m3u8
 flacCacheFile: flac_cache.json
 playlistTemplate: "{playlistPath}"
-videoPlaylistCommand: ["mpv.exe","--fullscreen","--playlist={playlistPath}"]
+videoPlaylistCommand: ["mpv.exe","--no-terminal","--fullscreen","--playlist={playlistPath}"]
 videoPlaylistSuffix: "_videos.txt"
 audioPlaylistCommand: ["C:\\Program Files\\foobar2000\\foobar2000.exe","{playlistPath}"]
 audioPlaylistSuffix: "_audios.m3u8"

@@ -31,15 +31,20 @@ static class Program
 
     private static void RunPlaylistMaker()
     {
-        var flacPathsReader =
-            new FlacPathsReader(
-                Config.FlacsMegaPlaylist, Config.MusicVideoToAudioMap);
-        var vorbisReader =
-            new VorbisReader(flacPathsReader, Path.Combine(Config.DataDirectory, Config.FlacCacheFile));
-        var videoToAudioMapReader =
-            new ImportedVideoToAudioMap([
-                Config.MusicVideoToAudioMap, Config.MusicShowVideoToAudioMap
-            ]);
+        if (Config.MusicVideoToAudioMap.Count < 1)
+        {
+            Console.WriteLine("MusicVideoToAudioMap is empty in config");
+            return;
+        }
+        var flacPathsReader = new FlacPathsReader(
+            Config.FlacsMegaPlaylist,
+            Config.MusicVideoToAudioMap[0]
+        );
+        var vorbisReader = new VorbisReader(
+            flacPathsReader,
+            Path.Combine(Config.DataDirectory, Config.FlacCacheFile)
+        );
+        var videoToAudioMapReader = new ImportedVideoToAudioMap(Config.MusicVideoToAudioMap);
         var app = new App(
             vorbisReader,
             videoToAudioMapReader,
@@ -60,7 +65,7 @@ static class Program
             SingleFileCommand = videoSingleFileCommand,
             PlaylistDirectory = Config.DataDirectory,
             PlaylistSuffix = Config.VideoPlaylistSuffix,
-            PlaylistArgumentTemplate = Config.PlaylistTemplate
+            PlaylistArgumentTemplate = Config.PlaylistTemplate,
         };
         return new PlaylistPlayer(videoPlaylistPlayerConfig);
     }
@@ -75,7 +80,7 @@ static class Program
             SingleFileCommand = audioSingleFileCommand,
             PlaylistDirectory = Config.DataDirectory,
             PlaylistSuffix = Config.AudioPlaylistSuffix,
-            PlaylistArgumentTemplate = Config.PlaylistTemplate
+            PlaylistArgumentTemplate = Config.PlaylistTemplate,
         };
         return new PlaylistPlayer(audioPlaylistPlayerConfig);
     }
