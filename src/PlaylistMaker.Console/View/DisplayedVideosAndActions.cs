@@ -4,22 +4,31 @@ using PlaylistMaker.Infrastructure;
 
 namespace PlaylistMaker.View;
 
-public class DisplayedVideos
+public class DisplayedVideosAndActions
 {
     public List<string> Videos { get; private set; }
 
     private readonly VideoSorter _videoSorter;
     private readonly VideoFilterer _videoFilterer;
 
-    public DisplayedVideos(IMusicVideoList musicVideoList, IDateRangeEnquirer dateRangeEnquirer)
+    public DisplayedVideosAndActions(
+        IMusicVideoList musicVideoList,
+        IDateRangeEnquirer dateRangeEnquirer
+    )
     {
         _videoSorter = new VideoSorter(musicVideoList);
         _videoFilterer = new VideoFilterer(musicVideoList, dateRangeEnquirer);
         Videos = _videoSorter.ToSorted(_videoFilterer.ToFiltered());
     }
 
-    public static bool IsExiting(List<string> choices) => choices is [VideoListActions.Back] or [VideoListActions.Quit];
-    public static bool IsInvertedSelection(List<string> choices) => choices is [VideoListActions.InvertSelection];
+    public static bool IsExiting(List<string> choices) =>
+        choices is [VideoListActions.Back] or [VideoListActions.Quit];
+
+    public static bool IsInvertedSelection(List<string> choices) =>
+        choices is [VideoListActions.InvertSelection];
+
+    public static bool IsSelectFromTxtFile(List<string> choices) =>
+        choices is [VideoListActions.SelectFromTxtFile];
 
     public bool TryUpdateState(List<string> choices)
     {

@@ -6,9 +6,9 @@ public class MusicVideoList : IMusicVideoList
 {
     private Dictionary<string, MusicVideo> Videos { get; set; } = [];
 
-    public MusicVideoList(IVorbisReader reader, Dictionary<string, string> mapper)
+    public MusicVideoList(IVorbisReader reader, Dictionary<string, string> videoAudioDictionary)
     {
-        foreach (var (videoPath, audioPath) in mapper)
+        foreach (var (videoPath, audioPath) in videoAudioDictionary)
         {
             var vorbisData =
                 reader.VorbisDataFor(audioPath)

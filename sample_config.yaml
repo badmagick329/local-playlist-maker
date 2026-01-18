@@ -12,3 +12,4 @@ audioPlaylistCommand: ["C:\\Program Files\\foobar2000\\foobar2000.exe","{playlis
 audioPlaylistSuffix: "_audios.m3u8"
 videoSingleFileCommand: ["mpv.exe","--no-terminal","--fullscreen","--screen=1"]
 audioSingleFileCommand: ["C:\\Program Files\\foobar2000\\foobar2000.exe"]
+playlistTxtFilePath: 'C:\path\to\playlist.txt'

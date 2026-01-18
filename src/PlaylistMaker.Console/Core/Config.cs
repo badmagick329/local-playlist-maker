@@ -16,6 +16,7 @@ public class Config
     public string AudioPlaylistSuffix { get; set; }
     public string[] VideoSingleFileCommand { get; set; }
     public string[] AudioSingleFileCommand { get; set; }
+    public string PlaylistTxtFilePath { get; set; }
 }
 
 public class ConfigReader(string configPath)

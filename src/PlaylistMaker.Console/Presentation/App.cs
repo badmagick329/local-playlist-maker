@@ -9,6 +9,7 @@ public class App
     private readonly IVorbisReader _vorbisReader;
     private readonly IImportedVideoToAudioMap _importedVideoToAudioMap;
     private readonly IUserInputReader _userInputReader;
+    private readonly IPlaylistTxtFileReader _playlistTxtFileReader;
     private readonly IPlaylistPlayer _flacPlaylistPlayer;
     private readonly IPlaylistPlayer _videoPlaylistPlayer;
 
@@ -16,6 +17,7 @@ public class App
         IVorbisReader reader,
         IImportedVideoToAudioMap importedVideoToAudioMap,
         IUserInputReader userInputReader,
+        IPlaylistTxtFileReader playlistTxtFileReader,
         IPlaylistPlayer flacPlaylistPlayer,
         IPlaylistPlayer videoPlaylistPlayer
     )
@@ -23,6 +25,7 @@ public class App
         _vorbisReader = reader;
         _importedVideoToAudioMap = importedVideoToAudioMap;
         _userInputReader = userInputReader;
+        _playlistTxtFileReader = playlistTxtFileReader;
         _flacPlaylistPlayer = flacPlaylistPlayer;
         _videoPlaylistPlayer = videoPlaylistPlayer;
     }
@@ -54,7 +57,12 @@ public class App
             return;
         }
 
-        var view = new VideoPlaylistController(fzfSelector, musicVideoList, _userInputReader);
+        var view = new VideoPlaylistController(
+            fzfSelector,
+            musicVideoList,
+            _userInputReader,
+            _playlistTxtFileReader
+        );
         view.AskForVideosAndAudios(PlayVideosAndAudios);
     }
 

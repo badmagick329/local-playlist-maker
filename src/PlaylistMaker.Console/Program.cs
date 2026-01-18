@@ -44,11 +44,13 @@ static class Program
             flacPathsReader,
             Path.Combine(Config.DataDirectory, Config.FlacCacheFile)
         );
+        var playlistTxtFileReader = new PlaylistTxtFileReader(Config.PlaylistTxtFilePath);
         var videoToAudioMapReader = new ImportedVideoToAudioMap(Config.MusicVideoToAudioMap);
         var app = new App(
             vorbisReader,
             videoToAudioMapReader,
             new UserInputReader(),
+            playlistTxtFileReader,
             CreateAudioPlaylistPlayer(),
             CreateVideoPlaylistPlayer()
         );

@@ -27,31 +27,24 @@ class VideoFilterer
         switch (action)
         {
             case VideoListActions.ToggleMusicVideo:
-            case VideoListActions.ToggleMusicVideoOnly:
             case VideoListActions.ToggleBandLive:
-            case VideoListActions.ToggleBandLiveOnly:
             case VideoListActions.TogglePerformance:
-            case VideoListActions.TogglePerformanceOnly:
             case VideoListActions.ToggleChoreography:
-            case VideoListActions.ToggleChoreographyOnly:
             case VideoListActions.ToggleRelay:
-            case VideoListActions.ToggleRelayOnly:
             case VideoListActions.ToggleBeOriginal:
-            case VideoListActions.ToggleBeOriginalOnly:
             case VideoListActions.ToggleFancam:
-            case VideoListActions.ToggleFancamOnly:
             case VideoListActions.ToggleConcert:
-            case VideoListActions.ToggleConcertOnly:
             case VideoListActions.ToggleMusicShow:
-            case VideoListActions.ToggleMusicShowOnly:
             case VideoListActions.ToggleLiveAudio:
-                var actionResult = ParsedCategoryFilterAction.ReadAction(action) ??
-                                   throw new InvalidOperationException($"Action {action} not found");
+                var actionResult =
+                    ParsedCategoryFilterAction.ReadAction(action)
+                    ?? throw new InvalidOperationException($"Action {action} not found");
                 _categoryFilters.Update(actionResult);
                 return true;
             case VideoListActions.ReleaseDateFilter:
-                var releaseDateInput =
-                    _dateRangeEnquirer.AskDateRangeOrSingleDate("Enter date or range to filter tracks by");
+                var releaseDateInput = _dateRangeEnquirer.AskDateRangeOrSingleDate(
+                    "Enter date or range to filter tracks by"
+                );
                 if (_dateFilters.TryUpdateTrackReleaseDate(releaseDateInput))
                 {
                     return true;
@@ -60,8 +53,9 @@ class VideoFilterer
                 break;
 
             case VideoListActions.VideoDateFilter:
-                var videoDateInput =
-                    _dateRangeEnquirer.AskDateRangeOrSingleDate("Enter date or range to filter tracks by");
+                var videoDateInput = _dateRangeEnquirer.AskDateRangeOrSingleDate(
+                    "Enter date or range to filter tracks by"
+                );
                 if (_dateFilters.TryUpdateVideoReleaseDate(videoDateInput))
                 {
                     return true;
@@ -78,7 +72,6 @@ class VideoFilterer
 
         return false;
     }
-
 
     public List<string> ToFiltered()
     {

@@ -9,47 +9,73 @@ public class VideoPlaylistController
 {
     private readonly IChoicesSelecter _choicesSelecter;
     private readonly IMusicVideoList _musicVideoList;
-    private readonly DisplayedVideos _displayedVideos;
+    private readonly DisplayedVideosAndActions _displayedVideos;
     private readonly PlaybackPreProcessor _playbackPreProcessor;
+    private readonly IPlaylistTxtFileReader _playlistTxtFileReader;
 
-    public VideoPlaylistController(IChoicesSelecter choicesSelecter, IMusicVideoList musicVideoList,
-        IUserInputReader userInputReader)
+    public VideoPlaylistController(
+        IChoicesSelecter choicesSelecter,
+        IMusicVideoList musicVideoList,
+        IUserInputReader userInputReader,
+        IPlaylistTxtFileReader playlistTxtFileReader
+    )
     {
         _choicesSelecter = choicesSelecter;
         _musicVideoList = musicVideoList;
-        _displayedVideos = new DisplayedVideos(_musicVideoList, userInputReader);
+        _displayedVideos = new DisplayedVideosAndActions(_musicVideoList, userInputReader);
         _playbackPreProcessor = new PlaybackPreProcessor(_musicVideoList, userInputReader);
+        _playlistTxtFileReader = playlistTxtFileReader;
     }
 
-    public void AskForVideosAndAudios(Action<(List<string> videos, List<string> audios)> callback)
+    public void AskForVideosAndAudios(
+        Action<(List<string> videos, List<string> audios)> onVideosAndAudiosSelected
+    )
     {
         while (true)
         {
             var videosWithActions = VideoListActions.AddActionsToList(_displayedVideos.Videos);
             var choices = _choicesSelecter.AskStringsContainedIn(videosWithActions);
 
-            if (DisplayedVideos.IsExiting(choices))
+            if (DisplayedVideosAndActions.IsExiting(choices))
             {
                 return;
             }
 
-            if (_playbackPreProcessor.TryUpdatePlayMethod(choices))
+            if (TryProcessActions(choices))
             {
                 continue;
             }
 
-            if (_displayedVideos.TryUpdateState(choices))
-            {
-                continue;
-            }
+            var playbackVideos = GetPlaybackVideos(choices);
 
-            var selectedVideos = DisplayedVideos.IsInvertedSelection(choices)
-                ? _displayedVideos.Videos
-                : DisplayedVideos.GetWithoutActions(choices);
-
-            var playbackVideos = _playbackPreProcessor.Process(selectedVideos);
-            callback((videos: playbackVideos.Select(c => _musicVideoList.VideoPathFor(c)).ToList(),
-                audios: playbackVideos.Select(c => _musicVideoList.AudioPathFor(c)).ToList()));
+            onVideosAndAudiosSelected(
+                (
+                    videos: playbackVideos.Select(c => _musicVideoList.VideoPathFor(c)).ToList(),
+                    audios: playbackVideos.Select(c => _musicVideoList.AudioPathFor(c)).ToList()
+                )
+            );
         }
+    }
+
+    private bool TryProcessActions(List<string> choices) =>
+        _playbackPreProcessor.TryUpdatePlayMethod(choices)
+        || _displayedVideos.TryUpdateState(choices);
+
+    private List<string> GetPlaybackVideos(List<string> choices)
+    {
+        List<string> selectedVideos;
+
+        if (DisplayedVideosAndActions.IsSelectFromTxtFile(choices))
+        {
+            selectedVideos = _playlistTxtFileReader.Read();
+        }
+        else
+        {
+            selectedVideos = DisplayedVideosAndActions.IsInvertedSelection(choices)
+                ? _displayedVideos.Videos
+                : DisplayedVideosAndActions.GetWithoutActions(choices);
+        }
+
+        return _playbackPreProcessor.Process(selectedVideos);
     }
 }
