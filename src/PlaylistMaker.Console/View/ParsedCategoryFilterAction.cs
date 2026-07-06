@@ -23,6 +23,7 @@ public static class ParsedCategoryFilterAction
             VideoListActions.ToggleFancam => (CategoryFilterNames.Fancam, ToggleType.Show),
             VideoListActions.ToggleConcert => (CategoryFilterNames.Concert, ToggleType.Show),
             VideoListActions.ToggleMusicShow => (CategoryFilterNames.MusicShow, ToggleType.Show),
+            VideoListActions.ToggleRemix => (CategoryFilterNames.Remix, ToggleType.Show),
             VideoListActions.ToggleLiveAudio => (CategoryFilterNames.LiveAudio, ToggleType.Show),
             _ => null,
         };

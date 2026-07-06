@@ -60,6 +60,7 @@ public class CategoryFilters
                 CategoryFilterNames.Fancam => musicVideos.Where(TypeOfMusicVideo.IsFancam).ToList(),
                 CategoryFilterNames.Concert => musicVideos.Where(TypeOfMusicVideo.IsConcert).ToList(),
                 CategoryFilterNames.MusicShow => musicVideos.Where(TypeOfMusicVideo.IsMusicShow).ToList(),
+                CategoryFilterNames.Remix => musicVideos.Where(TypeOfMusicVideo.IsRemix).ToList(),
                 CategoryFilterNames.MusicVideo => musicVideos.Where(TypeOfMusicVideo.IsMusicVideo).ToList(),
                 CategoryFilterNames.LiveAudio => musicVideos.Where(TypeOfMusicVideo.IsLiveAudio).ToList(),
                 _ => []

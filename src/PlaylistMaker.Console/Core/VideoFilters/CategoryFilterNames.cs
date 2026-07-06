@@ -12,6 +12,7 @@ public static class CategoryFilterNames
         Fancam = "Fancam",
         Concert = "Concert",
         MusicShow = "Music Show",
+        Remix = "Remix",
         LiveAudio = "Live Audio";
 
 
@@ -26,6 +27,7 @@ public static class CategoryFilterNames
         Fancam,
         Concert,
         MusicShow,
+        Remix,
         LiveAudio
     ];
 }

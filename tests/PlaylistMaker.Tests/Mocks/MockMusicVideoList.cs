@@ -49,6 +49,7 @@ static class MockVideoPaths
             .Concat(Performance())
             .Concat(Choreography())
             .Concat(Relay())
+            .Concat(Remix())
             .Concat(Fancam())
             .Concat(Concert())
             .Concat(BandLive())
@@ -64,6 +65,12 @@ static class MockVideoPaths
         [@"F:\Music\MVs\230529 LE SSERAFIM - Eve, Psych and Bluebeard's Wife Relay.mkv"];
 
     public static IEnumerable<string> BeOriginal() => [@"F:\Music\MVs\230412 IVE - I am Be Original.mkv"];
+
+    public static IEnumerable<string> Remix() =>
+    [
+        @"D:\Music\Areia MVs\240101 ARTMS - Birth (Remix).mp4",
+        @"D:\Music\Areia MVs\240102 Loossemble - Girls' Night (Areia Remix).webm",
+    ];
 
     public static IEnumerable<string> Fancam() =>
     [

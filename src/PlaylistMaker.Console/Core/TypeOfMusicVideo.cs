@@ -25,10 +25,13 @@ public static partial class TypeOfMusicVideo
     public static bool IsConcert(MusicVideo musicVideo) =>
         ConcertRegex().Match(Path.GetFileNameWithoutExtension(musicVideo.FilePath)).Success;
 
+    public static bool IsRemix(MusicVideo musicVideo) =>
+        RemixRegex().Match(Path.GetFileNameWithoutExtension(musicVideo.FilePath)).Success;
+
     public static bool IsMusicVideo(MusicVideo musicVideo) =>
         !IsBandLive(musicVideo) && !IsPerformance(musicVideo) && !IsChoreography(musicVideo) && !IsRelay(musicVideo) &&
         !IsBeOriginal(musicVideo) && !IsFancam(musicVideo) && !IsConcert(musicVideo) && !IsMusicShow(musicVideo) &&
-        !IsLiveAudio(musicVideo);
+        !IsRemix(musicVideo) && !IsLiveAudio(musicVideo);
 
     public static bool IsLiveAudio(MusicVideo musicVideo) =>
         LiveAudioRegex().Match(Path.GetFileNameWithoutExtension(musicVideo.FilePath)).Success;
@@ -56,6 +59,9 @@ public static partial class TypeOfMusicVideo
 
     [GeneratedRegex(@"(?i).+\s+-\s+.+\(.*concert.*\)$")]
     private static partial Regex ConcertRegex();
+
+    [GeneratedRegex(@"(?i).+\s+-\s+.+\((areia\s+)?remix\)$")]
+    private static partial Regex RemixRegex();
 
     [GeneratedRegex(@"(?i).+\s+-\s+.+\(.*live audio.*\)$")]
     private static partial Regex LiveAudioRegex();

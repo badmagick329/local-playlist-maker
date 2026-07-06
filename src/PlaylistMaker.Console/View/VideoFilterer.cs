@@ -35,6 +35,7 @@ class VideoFilterer
             case VideoListActions.ToggleFancam:
             case VideoListActions.ToggleConcert:
             case VideoListActions.ToggleMusicShow:
+            case VideoListActions.ToggleRemix:
             case VideoListActions.ToggleLiveAudio:
                 var actionResult =
                     ParsedCategoryFilterAction.ReadAction(action)

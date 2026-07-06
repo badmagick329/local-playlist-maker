@@ -193,6 +193,7 @@ public class CategoryFiltersTests
             { CategoryFilterNames.Fancam, TypeOfMusicVideo.IsFancam },
             { CategoryFilterNames.Concert, TypeOfMusicVideo.IsConcert },
             { CategoryFilterNames.MusicShow, TypeOfMusicVideo.IsMusicShow },
+            { CategoryFilterNames.Remix, TypeOfMusicVideo.IsRemix },
         };
     }
 
@@ -209,6 +210,7 @@ public class CategoryFiltersTests
             { VideoListActions.ToggleFancam, TypeOfMusicVideo.IsFancam },
             { VideoListActions.ToggleConcert, TypeOfMusicVideo.IsConcert },
             { VideoListActions.ToggleMusicShow, TypeOfMusicVideo.IsMusicShow },
+            { VideoListActions.ToggleRemix, TypeOfMusicVideo.IsRemix },
         };
     }
 }
