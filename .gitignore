@@ -296,3 +296,4 @@ __pycache__/
 *.exe
 *.m3u8
 data/*
+notes/
