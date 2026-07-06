@@ -17,13 +17,13 @@ public class CategoryFiltersTests
 
     [Theory]
     [MemberData(nameof(FiltersStateOnlyToggleData))]
-    public void FiltersState_Filters_WhenShowOnlyIsToggled(string action, Func<MusicVideo, bool> predicate)
+    public void FiltersState_Filters_WhenShowOnlyIsToggled(string category, Func<MusicVideo, bool> predicate)
     {
         var musicVideoList = new MockMusicVideoList();
         var videoList = musicVideoList.VideoList();
         var musicVideos = videoList.Select(musicVideoList.MusicVideoFor).ToList();
         var filterState = new CategoryFilters();
-        var actionResult = ParsedCategoryFilterAction.ReadAction(action) ?? throw new InvalidOperationException();
+        var actionResult = (category, ToggleType.Only);
         filterState.Update(actionResult);
         var filteredVideos =
             filterState
@@ -43,7 +43,7 @@ public class CategoryFiltersTests
             }
         }
 
-        actionResult = ParsedCategoryFilterAction.ReadAction(action) ?? throw new InvalidOperationException();
+        actionResult = (category, ToggleType.Only);
         filterState.Update(actionResult);
         filteredVideos =
             filterState
@@ -58,7 +58,7 @@ public class CategoryFiltersTests
 
     [Theory]
     [MemberData(nameof(FiltersStateOnlyToggleData))]
-    public void FiltersState_SelectivelyFilters_WhenShowOnlyIsToggled(string action, Func<MusicVideo, bool> predicate)
+    public void FiltersState_SelectivelyFilters_WhenShowOnlyIsToggled(string category, Func<MusicVideo, bool> predicate)
     {
         var musicVideoList = new MockMusicVideoList();
         var videoList = musicVideoList.VideoList();
@@ -79,7 +79,7 @@ public class CategoryFiltersTests
         }
 
         // Toggle show with action
-        var actionResult = ParsedCategoryFilterAction.ReadAction(action) ?? throw new InvalidOperationException();
+        var actionResult = (category, ToggleType.Only);
         filterState.Update(actionResult);
         filteredVideos =
             filterState
@@ -100,7 +100,7 @@ public class CategoryFiltersTests
         }
 
         // Toggle show with action again
-        actionResult = ParsedCategoryFilterAction.ReadAction(action) ?? throw new InvalidOperationException();
+        actionResult = (category, ToggleType.Only);
         filterState.Update(actionResult);
         filteredVideos =
             filterState
@@ -184,15 +184,15 @@ public class CategoryFiltersTests
     {
         return new TheoryData<string, Func<MusicVideo, bool>>
         {
-            { VideoListActions.ToggleMusicVideoOnly, TypeOfMusicVideo.IsMusicVideo },
-            { VideoListActions.ToggleBandLiveOnly, TypeOfMusicVideo.IsBandLive },
-            { VideoListActions.TogglePerformanceOnly, TypeOfMusicVideo.IsPerformance },
-            { VideoListActions.ToggleChoreographyOnly, TypeOfMusicVideo.IsChoreography },
-            { VideoListActions.ToggleRelayOnly, TypeOfMusicVideo.IsRelay },
-            { VideoListActions.ToggleBeOriginalOnly, TypeOfMusicVideo.IsBeOriginal },
-            { VideoListActions.ToggleFancamOnly, TypeOfMusicVideo.IsFancam },
-            { VideoListActions.ToggleConcertOnly, TypeOfMusicVideo.IsConcert },
-            { VideoListActions.ToggleMusicShowOnly, TypeOfMusicVideo.IsMusicShow },
+            { CategoryFilterNames.MusicVideo, TypeOfMusicVideo.IsMusicVideo },
+            { CategoryFilterNames.BandLive, TypeOfMusicVideo.IsBandLive },
+            { CategoryFilterNames.Performance, TypeOfMusicVideo.IsPerformance },
+            { CategoryFilterNames.Choreography, TypeOfMusicVideo.IsChoreography },
+            { CategoryFilterNames.Relay, TypeOfMusicVideo.IsRelay },
+            { CategoryFilterNames.BeOriginal, TypeOfMusicVideo.IsBeOriginal },
+            { CategoryFilterNames.Fancam, TypeOfMusicVideo.IsFancam },
+            { CategoryFilterNames.Concert, TypeOfMusicVideo.IsConcert },
+            { CategoryFilterNames.MusicShow, TypeOfMusicVideo.IsMusicShow },
         };
     }
 
