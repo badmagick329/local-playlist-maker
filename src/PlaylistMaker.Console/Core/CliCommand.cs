@@ -31,29 +31,20 @@ public class CliCommand : ICliCommand
 
     public string ParsedArguments()
     {
-        if (!Arguments.Any())
-        {
-            return string.Empty;
-        }
-
-        if (_templateSubstitutions.Count == 0)
-        {
-            return string.Join(' ', Arguments);
-        }
-
-        return string.Join(' ',
-            Arguments.Select(arg =>
-            {
-                var argBuilder = new StringBuilder(arg);
-                foreach (var substitution in _templateSubstitutions)
-                {
-                    argBuilder.Replace(substitution.Key, substitution.Value);
-                }
-
-                return argBuilder.ToString();
-            })
-        );
+        return string.Join(' ', ParsedArgumentList());
     }
+
+    public IReadOnlyList<string> ParsedArgumentList() =>
+        Arguments.Select(arg =>
+        {
+            var argBuilder = new StringBuilder(arg);
+            foreach (var substitution in _templateSubstitutions)
+            {
+                argBuilder.Replace(substitution.Key, substitution.Value);
+            }
+
+            return argBuilder.ToString();
+        }).ToList();
 
     public string ArgumentsWith(string arg)
     {

@@ -17,6 +17,8 @@ public class Config
     public string[] VideoSingleFileCommand { get; set; }
     public string[] AudioSingleFileCommand { get; set; }
     public string PlaylistTxtFilePath { get; set; }
+    public bool PlaybackHistoryEnabled { get; set; }
+    public int PlaybackHistoryMinimumWatchedPercent { get; set; } = 50;
 }
 
 public class ConfigReader(string configPath)

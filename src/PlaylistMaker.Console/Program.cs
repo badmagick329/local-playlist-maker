@@ -46,15 +46,40 @@ static class Program
         );
         var playlistTxtFileReader = new PlaylistTxtFileReader(Config.PlaylistTxtFilePath);
         var videoToAudioMapReader = new ImportedVideoToAudioMap(Config.MusicVideoToAudioMap);
+        var playbackHistory = CreatePlaybackHistory();
         var app = new App(
             vorbisReader,
             videoToAudioMapReader,
             new UserInputReader(),
             playlistTxtFileReader,
             CreateAudioPlaylistPlayer(),
-            CreateVideoPlaylistPlayer()
+            CreateVideoPlaylistPlayer(),
+            playbackHistory
         );
         app.Run();
+    }
+
+    private static PlaybackHistoryService? CreatePlaybackHistory()
+    {
+        if (!Config.PlaybackHistoryEnabled)
+        {
+            return null;
+        }
+
+        if (!File.Exists(PlaybackHistoryService.MpvScriptPath))
+        {
+            Console.WriteLine(
+                $"Playback history is enabled but its mpv script is missing: {PlaybackHistoryService.MpvScriptPath}"
+            );
+            return null;
+        }
+
+        var history = new PlaybackHistoryService(
+            Config.DataDirectory,
+            Config.PlaybackHistoryMinimumWatchedPercent
+        );
+        history.RecoverIncompleteSessions();
+        return history;
     }
 
     private static PlaylistPlayer CreateVideoPlaylistPlayer()

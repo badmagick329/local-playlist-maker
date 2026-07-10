@@ -12,6 +12,7 @@ public class App
     private readonly IPlaylistTxtFileReader _playlistTxtFileReader;
     private readonly IPlaylistPlayer _flacPlaylistPlayer;
     private readonly IPlaylistPlayer _videoPlaylistPlayer;
+    private readonly PlaybackHistoryService? _playbackHistory;
 
     public App(
         IVorbisReader reader,
@@ -19,7 +20,8 @@ public class App
         IUserInputReader userInputReader,
         IPlaylistTxtFileReader playlistTxtFileReader,
         IPlaylistPlayer flacPlaylistPlayer,
-        IPlaylistPlayer videoPlaylistPlayer
+        IPlaylistPlayer videoPlaylistPlayer,
+        PlaybackHistoryService? playbackHistory = null
     )
     {
         _vorbisReader = reader;
@@ -28,6 +30,7 @@ public class App
         _playlistTxtFileReader = playlistTxtFileReader;
         _flacPlaylistPlayer = flacPlaylistPlayer;
         _videoPlaylistPlayer = videoPlaylistPlayer;
+        _playbackHistory = playbackHistory;
     }
 
     public void Run()
@@ -66,10 +69,21 @@ public class App
         view.AskForVideosAndAudios(PlayVideosAndAudios);
     }
 
-    private void PlayVideosAndAudios((List<string> videos, List<string> audios) videosAndAudios)
+    private void PlayVideosAndAudios(PlaybackSelection selection)
     {
-        var (videos, audios) = videosAndAudios;
+        var videos = selection.Videos.Select(video => video.FilePath).ToList();
+        var audios = selection.Videos.Select(video => video.Track.FilePath).ToList();
+        var historySession = _playbackHistory?.CreateSession(selection.Videos, selection.Source);
+
         _flacPlaylistPlayer.CreateAndPlay(audios);
-        _videoPlaylistPlayer.CreateAndPlay(videos);
+        var mpvProcessId = _videoPlaylistPlayer.CreateAndPlay(
+            videos,
+            historySession is null ? null : _playbackHistory!.MpvArgumentsFor(historySession)
+        );
+
+        if (historySession is not null && mpvProcessId is not null)
+        {
+            _playbackHistory!.RecordMpvProcess(historySession, mpvProcessId.Value);
+        }
     }
 }

@@ -28,7 +28,7 @@ public class VideoPlaylistController
     }
 
     public void AskForVideosAndAudios(
-        Action<(List<string> videos, List<string> audios)> onVideosAndAudiosSelected
+        Action<PlaybackSelection> onVideosAndAudiosSelected
     )
     {
         while (true)
@@ -46,14 +46,7 @@ public class VideoPlaylistController
                 continue;
             }
 
-            var playbackVideos = GetPlaybackVideos(choices);
-
-            onVideosAndAudiosSelected(
-                (
-                    videos: playbackVideos.Select(c => _musicVideoList.VideoPathFor(c)).ToList(),
-                    audios: playbackVideos.Select(c => _musicVideoList.AudioPathFor(c)).ToList()
-                )
-            );
+            onVideosAndAudiosSelected(GetPlaybackSelection(choices));
         }
     }
 
@@ -61,21 +54,28 @@ public class VideoPlaylistController
         _playbackPreProcessor.TryUpdatePlayMethod(choices)
         || _displayedVideos.TryUpdateState(choices);
 
-    private List<string> GetPlaybackVideos(List<string> choices)
+    private PlaybackSelection GetPlaybackSelection(List<string> choices)
     {
         List<string> selectedVideos;
+        string source;
 
         if (DisplayedVideosAndActions.IsSelectFromTxtFile(choices))
         {
             selectedVideos = _playlistTxtFileReader.Read();
+            source = "text-playlist";
         }
         else
         {
             selectedVideos = DisplayedVideosAndActions.IsInvertedSelection(choices)
                 ? _displayedVideos.Videos
                 : DisplayedVideosAndActions.GetWithoutActions(choices);
+            source = "interactive-selection";
         }
 
-        return _playbackPreProcessor.Process(selectedVideos);
+        var playbackVideos = _playbackPreProcessor.Process(selectedVideos);
+        return new PlaybackSelection(
+            playbackVideos.Select(_musicVideoList.MusicVideoFor).ToList(),
+            source
+        );
     }
 }

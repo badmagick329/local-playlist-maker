@@ -14,31 +14,23 @@ public class PlaylistPlayer : IPlaylistPlayer
 
     public void Play(string playlistPath)
     {
-        var process = new Process
-        {
-            StartInfo = new ProcessStartInfo
-            {
-                FileName = Config.PlaylistCommand.Program,
-                Arguments = Config.PlaylistCommand.ParsedArguments(),
-                UseShellExecute = true,
-                CreateNoWindow = false,
-            },
-        };
-        process.Start();
+        StartProcess(Config.PlaylistCommand);
     }
 
-    public void CreateAndPlay(List<string> trackPaths)
+    public int? CreateAndPlay(
+        List<string> trackPaths,
+        IReadOnlyList<string>? additionalArguments = null
+    )
     {
         trackPaths = trackPaths.Where(tp => Path.Exists(tp)).ToList();
         if (trackPaths.Count < 1)
         {
-            return;
+            return null;
         }
 
         if (trackPaths.Count == 1 && Config.SingleFileCommand is not null)
         {
-            PlaySingle(trackPaths[0]);
-            return;
+            return PlaySingle(trackPaths[0], additionalArguments);
         }
 
         PlaylistName = GenerateNonRandomName();
@@ -47,28 +39,54 @@ public class PlaylistPlayer : IPlaylistPlayer
             PlaylistName
         );
         File.WriteAllLines(PlaylistName, trackPaths, encoding: Encoding.UTF8);
-        Play(PlaylistName);
+        return StartProcess(Config.PlaylistCommand, additionalArguments);
     }
 
-    private void PlaySingle(string trackPath)
+    private int PlaySingle(string trackPath, IReadOnlyList<string>? additionalArguments)
     {
         if (Config.SingleFileCommand is null)
         {
             throw new InvalidOperationException("Single file command not set");
         }
 
-        trackPath = $"\"{trackPath}\"";
+        return StartProcess(Config.SingleFileCommand, additionalArguments, trackPath);
+    }
+
+    private static int StartProcess(
+        ICliCommand command,
+        IReadOnlyList<string>? additionalArguments = null,
+        string? trailingArgument = null
+    )
+    {
         var process = new Process
         {
             StartInfo = new ProcessStartInfo
             {
-                FileName = Config.SingleFileCommand.Program,
-                Arguments = Config.SingleFileCommand.ArgumentsWith(trackPath),
-                UseShellExecute = true,
+                FileName = command.Program,
+                UseShellExecute = false,
                 CreateNoWindow = false,
             },
         };
+        foreach (var argument in command.ParsedArgumentList())
+        {
+            process.StartInfo.ArgumentList.Add(argument);
+        }
+
+        if (additionalArguments is not null)
+        {
+            foreach (var argument in additionalArguments)
+            {
+                process.StartInfo.ArgumentList.Add(argument);
+            }
+        }
+
+        if (!string.IsNullOrEmpty(trailingArgument))
+        {
+            process.StartInfo.ArgumentList.Add(trailingArgument);
+        }
+
         process.Start();
+        return process.Id;
     }
 
     private string GenerateTimestampName()

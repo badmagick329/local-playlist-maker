@@ -3,5 +3,5 @@
 public interface IPlaylistPlayer
 {
     void Play(string playlistPath);
-    void CreateAndPlay(List<string> trackPaths);
+    int? CreateAndPlay(List<string> trackPaths, IReadOnlyList<string>? additionalArguments = null);
 }
