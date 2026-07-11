@@ -14,6 +14,7 @@ public class PlaybackHistoryService
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         PropertyNameCaseInsensitive = true,
     };
+    private static readonly UTF8Encoding Utf8WithoutBom = new(false);
 
     private readonly string _sessionsDirectory;
     private readonly string _historyPath;
@@ -153,7 +154,7 @@ public class PlaybackHistoryService
         File.WriteAllText(
             ManifestPathFor(manifest.SessionId),
             JsonSerializer.Serialize(manifest, JsonOptions),
-            Encoding.UTF8
+            Utf8WithoutBom
         );
     }
 
@@ -165,7 +166,7 @@ public class PlaybackHistoryService
         File.AppendAllText(
             _historyPath,
             JsonSerializer.Serialize(historyEvent, JsonOptions) + Environment.NewLine,
-            Encoding.UTF8
+            Utf8WithoutBom
         );
     }
 
