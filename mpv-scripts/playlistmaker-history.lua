@@ -21,8 +21,10 @@ if not manifest_file then
     return
 end
 
-local manifest = utils.parse_json(manifest_file:read("*a"))
+local manifest_text = manifest_file:read("*a")
 manifest_file:close()
+manifest_text = manifest_text:gsub("^\239\187\191", "")
+local manifest = utils.parse_json(manifest_text)
 if not manifest or manifest.sessionId ~= config.session_id or not manifest.entries then
     mp.msg.error("PlaylistMaker history: invalid session manifest")
     return
