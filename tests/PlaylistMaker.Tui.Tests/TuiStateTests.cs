@@ -52,19 +52,6 @@ public class TuiStateTests : IDisposable
     }
 
     [Fact]
-    public void TrackRowsPrioritizeIdentityReleaseDateAndVideoCount()
-    {
-        var state = CreateState();
-
-        var row = state.FormatRow(Assert.Single(state.Rows));
-
-        Assert.Contains("Artist — Song", row);
-        Assert.Contains("2024-01-01 · 1 video", row);
-        Assert.DoesNotContain("plays", row);
-        Assert.DoesNotContain("never", row);
-    }
-
-    [Fact]
     public void VisibleTracksQueueOneDefaultWhileMatchingVideosQueuesEveryVariant()
     {
         var state = CreateState();

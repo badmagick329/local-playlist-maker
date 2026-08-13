@@ -77,7 +77,7 @@ public class MainWindowHeadlessTests : IDisposable
     }
 
     [Fact]
-    public void LibraryRefreshReplacesItsSourceOnce()
+    public void LibraryRefreshKeepsItsCustomSourceAndRaisesOneReset()
     {
         var (window, state) = CreateWindow(250);
         using (window)
@@ -93,8 +93,8 @@ public class MainWindowHeadlessTests : IDisposable
             search.Text = "w";
 
             Assert.Equal(250, state.Rows.Count);
-            Assert.Equal(1, sourceChanges);
-            Assert.InRange(collectionChanges, 0, 1);
+            Assert.Equal(0, sourceChanges);
+            Assert.Equal(1, collectionChanges);
         }
     }
 

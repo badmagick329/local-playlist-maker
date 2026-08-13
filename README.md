@@ -38,11 +38,15 @@ dotnet run --project .\src\PlaylistMaker.Console\PlaylistMaker.csproj
 - The TUI starts in navigation mode. Press `/` to enter search mode, type a fuzzy query normally, then press `Enter` or `Esc` to return to navigation mode.
 - Use arrows, `J`/`K`, or `Ctrl+J`/`Ctrl+K` to navigate. Use `Enter` or `L` to expand a track, `H` to collapse it, and `Space` to add or remove its selected video from the queue.
 - Press `C` to focus categories, use `J`/`K` and `Space` to change them, then press `C` or `Esc` to return to tracks.
+- Press `S` for the sort picker, `F` for date/category filters, `O` for playback options, and `Q` to focus or view the queue.
+- Press `:` for the searchable command palette. It contains every infrequent action previously exposed through the menu bar.
 - Use `Tab` to move between filters, results, details, and queue panes.
-- Use `Delete` and `Alt+Up`/`Alt+Down` to edit the queue.
+- Use `Delete` and `Shift+J`/`Shift+K` to edit and reorder the queue without relying on `Alt` shortcuts.
 - Press `Ctrl+Enter` to launch the queue, `Ctrl+O` for playback options, `Ctrl+R` to reload mappings/history, and `F1` for help.
 
-The initial filter shows official music videos only. The Filters menu enables performances, music shows, remixes, live videos, and date ranges. On narrow terminals, the same filters, details, and queue remain available as menu dialogs.
+Track rows keep artist/title on the left and pin quiet release-date and matching-video-count metadata to the right. Counts are shown as bare numbers, long names are truncated before the metadata, and queued or expanded variants use distinct colours.
+
+The initial filter shows official music videos only. `C` enables additional video categories, while `F` provides date filters and reset actions. On narrow terminals, filters, details, and the queue remain available through the same keyboard-driven overlays.
 
 ## Playback history
 

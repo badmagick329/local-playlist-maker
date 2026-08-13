@@ -128,6 +128,8 @@ public sealed class TuiState
 
     public LibraryRow? RowAt(int index) => index >= 0 && index < Rows.Count ? Rows[index] : null;
 
+    public bool IsExpanded(string trackId) => _expandedTracks.Contains(trackId);
+
     public void QueueVisibleTracks() => Queue.AddRange(Results.Select(result => result.DefaultVariant));
 
     public void QueueMatchingVideos() => Queue.AddRange(Results.SelectMany(result => result.EligibleVariants));
@@ -136,23 +138,6 @@ public sealed class TuiState
     {
         History = HistoryReader.Read();
         BuildRows();
-    }
-
-    public string FormatRow(LibraryRow row)
-    {
-        if (!row.IsTrack)
-        {
-            var variant = row.Variant!;
-            var variantQueued = Queue.Contains(variant) ? "●" : " ";
-            var history = History.ForVideo(variant.VideoPath);
-            return $"  {variantQueued} {variant.VideoDate,-10} {variant.Category,-13} {variant.FileName}  · {history.PlayedCount} plays/{history.SkippedCount} skips";
-        }
-
-        var expanded = _expandedTracks.Contains(row.Result.Group.Id) ? "▼" : "▶";
-        var trackQueued = Queue.Contains(row.Result.DefaultVariant) ? "●" : " ";
-        var videoLabel = row.Result.EligibleVariants.Count == 1 ? "video" : "videos";
-        return $"{expanded} {trackQueued} {row.Result.Group.Track.Artist} — {row.Result.Group.Track.Title}  "
-               + $"[{row.Result.Group.Track.Date} · {row.Result.EligibleVariants.Count} {videoLabel}]";
     }
 
     public string DetailsFor(LibraryRow? row)

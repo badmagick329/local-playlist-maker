@@ -14,7 +14,6 @@ public sealed class MainWindow : Runnable
 {
     private readonly TuiServices _services;
     private readonly TuiState _state;
-    private readonly MenuBar _menuBar;
     private readonly Label _searchLabel;
     private readonly TextField _search;
     private readonly FrameView _filtersFrame;
@@ -27,8 +26,8 @@ public sealed class MainWindow : Runnable
     private readonly Label _details;
     private readonly Label _statusText;
     private ObservableCollection<string> _categoryRows = [];
-    private ObservableCollection<string> _libraryRows = [];
     private ObservableCollection<string> _queueRows = [];
+    private readonly LibraryListDataSource _librarySource;
     private readonly HistoryFileWatcher _historyWatcher;
     private IKeyboard? _applicationKeyboard;
     private string _statusMessage = "Ready.";
@@ -39,18 +38,19 @@ public sealed class MainWindow : Runnable
     {
         _services = services;
         _state = services.State;
+        _librarySource = new LibraryListDataSource(_state);
         Title = "PlaylistMaker TUI";
+        AssignHotKeys = false;
 
-        _menuBar = BuildMenu();
-        _menuBar.TabStop = TabBehavior.NoStop;
         var statusBar = BuildStatusBar();
         var content = new View
         {
-            Y = Pos.Bottom(_menuBar),
+            Y = 0,
             Width = Dim.Fill(),
             Height = Dim.Fill(statusBar),
             CanFocus = true,
             TabStop = TabBehavior.TabGroup,
+            AssignHotKeys = false,
         };
 
         _searchLabel = new Label { Text = "Search:", X = 1, Y = 0 };
@@ -75,11 +75,13 @@ public sealed class MainWindow : Runnable
             Width = 24,
             Height = Dim.Fill(),
             Visible = false,
+            AssignHotKeys = false,
         };
         _categoryList = new SearchAwareListView
         {
             Width = Dim.Fill(),
             Height = Dim.Fill(),
+            AssignHotKeys = false,
             CanFocus = true,
             TabStop = TabBehavior.TabStop,
             SchemeName = nameof(Schemes.Base),
@@ -122,7 +124,7 @@ public sealed class MainWindow : Runnable
             TabStop = TabBehavior.TabStop,
             SchemeName = nameof(Schemes.Base),
         };
-        _libraryList.SetSource(_libraryRows);
+        _libraryList.Source = _librarySource;
         _libraryList.Accepted += (_, _) => ToggleExpansion();
         _libraryList.ValueChanged += (_, _) => RefreshDetails();
         ((SearchAwareListView)_libraryList).BeforeKeyDown = key =>
@@ -163,6 +165,7 @@ public sealed class MainWindow : Runnable
             Width = Dim.Fill(),
             Height = Dim.Percent(55),
             Visible = false,
+            AssignHotKeys = false,
         };
         _details = new Label
         {
@@ -180,6 +183,7 @@ public sealed class MainWindow : Runnable
             Width = Dim.Fill(),
             Height = Dim.Fill(),
             Visible = false,
+            AssignHotKeys = false,
         };
         _queueList = new SearchAwareListView
         {
@@ -192,23 +196,23 @@ public sealed class MainWindow : Runnable
         _queueList.SetSource(_queueRows);
         ((SearchAwareListView)_queueList).BeforeKeyDown = key =>
         {
-            if (HandleListNavigation(_queueList, key))
-            {
-                return true;
-            }
             if (key == Key.Delete)
             {
                 RemoveSelectedQueueItem();
                 return true;
             }
-            if (key == Key.CursorUp.WithAlt)
+            if (key == Key.K.WithShift || key == Key.CursorUp.WithShift || key == Key.CursorUp.WithAlt)
             {
                 MoveSelectedQueueItem(-1);
                 return true;
             }
-            if (key == Key.CursorDown.WithAlt)
+            if (key == Key.J.WithShift || key == Key.CursorDown.WithShift || key == Key.CursorDown.WithAlt)
             {
                 MoveSelectedQueueItem(1);
+                return true;
+            }
+            if (HandleListNavigation(_queueList, key))
+            {
                 return true;
             }
             if (key == Key.Enter.WithCtrl)
@@ -236,7 +240,7 @@ public sealed class MainWindow : Runnable
             _queueFrame,
             _statusText
         );
-        Add(_menuBar, content, statusBar);
+        Add(content, statusBar);
 
         _search.KeyDown += (_, key) =>
         {
@@ -322,52 +326,6 @@ public sealed class MainWindow : Runnable
         RefreshAll();
     }
 
-    private MenuBar BuildMenu() => new()
-    {
-        Menus =
-        [
-            new MenuBarItem("_File",
-            [
-                new MenuItem("_Import text playlist", "", ImportTextPlaylist),
-                new MenuItem("_Reload", "Ctrl+R", Reload),
-                new MenuItem("_Quit", "Ctrl+Q", () => App?.RequestStop()),
-            ]),
-            new MenuBarItem("_Library",
-            [
-                new MenuItem("Selected _details", "", ShowSelectedDetails),
-                new MenuItem("View _queue", "", ShowQueueDialog),
-                new MenuItem("Queue visible _tracks", "", QueueVisibleTracks),
-                new MenuItem("Queue matching _videos", "", QueueMatchingVideos),
-                new MenuItem("_Clear queue", "", ClearQueue),
-                new MenuItem("Top _artists", "", ShowTopArtists),
-            ]),
-            new MenuBarItem("_Filters",
-            [
-                new MenuItem("_Categories", "C", ShowOrFocusCategories),
-                new MenuItem("Track release _date", "", () => ShowDateDialog(true)),
-                new MenuItem("Video _date", "", () => ShowDateDialog(false)),
-                new MenuItem("_Reset filters", "", ResetFilters),
-            ]),
-            new MenuBarItem("_Sort",
-                Enum.GetValues<LibrarySort>()
-                    .Select(sort => new MenuItem(SortLabel(sort), "", () => SetSort(sort)))
-                    .ToArray()),
-            new MenuBarItem("_Playback",
-            [
-                new MenuItem("_Options", "Ctrl+O", ShowPlaybackOptions),
-                new MenuItem("_Play queue", "Ctrl+Enter", PlayQueue),
-            ]),
-            new MenuBarItem("_Setup",
-            [
-                new MenuItem("Install/update mpv history _script", "", InstallMpvScript),
-            ]),
-            new MenuBarItem("_Help",
-            [
-                new MenuItem("_Keys", "F1", ShowHelp),
-            ]),
-        ],
-    };
-
     private StatusBar BuildStatusBar()
     {
         var bar = new StatusBar
@@ -408,10 +366,10 @@ public sealed class MainWindow : Runnable
     private void RefreshLibrary()
     {
         var selected = _libraryList.SelectedItem ?? 0;
-        ReplaceSource(_libraryList, ref _libraryRows, _state.Rows.Select(_state.FormatRow));
-        if (_libraryRows.Count > 0)
+        _librarySource.Replace(_state.Rows);
+        if (_state.Rows.Count > 0)
         {
-            _libraryList.SelectedItem = Math.Clamp(selected, 0, _libraryRows.Count - 1);
+            _libraryList.SelectedItem = Math.Clamp(selected, 0, _state.Rows.Count - 1);
         }
         UpdatePaneTitles();
         RefreshDetails();
@@ -485,7 +443,6 @@ public sealed class MainWindow : Runnable
             return;
         }
 
-        var variant = row.Variant ?? row.Result.DefaultVariant;
         if (_state.ToggleQueue(rowIndex))
         {
             SetStatus("Added to queue.");
@@ -494,7 +451,7 @@ public sealed class MainWindow : Runnable
         {
             SetStatus("Removed from queue.");
         }
-        RefreshLibraryRowsFor(variant);
+        RefreshLibraryRows();
         RefreshQueue();
     }
 
@@ -506,24 +463,14 @@ public sealed class MainWindow : Runnable
             return;
         }
 
-        var removed = _state.Queue.Items[index];
         _state.Queue.RemoveAt(index);
-        RefreshLibraryRowsFor(removed);
+        RefreshLibraryRows();
         RefreshQueue();
     }
 
-    private void RefreshLibraryRowsFor(VideoVariant variant)
+    private void RefreshLibraryRows()
     {
-        for (var index = 0; index < _state.Rows.Count && index < _libraryRows.Count; index++)
-        {
-            var row = _state.Rows[index];
-            var rowVariant = row.Variant ?? row.Result.DefaultVariant;
-            if (PathIdentity.Comparer.Equals(rowVariant.Id, variant.Id))
-            {
-                _libraryRows[index] = _state.FormatRow(row);
-            }
-        }
-
+        _librarySource.Refresh();
         UpdatePaneTitles();
     }
 
@@ -701,6 +648,229 @@ public sealed class MainWindow : Runnable
         _libraryList.SetFocus();
         UpdatePaneTitles();
         SetStatus("Tracks focused.");
+    }
+
+    private void ShowSortPicker()
+    {
+        SetStatus("Choose a sort order.");
+        var sorts = Enum.GetValues<LibrarySort>();
+        ShowActionPicker(
+            "Sort tracks",
+            sorts.Select(sort => new PickerAction(
+                $"{(sort == _state.Sort ? "●" : " ")} {SortLabel(sort)}",
+                () => SetSort(sort)
+            )).ToList(),
+            Array.IndexOf(sorts, _state.Sort)
+        );
+    }
+
+    private void ShowFilterPicker() => ShowActionPicker(
+        "Filters",
+        [
+            new PickerAction("Categories", ShowOrFocusCategories),
+            new PickerAction("Track release date", () => ShowDateDialog(true)),
+            new PickerAction("Video date", () => ShowDateDialog(false)),
+            new PickerAction("Reset filters", ResetFilters),
+        ]
+    );
+
+    private void ShowQueueOrFocus()
+    {
+        if (Viewport.Width < 100)
+        {
+            ShowQueueDialog();
+        }
+        else if (_queueList.HasFocus)
+        {
+            FocusLibrary();
+        }
+        else
+        {
+            _queueList.SetFocus();
+            UpdatePaneTitles();
+            SetStatus("Queue focused. Shift+J/K reorders; Delete removes; Q or Esc returns.");
+        }
+    }
+
+    private void ShowCommandPalette()
+    {
+        var commands = new List<PickerAction>
+        {
+            new("Sort tracks", ShowSortPicker),
+            new("Choose categories", ShowOrFocusCategories),
+            new("Filter by track release date", () => ShowDateDialog(true)),
+            new("Filter by video date", () => ShowDateDialog(false)),
+            new("Reset filters", ResetFilters),
+            new("Queue one video per visible track", QueueVisibleTracks),
+            new("Queue every matching video", QueueMatchingVideos),
+            new("Focus or view queue", ShowQueueOrFocus),
+            new("Clear queue", ClearQueue),
+            new("Play queue", PlayQueue),
+            new("Playback options", ShowPlaybackOptions),
+            new("Import text playlist", ImportTextPlaylist),
+            new("Selected track details", ShowSelectedDetails),
+            new("Top artists", ShowTopArtists),
+            new("Reload library and history", Reload),
+            new("Install or update mpv history script", InstallMpvScript),
+            new("Keyboard help", ShowHelp),
+        };
+
+        using var dialog = new Dialog { Title = "Commands", Width = 62, Height = 20 };
+        var search = new TextField { X = 1, Y = 1, Width = Dim.Fill(1) };
+        var rows = new ObservableCollection<string>();
+        var list = new SearchAwareListView
+        {
+            X = 1,
+            Y = 3,
+            Width = Dim.Fill(1),
+            Height = Dim.Fill(1),
+        };
+        list.SetSource(rows);
+        var visible = commands;
+        Action? selectedAction = null;
+
+        void Refresh()
+        {
+            var query = search.Text.ToString() ?? string.Empty;
+            visible = string.IsNullOrWhiteSpace(query)
+                ? commands
+                : commands.Where(command => command.Label.Contains(
+                    query,
+                    StringComparison.InvariantCultureIgnoreCase
+                )).ToList();
+            Replace(rows, visible.Select(command => command.Label));
+            list.SelectedItem = rows.Count == 0 ? null : 0;
+        }
+
+        void Choose()
+        {
+            var index = list.SelectedItem ?? -1;
+            if (index < 0 || index >= visible.Count)
+            {
+                return;
+            }
+            selectedAction = visible[index].Run;
+            dialog.RequestStop();
+        }
+
+        search.TextChanged += (_, _) => Refresh();
+        search.KeyDown += (_, key) =>
+        {
+            if (key == Key.Esc)
+            {
+                dialog.RequestStop();
+                key.Handled = true;
+            }
+            else if (key == Key.Enter)
+            {
+                Choose();
+                key.Handled = true;
+            }
+            else if (key == Key.J.WithCtrl || key == Key.CursorDown)
+            {
+                MoveSelection(list, 1);
+                key.Handled = true;
+            }
+            else if (key == Key.K.WithCtrl || key == Key.CursorUp)
+            {
+                MoveSelection(list, -1);
+                key.Handled = true;
+            }
+        };
+        list.Accepted += (_, _) => Choose();
+        list.BeforeKeyDown = key =>
+        {
+            if (key == Key.Esc)
+            {
+                dialog.RequestStop();
+                return true;
+            }
+            if (key == Key.Enter)
+            {
+                Choose();
+                return true;
+            }
+            if (key == Key.J || key == Key.J.WithCtrl)
+            {
+                MoveSelection(list, 1);
+                return true;
+            }
+            if (key == Key.K || key == Key.K.WithCtrl)
+            {
+                MoveSelection(list, -1);
+                return true;
+            }
+            if (key.AsGrapheme == "/")
+            {
+                search.SetFocus();
+                return true;
+            }
+            return false;
+        };
+        dialog.Add(new Label { Text = "Search:", X = 1, Y = 0 }, search, list);
+        Refresh();
+        search.SetFocus();
+        App!.Run(dialog);
+        selectedAction?.Invoke();
+    }
+
+    private void ShowActionPicker(string title, IReadOnlyList<PickerAction> actions, int selected = 0)
+    {
+        using var dialog = new Dialog
+        {
+            Title = title,
+            Width = 48,
+            Height = Math.Min(22, actions.Count + 4),
+        };
+        var rows = new ObservableCollection<string>(actions.Select(action => action.Label));
+        var list = new SearchAwareListView
+        {
+            X = 1,
+            Y = 1,
+            Width = Dim.Fill(1),
+            Height = Dim.Fill(1),
+        };
+        list.SetSource(rows);
+        list.SelectedItem = actions.Count == 0 ? null : Math.Clamp(selected, 0, actions.Count - 1);
+        Action? selectedAction = null;
+        void Choose()
+        {
+            var index = list.SelectedItem ?? -1;
+            if (index < 0 || index >= actions.Count)
+            {
+                return;
+            }
+            selectedAction = actions[index].Run;
+            dialog.RequestStop();
+        }
+        list.Accepted += (_, _) => Choose();
+        list.BeforeKeyDown = key =>
+        {
+            if (key == Key.Esc)
+            {
+                dialog.RequestStop();
+                return true;
+            }
+            if (key == Key.Enter)
+            {
+                Choose();
+                return true;
+            }
+            if (key == Key.J || key == Key.J.WithCtrl)
+            {
+                MoveSelection(list, 1);
+                return true;
+            }
+            if (key == Key.K || key == Key.K.WithCtrl)
+            {
+                MoveSelection(list, -1);
+                return true;
+            }
+            return false;
+        };
+        dialog.Add(list);
+        App!.Run(dialog);
+        selectedAction?.Invoke();
     }
 
     private void ScheduleSearchRefresh(string text)
@@ -903,12 +1073,13 @@ public sealed class MainWindow : Runnable
         App!,
         "Keyboard help",
         "NAV mode: arrows or J/K navigate · H/L collapse/expand\n"
-        + "Space queues · C focuses categories · Tab changes pane\n"
+        + "Space queues · C categories · S sort · F filters · Q queue\n"
         + "/ enters SEARCH mode\n"
         + "SEARCH mode: type normally · Space inserts a space\n"
         + "Enter/Esc returns to NAV mode · Ctrl+U clears the query\n"
-        + "Delete removes · Alt+Up/Down reorders\n"
-        + "Ctrl+Enter plays · Ctrl+O options · Ctrl+R reloads · Ctrl+Q quits",
+        + "Delete removes · Shift+J/K reorders the queue\n"
+        + ": opens all commands · O options · Ctrl+Enter plays\n"
+        + "Ctrl+R reloads · Ctrl+Q quits",
         "OK"
     );
 
@@ -936,7 +1107,6 @@ public sealed class MainWindow : Runnable
         void OnFirstIteration(object? _, Terminal.Gui.App.EventArgs<IApplication?> __)
         {
             app.Iteration -= OnFirstIteration;
-            _menuBar.InvokeCommand(Command.Quit);
             FocusLibrary();
         }
 
@@ -945,7 +1115,7 @@ public sealed class MainWindow : Runnable
 
     private void HandleApplicationKeyDown(object? _, Key key)
     {
-        if (App?.TopRunnableView != this || _menuBar.Active)
+        if (App?.TopRunnableView != this)
         {
             return;
         }
@@ -960,16 +1130,73 @@ public sealed class MainWindow : Runnable
             return;
         }
 
-        if (key == Key.C && !_search.HasFocus)
+        if (IsPlainKey(key, 'c') && !_search.HasFocus)
         {
             ToggleCategoriesFocus();
+            key.Handled = true;
+            return;
+        }
+
+        if (_search.HasFocus)
+        {
+            return;
+        }
+
+        if (IsPlainKey(key, 's'))
+        {
+            RunAfterInput(ShowSortPicker);
+            key.Handled = true;
+        }
+        else if (IsPlainKey(key, 'f'))
+        {
+            RunAfterInput(ShowFilterPicker);
+            key.Handled = true;
+        }
+        else if (IsPlainKey(key, 'o'))
+        {
+            RunAfterInput(ShowPlaybackOptions);
+            key.Handled = true;
+        }
+        else if (IsPlainKey(key, 'q'))
+        {
+            ShowQueueOrFocus();
+            key.Handled = true;
+        }
+        else if (key.AsGrapheme == ":")
+        {
+            RunAfterInput(ShowCommandPalette);
             key.Handled = true;
         }
     }
 
     private bool HandleListNavigation(ListView list, Key key)
     {
-        if (key == Key.C)
+        if (IsPlainKey(key, 's'))
+        {
+            RunAfterInput(ShowSortPicker);
+            return true;
+        }
+        if (IsPlainKey(key, 'f'))
+        {
+            RunAfterInput(ShowFilterPicker);
+            return true;
+        }
+        if (IsPlainKey(key, 'o'))
+        {
+            RunAfterInput(ShowPlaybackOptions);
+            return true;
+        }
+        if (IsPlainKey(key, 'q'))
+        {
+            ShowQueueOrFocus();
+            return true;
+        }
+        if (key.AsGrapheme == ":")
+        {
+            RunAfterInput(ShowCommandPalette);
+            return true;
+        }
+        if (IsPlainKey(key, 'c'))
         {
             ToggleCategoriesFocus();
             return true;
@@ -1015,6 +1242,18 @@ public sealed class MainWindow : Runnable
         }
     }
 
+    private void RunAfterInput(Action action)
+    {
+        App?.AddTimeout(
+            TimeSpan.Zero,
+            () =>
+            {
+                action();
+                return false;
+            }
+        );
+    }
+
     private void EnterSearchMode()
     {
         _search.SetFocus();
@@ -1031,6 +1270,15 @@ public sealed class MainWindow : Runnable
             && !char.IsControl(grapheme[0]);
     }
 
+    private static bool IsPlainKey(Key key, char expected) =>
+        !key.IsAlt
+        && !key.IsCtrl
+        && string.Equals(
+            key.AsGrapheme,
+            expected.ToString(),
+            StringComparison.InvariantCultureIgnoreCase
+        );
+
     private void UpdatePaneTitles()
     {
         var narrow = Viewport.Width < 100;
@@ -1043,7 +1291,7 @@ public sealed class MainWindow : Runnable
         _queueFrame.SchemeName = _queueList.HasFocus ? nameof(Schemes.Accent) : nameof(Schemes.Base);
         _filtersFrame.Title = $"{(_categoryList.HasFocus ? "▶ " : string.Empty)}Filters";
         _libraryFrame.Title = $"{(_libraryList.HasFocus ? "▶ " : string.Empty)}Tracks ({_state.Results.Count})"
-            + (narrow ? " — use menus for filters/queue/details" : string.Empty);
+            + (narrow ? " — F filters · Q queue · : commands" : string.Empty);
         _queueFrame.Title = $"{(_queueList.HasFocus ? "▶ " : string.Empty)}Queue ({_state.Queue.Items.Count})";
         UpdateStatusText();
     }
@@ -1059,7 +1307,7 @@ public sealed class MainWindow : Runnable
         var mode = _search.HasFocus ? "SEARCH" : "NAV";
         var hints = _search.HasFocus
             ? "type to filter · Enter/Esc return · Ctrl+U clear"
-            : "J/K move · H/L fold · C categories · / search · Space queue";
+            : "J/K move · H/L fold · C categories · S sort · F filters · : commands";
         _statusText.Text = $"[{mode}] {_statusMessage}  Queue: {_state.Queue.Items.Count}  "
             + $"Sort: {SortLabel(_state.Sort)}  ·  {hints}";
     }
@@ -1128,6 +1376,8 @@ public sealed class MainWindow : Runnable
         _ => sort.ToString(),
     };
 
+    private sealed record PickerAction(string Label, Action Run);
+
     protected override void Dispose(bool disposing)
     {
         if (disposing)
@@ -1144,6 +1394,29 @@ public sealed class MainWindow : Runnable
 
 internal sealed class SearchAwareListView : ListView
 {
+    public SearchAwareListView()
+    {
+        AddCommand(Command.Context, context =>
+        {
+            if (context?.Binding is KeyBinding { Key: { } key }
+                && BeforeKeyDown?.Invoke(key) == true)
+            {
+                return true;
+            }
+            return false;
+        });
+
+        foreach (var key in new[]
+        {
+            Key.S, new Key('s'), Key.F, new Key('f'), Key.O, new Key('o'),
+            Key.Q, new Key('q'), Key.C, new Key('c'), new Key(':'),
+        })
+        {
+            KeyBindings.Remove(key);
+            KeyBindings.Add(key, Command.Context);
+        }
+    }
+
     public Func<Key, bool>? BeforeKeyDown { get; set; }
 
     protected override bool OnKeyDown(Key key)
