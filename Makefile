@@ -1,4 +1,5 @@
 PROJECT_PATH := ./src/PlaylistMaker.Console/PlaylistMaker.csproj
+TUI_PROJECT_PATH := ./src/PlaylistMaker.Tui/PlaylistMaker.Tui.csproj
 PROJECT_NAME := PlaylistMaker
 CONFIGURATION := Release
 OUTPUT_DIR := ./publish
@@ -25,4 +26,13 @@ run:
 	@echo "Running with arguments: $(ARGS)"
 	dotnet run --project $(PROJECT_PATH) -- $(ARGS)
 
-.PHONY: all win osx linux clean
+run-legacy:
+	dotnet run --project $(PROJECT_PATH) -- $(ARGS)
+
+run-tui:
+	dotnet run --project $(TUI_PROJECT_PATH) -- $(ARGS)
+
+publish-tui-win:
+	dotnet publish $(TUI_PROJECT_PATH) -c $(CONFIGURATION) -r win-x64 --output $(OUTPUT_DIR)/tui-windows --self-contained -p:PublishSingleFile=true
+
+.PHONY: all win osx linux clean run run-legacy run-tui publish-tui-win

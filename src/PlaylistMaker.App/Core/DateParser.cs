@@ -2,7 +2,7 @@
 
 namespace PlaylistMaker.Core;
 
-internal static partial class DateParser
+public static partial class DateParser
 {
     public static ReleaseDate? TryParseReleaseDate(string date)
     {

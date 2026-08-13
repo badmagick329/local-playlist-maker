@@ -1,3 +1,4 @@
+-- playlistmaker-history-version: 2
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
@@ -39,7 +40,7 @@ end
 
 local function write_event(event_name, entry, fields)
     local event = {
-        schemaVersion = 1,
+        schemaVersion = 2,
         event = event_name,
         eventAtUtc = utc_now(),
         sessionId = config.session_id,
@@ -71,7 +72,7 @@ local function watched_percent(watched_seconds, duration_seconds)
     if not duration_seconds or duration_seconds <= 0 then
         return 0
     end
-    return watched_seconds / duration_seconds * 100
+    return math.max(0, math.min(100, watched_seconds / duration_seconds * 100))
 end
 
 local function finish_active(reason)
@@ -86,11 +87,15 @@ local function finish_active(reason)
 
     local duration_seconds = mp.get_property_number("duration", active.duration_seconds)
     local final_position_seconds = mp.get_property_number("time-pos", nil)
-    local percent = watched_percent(active.watched_seconds, duration_seconds)
+    local normalized_watched_seconds = active.watched_seconds
+    if duration_seconds and duration_seconds > 0 then
+        normalized_watched_seconds = math.max(0, math.min(duration_seconds, normalized_watched_seconds))
+    end
+    local percent = watched_percent(normalized_watched_seconds, duration_seconds)
     local event_name
     local counted_as_played
 
-    if reason == "eof" then
+    if reason == "eof" or percent >= 90 then
         event_name = "completed"
         counted_as_played = true
     elseif percent >= tonumber(config.minimum_watched_percent) then
@@ -103,7 +108,7 @@ local function finish_active(reason)
 
     write_event(event_name, active.entry, {
         durationSeconds = duration_seconds,
-        watchedSeconds = active.watched_seconds,
+        watchedSeconds = normalized_watched_seconds,
         watchedPercent = percent,
         finalPositionSeconds = final_position_seconds,
         endReason = reason,
