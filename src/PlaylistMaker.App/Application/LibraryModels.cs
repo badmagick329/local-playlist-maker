@@ -70,7 +70,7 @@ public sealed class LibraryQuery
         new HashSet<VideoCategory> { VideoCategory.MusicVideo };
     public DateRange? TrackDate { get; init; }
     public DateRange? VideoDate { get; init; }
-    public LibrarySort Sort { get; init; } = LibrarySort.NameDescending;
+    public LibrarySort Sort { get; init; } = LibrarySort.ModifiedDescending;
 }
 
 public sealed record TrackSearchResult(

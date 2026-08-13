@@ -29,7 +29,7 @@ public sealed class TuiState
     public string SearchText { get; private set; } = string.Empty;
     public DateRange? TrackDate { get; private set; }
     public DateRange? VideoDate { get; private set; }
-    public LibrarySort Sort { get; private set; } = LibrarySort.NameDescending;
+    public LibrarySort Sort { get; private set; } = LibrarySort.ModifiedDescending;
     public PlaybackOptions PlaybackOptions { get; set; } = new();
     public IReadOnlyList<TrackSearchResult> Results { get; private set; } = [];
     public IReadOnlyList<LibraryRow> Rows { get; private set; } = [];
@@ -150,10 +150,9 @@ public sealed class TuiState
 
         var expanded = _expandedTracks.Contains(row.Result.Group.Id) ? "▼" : "▶";
         var trackQueued = Queue.Contains(row.Result.DefaultVariant) ? "●" : " ";
-        var summary = History.ForTrack(row.Result.Group.Track.FilePath);
-        var last = summary.LastPlayedAtUtc?.ToLocalTime().ToString("yyyy-MM-dd") ?? "never";
+        var videoLabel = row.Result.EligibleVariants.Count == 1 ? "video" : "videos";
         return $"{expanded} {trackQueued} {row.Result.Group.Track.Artist} — {row.Result.Group.Track.Title}  "
-               + $"[{row.Result.EligibleVariants.Count} versions · {summary.PlayedCount} plays · {last}]";
+               + $"[{row.Result.Group.Track.Date} · {row.Result.EligibleVariants.Count} {videoLabel}]";
     }
 
     public string DetailsFor(LibraryRow? row)

@@ -5,22 +5,23 @@ namespace PlaylistMaker.Application;
 public sealed class PlaylistDraft
 {
     private readonly List<VideoVariant> _items = [];
+    private readonly HashSet<string> _ids = new(PathIdentity.Comparer);
 
     public IReadOnlyList<VideoVariant> Items => _items;
 
-    public bool Contains(VideoVariant variant) =>
-        _items.Any(item => PathIdentity.Comparer.Equals(item.Id, variant.Id));
+    public bool Contains(VideoVariant variant) => _ids.Contains(variant.Id);
 
     public bool Toggle(VideoVariant variant)
     {
-        var index = _items.FindIndex(item => PathIdentity.Comparer.Equals(item.Id, variant.Id));
-        if (index >= 0)
+        if (_ids.Remove(variant.Id))
         {
+            var index = _items.FindIndex(item => PathIdentity.Comparer.Equals(item.Id, variant.Id));
             _items.RemoveAt(index);
             return false;
         }
 
         _items.Add(variant);
+        _ids.Add(variant.Id);
         return true;
     }
 
@@ -32,6 +33,7 @@ public sealed class PlaylistDraft
         }
 
         _items.Add(variant);
+        _ids.Add(variant.Id);
         return true;
     }
 
@@ -47,6 +49,7 @@ public sealed class PlaylistDraft
     {
         if (index >= 0 && index < _items.Count)
         {
+            _ids.Remove(_items[index].Id);
             _items.RemoveAt(index);
         }
     }
@@ -65,5 +68,9 @@ public sealed class PlaylistDraft
         return true;
     }
 
-    public void Clear() => _items.Clear();
+    public void Clear()
+    {
+        _items.Clear();
+        _ids.Clear();
+    }
 }

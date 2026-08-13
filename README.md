@@ -35,8 +35,9 @@ dotnet run --project .\src\PlaylistMaker.Console\PlaylistMaker.csproj
 
 ## TUI workflow
 
-- Type while browsing to fuzzy-search artist, title, and video filenames. Press `/` to focus the search field and `Esc` to return to the track list.
-- Use arrows or `Ctrl+J`/`Ctrl+K` to navigate, `Enter` or `L` to expand a track, `H` to collapse it, and `Space` to add or remove its selected video from the queue.
+- The TUI starts in navigation mode. Press `/` to enter search mode, type a fuzzy query normally, then press `Enter` or `Esc` to return to navigation mode.
+- Use arrows, `J`/`K`, or `Ctrl+J`/`Ctrl+K` to navigate. Use `Enter` or `L` to expand a track, `H` to collapse it, and `Space` to add or remove its selected video from the queue.
+- Press `C` to focus categories, use `J`/`K` and `Space` to change them, then press `C` or `Esc` to return to tracks.
 - Use `Tab` to move between filters, results, details, and queue panes.
 - Use `Delete` and `Alt+Up`/`Alt+Down` to edit the queue.
 - Press `Ctrl+Enter` to launch the queue, `Ctrl+O` for playback options, `Ctrl+R` to reload mappings/history, and `F1` for help.

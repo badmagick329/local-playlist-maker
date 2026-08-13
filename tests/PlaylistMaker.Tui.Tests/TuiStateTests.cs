@@ -13,6 +13,7 @@ public class TuiStateTests : IDisposable
     {
         var state = CreateState();
 
+        Assert.Equal(LibrarySort.ModifiedDescending, state.Sort);
         var result = Assert.Single(state.Results);
         Assert.All(result.EligibleVariants, variant => Assert.Equal(VideoCategory.MusicVideo, variant.Category));
         Assert.Single(state.Rows);
@@ -48,6 +49,19 @@ public class TuiStateTests : IDisposable
         state.ToggleCategory(VideoCategory.Performance);
 
         Assert.Single(state.Queue.Items);
+    }
+
+    [Fact]
+    public void TrackRowsPrioritizeIdentityReleaseDateAndVideoCount()
+    {
+        var state = CreateState();
+
+        var row = state.FormatRow(Assert.Single(state.Rows));
+
+        Assert.Contains("Artist — Song", row);
+        Assert.Contains("2024-01-01 · 1 video", row);
+        Assert.DoesNotContain("plays", row);
+        Assert.DoesNotContain("never", row);
     }
 
     [Fact]

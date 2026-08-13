@@ -19,6 +19,10 @@ public class PlaylistDraftAndPlanningTests
         Assert.Equal([second, first], draft.Items);
         Assert.False(draft.Toggle(second));
         Assert.Equal([first], draft.Items);
+        draft.RemoveAt(0);
+        Assert.True(draft.Add(first));
+        draft.Clear();
+        Assert.True(draft.Add(first));
     }
 
     [Fact]
