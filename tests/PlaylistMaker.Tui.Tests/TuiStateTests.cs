@@ -25,6 +25,20 @@ public class TuiStateTests : IDisposable
     }
 
     [Fact]
+    public void ExpansionCanBeSetExplicitlyFromTrackOrVariantRow()
+    {
+        var state = CreateState();
+        state.ToggleCategory(VideoCategory.Performance);
+
+        Assert.True(state.SetExpanded(0, true));
+        Assert.Equal(3, state.Rows.Count);
+        Assert.False(state.SetExpanded(1, true));
+
+        Assert.True(state.SetExpanded(1, false));
+        Assert.Single(state.Rows);
+    }
+
+    [Fact]
     public void QueueSurvivesSearchAndFilterChanges()
     {
         var state = CreateState();

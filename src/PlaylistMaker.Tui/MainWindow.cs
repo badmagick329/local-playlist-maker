@@ -13,6 +13,8 @@ public sealed class MainWindow : Runnable
 {
     private readonly TuiServices _services;
     private readonly TuiState _state;
+    private readonly MenuBar _menuBar;
+    private readonly Label _searchLabel;
     private readonly TextField _search;
     private readonly FrameView _filtersFrame;
     private readonly FrameView _libraryFrame;
@@ -34,16 +36,19 @@ public sealed class MainWindow : Runnable
         _state = services.State;
         Title = "PlaylistMaker TUI";
 
-        var menu = BuildMenu();
+        _menuBar = BuildMenu();
+        _menuBar.TabStop = TabBehavior.NoStop;
         var statusBar = BuildStatusBar();
         var content = new View
         {
-            Y = Pos.Bottom(menu),
+            Y = Pos.Bottom(_menuBar),
             Width = Dim.Fill(),
             Height = Dim.Fill(statusBar),
+            CanFocus = true,
+            TabStop = TabBehavior.TabGroup,
         };
 
-        var searchLabel = new Label { Text = "Search:", X = 1, Y = 0 };
+        _searchLabel = new Label { Text = "Search:", X = 1, Y = 0 };
         _search = new TextField
         {
             X = 9,
@@ -66,11 +71,21 @@ public sealed class MainWindow : Runnable
             Height = Dim.Fill(),
             Visible = false,
         };
-        _categoryList = new SearchAwareListView { Width = Dim.Fill(), Height = Dim.Fill() };
+        _categoryList = new SearchAwareListView
+        {
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            CanFocus = true,
+            TabStop = TabBehavior.TabStop,
+        };
         _categoryList.SetSource(_categoryRows);
         _categoryList.Accepted += (_, _) => ToggleSelectedCategory();
         ((SearchAwareListView)_categoryList).BeforeKeyDown = key =>
         {
+            if (HandleListNavigation(_categoryList, key))
+            {
+                return true;
+            }
             if (key == Key.Space)
             {
                 ToggleSelectedCategory();
@@ -88,12 +103,32 @@ public sealed class MainWindow : Runnable
             Width = Dim.Fill(),
             Height = Dim.Fill(),
         };
-        _libraryList = new SearchAwareListView { Width = Dim.Fill(), Height = Dim.Fill() };
+        _libraryList = new SearchAwareListView
+        {
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            CanFocus = true,
+            TabStop = TabBehavior.TabStop,
+        };
         _libraryList.SetSource(_libraryRows);
         _libraryList.Accepted += (_, _) => ToggleExpansion();
         _libraryList.ValueChanged += (_, _) => RefreshDetails();
         ((SearchAwareListView)_libraryList).BeforeKeyDown = key =>
         {
+            if (HandleListNavigation(_libraryList, key))
+            {
+                return true;
+            }
+            if (key == Key.L)
+            {
+                SetSelectedExpansion(true);
+                return true;
+            }
+            if (key == Key.H)
+            {
+                SetSelectedExpansion(false);
+                return true;
+            }
             if (key == Key.Space)
             {
                 ToggleSelectedQueueItem();
@@ -133,10 +168,20 @@ public sealed class MainWindow : Runnable
             Height = Dim.Fill(),
             Visible = false,
         };
-        _queueList = new SearchAwareListView { Width = Dim.Fill(), Height = Dim.Fill() };
+        _queueList = new SearchAwareListView
+        {
+            Width = Dim.Fill(),
+            Height = Dim.Fill(),
+            CanFocus = true,
+            TabStop = TabBehavior.TabStop,
+        };
         _queueList.SetSource(_queueRows);
         ((SearchAwareListView)_queueList).BeforeKeyDown = key =>
         {
+            if (HandleListNavigation(_queueList, key))
+            {
+                return true;
+            }
             if (key == Key.Delete)
             {
                 RemoveSelectedQueueItem();
@@ -169,7 +214,7 @@ public sealed class MainWindow : Runnable
             Text = string.Empty,
         };
         content.Add(
-            searchLabel,
+            _searchLabel,
             _search,
             _filtersFrame,
             _libraryFrame,
@@ -177,7 +222,26 @@ public sealed class MainWindow : Runnable
             _queueFrame,
             _statusText
         );
-        Add(menu, content, statusBar);
+        Add(_menuBar, content, statusBar);
+
+        _search.KeyDown += (_, key) =>
+        {
+            if (key == Key.Esc)
+            {
+                _libraryList.SetFocus();
+                key.Handled = true;
+            }
+            else if (key == Key.J.WithCtrl || key == Key.K.WithCtrl)
+            {
+                _libraryList.SetFocus();
+                MoveSelection(_libraryList, key == Key.J.WithCtrl ? 1 : -1);
+                key.Handled = true;
+            }
+        };
+        _search.HasFocusChanged += (_, _) => UpdatePaneTitles();
+        _categoryList.HasFocusChanged += (_, _) => UpdatePaneTitles();
+        _libraryList.HasFocusChanged += (_, _) => UpdatePaneTitles();
+        _queueList.HasFocusChanged += (_, _) => UpdatePaneTitles();
 
         ViewportChanged += (_, _) => ApplyResponsiveLayout();
         KeyDown += (_, key) =>
@@ -222,10 +286,11 @@ public sealed class MainWindow : Runnable
         {
             ApplyResponsiveLayout();
             App?.AddTimeout(
-                TimeSpan.FromMilliseconds(1),
+                TimeSpan.Zero,
                 () =>
                 {
                     ShowScriptStatusIfNeeded();
+                    FocusLibraryAfterCurrentIteration();
                     return false;
                 }
             );
@@ -281,7 +346,11 @@ public sealed class MainWindow : Runnable
 
     private StatusBar BuildStatusBar()
     {
-        var bar = new StatusBar();
+        var bar = new StatusBar
+        {
+            CanFocus = false,
+            TabStop = TabBehavior.NoStop,
+        };
         bar.Add(new Shortcut(Key.F1, "Help", ShowHelp));
         bar.Add(new Shortcut(Key.Space, "Queue", ToggleSelectedQueueItem));
         bar.Add(new Shortcut(Key.Enter.WithCtrl, "Play", PlayQueue));
@@ -316,7 +385,7 @@ public sealed class MainWindow : Runnable
         {
             _libraryList.SelectedItem = Math.Clamp(selected, 0, _libraryRows.Count - 1);
         }
-        _libraryFrame.Title = $"Tracks ({_state.Results.Count})";
+        UpdatePaneTitles();
         RefreshDetails();
     }
 
@@ -329,7 +398,7 @@ public sealed class MainWindow : Runnable
         {
             _queueList.SelectedItem = Math.Clamp(selected, 0, _queueRows.Count - 1);
         }
-        _queueFrame.Title = $"Queue ({_state.Queue.Items.Count})";
+        UpdatePaneTitles();
     }
 
     private void RefreshDetails() =>
@@ -352,6 +421,25 @@ public sealed class MainWindow : Runnable
     {
         _state.ToggleExpansion(_libraryList.SelectedItem ?? -1);
         RefreshLibrary();
+    }
+
+    private void SetSelectedExpansion(bool expanded)
+    {
+        var selected = _libraryList.SelectedItem ?? -1;
+        var selectedRow = _state.RowAt(selected);
+        if (selectedRow is null || !_state.SetExpanded(selected, expanded))
+        {
+            return;
+        }
+
+        RefreshLibrary();
+        var trackIndex = _state.Rows
+            .Select((row, index) => (row, index))
+            .First(item => item.row.IsTrack
+                && PathIdentity.Comparer.Equals(item.row.Result.Group.Id, selectedRow.Result.Group.Id))
+            .index;
+        _libraryList.SelectedItem = trackIndex;
+        RefreshDetails();
     }
 
     private void ToggleSelectedQueueItem()
@@ -668,8 +756,10 @@ public sealed class MainWindow : Runnable
     private void ShowHelp() => MessageBox.Query(
         App!,
         "Keyboard help",
-        "Type to search · Arrows navigate · Enter expands · Space queues\n"
-        + "Tab changes pane · Delete removes · Alt+Up/Down reorders\n"
+        "Type to search · / focuses search · Esc returns to tracks\n"
+        + "Arrows or Ctrl+J/K navigate · H/L collapse/expand · Enter toggles\n"
+        + "Space queues · Tab changes pane · Backspace edits search · Ctrl+U clears\n"
+        + "Delete removes · Alt+Up/Down reorders\n"
         + "Ctrl+Enter plays · Ctrl+O options · Ctrl+R reloads · Ctrl+Q quits",
         "OK"
     );
@@ -684,9 +774,69 @@ public sealed class MainWindow : Runnable
         _libraryFrame.Width = narrow ? Dim.Fill() : Dim.Fill(43);
         _detailsFrame.X = narrow ? 0 : Pos.Right(_libraryFrame);
         _queueFrame.X = narrow ? 0 : Pos.Right(_libraryFrame);
-        _libraryFrame.Title = narrow
-            ? $"Tracks ({_state.Results.Count}) — use menus for filters/queue/details"
-            : $"Tracks ({_state.Results.Count})";
+        UpdatePaneTitles();
+    }
+
+    private void FocusLibraryAfterCurrentIteration()
+    {
+        var app = App;
+        if (app is null)
+        {
+            return;
+        }
+
+        void FocusLibrary(object? _, Terminal.Gui.App.EventArgs<IApplication?> __)
+        {
+            app.Iteration -= FocusLibrary;
+            _menuBar.InvokeCommand(Command.Quit);
+            _libraryList.SetFocus();
+            UpdatePaneTitles();
+        }
+
+        app.Iteration += FocusLibrary;
+    }
+
+    private bool HandleListNavigation(ListView list, Key key)
+    {
+        if (key == Key.J.WithCtrl)
+        {
+            MoveSelection(list, 1);
+            return true;
+        }
+        if (key == Key.K.WithCtrl)
+        {
+            MoveSelection(list, -1);
+            return true;
+        }
+        if (key.AsGrapheme == "/")
+        {
+            _search.SetFocus();
+            return true;
+        }
+        if (key == Key.Backspace)
+        {
+            RemoveLastSearchCharacter();
+            return true;
+        }
+        if (key == Key.U.WithCtrl)
+        {
+            _search.Text = string.Empty;
+            return true;
+        }
+
+        return false;
+    }
+
+    private static void MoveSelection(ListView list, int offset)
+    {
+        if (offset > 0)
+        {
+            list.MoveDown(false);
+        }
+        else
+        {
+            list.MoveUp(false);
+        }
     }
 
     private bool RedirectPrintableToSearch(Key key)
@@ -700,15 +850,32 @@ public sealed class MainWindow : Runnable
 
         var nextSearch = (_search.Text.ToString() ?? string.Empty) + grapheme;
         _search.Text = nextSearch;
-        _state.SetSearch(nextSearch);
-        RefreshLibrary();
-        _search.SetFocus();
         key.Handled = true;
         return true;
     }
 
+    private void RemoveLastSearchCharacter()
+    {
+        var value = _search.Text.ToString() ?? string.Empty;
+        if (value.Length > 0)
+        {
+            _search.Text = value[..^1];
+        }
+    }
+
+    private void UpdatePaneTitles()
+    {
+        var narrow = Viewport.Width < 100;
+        _searchLabel.Text = _search.HasFocus ? "Search▶" : "Search:";
+        _filtersFrame.Title = $"{(_categoryList.HasFocus ? "▶ " : string.Empty)}Filters";
+        _libraryFrame.Title = $"{(_libraryList.HasFocus ? "▶ " : string.Empty)}Tracks ({_state.Results.Count})"
+            + (narrow ? " — use menus for filters/queue/details" : string.Empty);
+        _queueFrame.Title = $"{(_queueList.HasFocus ? "▶ " : string.Empty)}Queue ({_state.Queue.Items.Count})";
+    }
+
     private void SetStatus(string text) =>
-        _statusText.Text = $"{text}  Queue: {_state.Queue.Items.Count}  Sort: {SortLabel(_state.Sort)}";
+        _statusText.Text = $"{text}  Queue: {_state.Queue.Items.Count}  Sort: {SortLabel(_state.Sort)}"
+            + "  ·  Ctrl+J/K move · H/L fold · / search";
 
     private static bool TryParseRange(string input, out DateRange? range)
     {

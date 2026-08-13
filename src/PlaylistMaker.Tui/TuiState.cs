@@ -101,6 +101,25 @@ public sealed class TuiState
         BuildRows();
     }
 
+    public bool SetExpanded(int rowIndex, bool expanded)
+    {
+        var row = RowAt(rowIndex);
+        if (row is null)
+        {
+            return false;
+        }
+
+        var changed = expanded
+            ? _expandedTracks.Add(row.Result.Group.Id)
+            : _expandedTracks.Remove(row.Result.Group.Id);
+        if (changed)
+        {
+            BuildRows();
+        }
+
+        return changed;
+    }
+
     public bool ToggleQueue(int rowIndex)
     {
         var row = RowAt(rowIndex);

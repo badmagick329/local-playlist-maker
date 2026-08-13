@@ -2,12 +2,14 @@ using PlaylistMaker.Application;
 using PlaylistMaker.Core;
 using PlaylistMaker.Infrastructure;
 using PlaylistMaker.Tui;
+using Terminal.Gui.App;
 using Terminal.Gui.Input;
 using Terminal.Gui.ViewBase;
 using Terminal.Gui.Views;
 
 namespace PlaylistMaker.Tui.Tests;
 
+[Collection("Terminal.Gui event loop")]
 public class MainWindowHeadlessTests : IDisposable
 {
     private readonly string _directory = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString("N"));
@@ -49,6 +51,31 @@ public class MainWindowHeadlessTests : IDisposable
     }
 
     [Fact]
+    public void LibrarySupportsVimStyleMovementAndExplicitExpansion()
+    {
+        var (window, state) = CreateWindow();
+        using (window)
+        {
+            var trackFrame = FindFirst<FrameView>(window, frame => frame.Title.Contains("Tracks"));
+            var list = FindFirst<ListView>(trackFrame, _ => true);
+
+            list.NewKeyDownEvent(Key.L);
+            Assert.Equal(2, state.Rows.Count);
+
+            list.NewKeyDownEvent(Key.J.WithCtrl);
+            Assert.Equal(1, list.SelectedItem);
+
+            list.NewKeyDownEvent(Key.K.WithCtrl);
+            Assert.Equal(0, list.SelectedItem);
+
+            list.NewKeyDownEvent(Key.J.WithCtrl);
+            list.NewKeyDownEvent(Key.H);
+            Assert.Single(state.Rows);
+            Assert.Equal(0, list.SelectedItem);
+        }
+    }
+
+    [Fact]
     public void InitialLayoutIsSafeBeforeTerminalSizeIsKnown()
     {
         var (window, _) = CreateWindow();
@@ -66,6 +93,59 @@ public class MainWindowHeadlessTests : IDisposable
                 }
             );
         }
+    }
+
+    [Fact]
+    public void RealEventLoopFocusesLibraryAndRoutesKeyboardInput()
+    {
+        var (window, state) = CreateWindow();
+        using var app = Terminal.Gui.App.Application.Create().Init("dotnet");
+        app.Driver!.SetScreenSize(120, 40);
+        var libraryFocused = false;
+        var keyHandled = false;
+        var navigationWorked = false;
+        string? focusedView = null;
+        var iterationCount = 0;
+        app.Iteration += (_, _) =>
+        {
+            iterationCount++;
+            var trackFrame = FindFirst<FrameView>(window, frame => frame.Title.Contains("Tracks"));
+            var list = FindFirst<ListView>(trackFrame, _ => true);
+            libraryFocused = list.HasFocus;
+            var focused = app.Navigation?.GetFocused();
+            focusedView = focused is null
+                ? $"none; chain={DescribeFocusChain(list)}"
+                : $"{focused.GetType().Name} title='{focused!.Title}' text='{focused.Text}'";
+            if (!libraryFocused && iterationCount < 3)
+            {
+                return;
+            }
+
+            var keyboard = app.Keyboard!;
+            keyboard.RaiseKeyDownEvent(Key.L);
+            var expanded = state.Rows.Count == 2;
+            keyboard.RaiseKeyDownEvent(Key.CursorDown);
+            var arrowDown = list.SelectedItem == 1;
+            keyboard.RaiseKeyDownEvent(Key.CursorUp);
+            var arrowUp = list.SelectedItem == 0;
+            keyboard.RaiseKeyDownEvent(Key.J.WithCtrl);
+            var controlJ = list.SelectedItem == 1;
+            keyboard.RaiseKeyDownEvent(Key.K.WithCtrl);
+            var controlK = list.SelectedItem == 0;
+            navigationWorked = expanded && arrowDown && arrowUp && controlJ && controlK;
+            keyHandled = keyboard.RaiseKeyDownEvent(Key.S);
+            app.RequestStop();
+        };
+
+        using (window)
+        {
+            app.Run(window);
+        }
+
+        Assert.True(libraryFocused, $"Focused view: {focusedView}");
+        Assert.True(navigationWorked);
+        Assert.True(keyHandled);
+        Assert.Equal("s", state.SearchText, ignoreCase: true);
     }
 
     private (MainWindow Window, TuiState State) CreateWindow()
@@ -111,6 +191,16 @@ public class MainWindowHeadlessTests : IDisposable
         }
     }
 
+    private static string DescribeFocusChain(View view)
+    {
+        var parts = new List<string>();
+        for (View? current = view; current is not null; current = current.SuperView)
+        {
+            parts.Add($"{current.GetType().Name}(CanFocus={current.CanFocus},Visible={current.Visible},Enabled={current.Enabled},TabStop={current.TabStop})");
+        }
+        return string.Join(" <- ", parts);
+    }
+
     private sealed class StubReader(string audioPath) : IVorbisReader
     {
         public VorbisData? VorbisDataFor(string filePath) =>
@@ -128,3 +218,6 @@ public class MainWindowHeadlessTests : IDisposable
         if (Directory.Exists(_directory)) Directory.Delete(_directory, true);
     }
 }
+
+[CollectionDefinition("Terminal.Gui event loop", DisableParallelization = true)]
+public sealed class TerminalGuiEventLoopCollection;
