@@ -1,6 +1,9 @@
 [CmdletBinding()]
 param(
-    [switch]$EnableHistory,
+    [switch]$DisableHistory,
+
+    [ValidateSet('go', 'bridge', 'go-library', 'compare')]
+    [string]$Backend = 'bridge',
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ApplicationArguments
@@ -32,19 +35,22 @@ function Get-SourceFingerprint {
     }
 }
 
-$bridgeSources = @(
-    Get-ChildItem -Path (Join-Path $repositoryRoot 'src\PlaylistMaker.Bridge'), (Join-Path $repositoryRoot 'src\PlaylistMaker.App') -Recurse -File |
-        Where-Object { $_.Extension -in '.cs', '.csproj' }
-    Get-Item -LiteralPath (Join-Path $repositoryRoot 'mpv-scripts\playlistmaker-history.lua')
-)
-$bridgeFingerprint = Get-SourceFingerprint -Sources $bridgeSources
-$bridgeDirectory = Join-Path $outputDirectory "bridge-$bridgeFingerprint"
-$bridgeExecutable = Join-Path $bridgeDirectory 'PlaylistMaker.Bridge.exe'
-if (-not (Test-Path -LiteralPath $bridgeExecutable)) {
-    Write-Host 'Building PlaylistMaker bridge...'
-    dotnet publish $bridgeProject --configuration Release --self-contained false --output $bridgeDirectory
-    if ($LASTEXITCODE -ne 0) {
-        throw 'Unable to build PlaylistMaker bridge.'
+$bridgeExecutable = $null
+if ($Backend -in @('bridge', 'go-library', 'compare')) {
+    $bridgeSources = @(
+        Get-ChildItem -Path (Join-Path $repositoryRoot 'src\PlaylistMaker.Bridge'), (Join-Path $repositoryRoot 'src\PlaylistMaker.App') -Recurse -File |
+            Where-Object { $_.Extension -in '.cs', '.csproj' }
+        Get-Item -LiteralPath (Join-Path $repositoryRoot 'mpv-scripts\playlistmaker-history.lua')
+    )
+    $bridgeFingerprint = Get-SourceFingerprint -Sources $bridgeSources
+    $bridgeDirectory = Join-Path $outputDirectory "bridge-$bridgeFingerprint"
+    $bridgeExecutable = Join-Path $bridgeDirectory 'PlaylistMaker.Bridge.exe'
+    if (-not (Test-Path -LiteralPath $bridgeExecutable)) {
+        Write-Host 'Building PlaylistMaker bridge...'
+        dotnet publish $bridgeProject --configuration Release --self-contained false --output $bridgeDirectory
+        if ($LASTEXITCODE -ne 0) {
+            throw 'Unable to build PlaylistMaker bridge.'
+        }
     }
 }
 
@@ -70,8 +76,11 @@ if (-not (Test-Path -LiteralPath $executable)) {
 
 Push-Location $repositoryRoot
 try {
-    $arguments = @('--bridge', $bridgeExecutable, '--config', $config)
-    if (-not $EnableHistory) {
+    $arguments = @('--backend', $Backend, '--config', $config)
+    if ($bridgeExecutable) {
+        $arguments += @('--bridge', $bridgeExecutable)
+    }
+    if ($DisableHistory) {
         $arguments += '--disable-history'
     }
     $arguments += $ApplicationArguments
