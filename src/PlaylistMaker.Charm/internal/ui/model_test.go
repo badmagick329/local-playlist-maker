@@ -161,6 +161,27 @@ func TestFailedPlaybackKeepsQueue(t *testing.T) {
 	}
 }
 
+func TestHelpOpensScrollsAndClosesWithoutTriggeringActions(t *testing.T) {
+	m := New(library.Generate(50, 200))
+	m = updateKey(t, m, "?")
+	if m.mode != modeHelp {
+		t.Fatalf("mode = %s", m.mode)
+	}
+	m.height = 12
+	m = updateKey(t, m, "j")
+	if m.helpOffset == 0 {
+		t.Fatal("help did not scroll")
+	}
+	m = updateKey(t, m, "a")
+	if len(m.queueOrder) != 0 {
+		t.Fatal("help action leaked into queue")
+	}
+	m = updateKey(t, m, "?")
+	if m.mode != modeNavigate {
+		t.Fatalf("mode = %s", m.mode)
+	}
+}
+
 func BenchmarkNavigationAndRenderParityScale(b *testing.B) {
 	m := New(library.Generate(1337, 6420))
 	m.width = 160

@@ -26,6 +26,7 @@ const (
 	modeQueue
 	modePlaybackOptions
 	modeFilters
+	modeHelp
 )
 
 func (m mode) String() string {
@@ -42,6 +43,8 @@ func (m mode) String() string {
 		return "OPTIONS"
 	case modeFilters:
 		return "FILTERS"
+	case modeHelp:
+		return "HELP"
 	default:
 		return "NAV"
 	}
@@ -86,6 +89,7 @@ type Model struct {
 	playbackOptions backend.PlaybackOptions
 	draftOptions    backend.PlaybackOptions
 	filterDraft     [2]string
+	helpOffset      int
 	launching       bool
 }
 
@@ -162,6 +166,8 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleOptionsKey(key), nil
 	case modeFilters:
 		return m.handleFiltersKey(key), nil
+	case modeHelp:
+		return m.handleHelpKey(key), nil
 	default:
 		return m.handleNavigationKey(key), nil
 	}
@@ -252,8 +258,31 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 	case "q":
 		m.mode = modeQueue
 		m.overlayCursor = min(m.overlayCursor, max(len(m.queueOrder)-1, 0))
+	case "?":
+		m.mode, m.helpOffset = modeHelp, 0
 	case "esc":
 		m.status = "Esc closes modes; Ctrl+Q quits"
+	}
+	return m
+}
+
+func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {
+	maxOffset := max(len(helpLines())-max(m.height-8, 1), 0)
+	switch key.String() {
+	case "esc", "?":
+		m.mode = modeNavigate
+	case "j", "down", "ctrl+j":
+		m.helpOffset = min(m.helpOffset+1, maxOffset)
+	case "k", "up", "ctrl+k":
+		m.helpOffset = max(m.helpOffset-1, 0)
+	case "ctrl+d", "pgdown":
+		m.helpOffset = min(m.helpOffset+max(m.height-8, 1), maxOffset)
+	case "ctrl+u", "pgup":
+		m.helpOffset = max(m.helpOffset-max(m.height-8, 1), 0)
+	case "g":
+		m.helpOffset = 0
+	case "G":
+		m.helpOffset = maxOffset
 	}
 	return m
 }
@@ -654,7 +683,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -794,6 +823,13 @@ func (m Model) renderOverlay(base string, width, height int) string {
 	case modeFilters:
 		title = "Filters"
 		lines = []string{fmt.Sprintf("%s Track: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • esc cancel"}
+	case modeHelp:
+		title = "Keyboard shortcuts"
+		all := helpLines()
+		visible := max(height-8, 1)
+		end := min(m.helpOffset+visible, len(all))
+		lines = append(lines, all[m.helpOffset:end]...)
+		lines = append(lines, "", "j/k scroll • ?/esc close")
 	}
 
 	overlayWidth := min(max(width*2/3, 42), 88)
