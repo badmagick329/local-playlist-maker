@@ -24,6 +24,8 @@ const (
 	modeCategories
 	modeSort
 	modeQueue
+	modePlaybackOptions
+	modeFilters
 )
 
 func (m mode) String() string {
@@ -36,6 +38,10 @@ func (m mode) String() string {
 		return "SORT"
 	case modeQueue:
 		return "QUEUE"
+	case modePlaybackOptions:
+		return "OPTIONS"
+	case modeFilters:
+		return "FILTERS"
 	default:
 		return "NAV"
 	}
@@ -56,28 +62,31 @@ type playbackResultMsg struct {
 }
 
 type Model struct {
-	all           []library.Track
-	filtered      []library.Track
-	rows          []row
-	expanded      map[string]bool
-	queued        map[string]library.Variant
-	queueOrder    []string
-	enabled       map[library.Category]bool
-	query         string
-	sort          library.Sort
-	trackDate     *library.DateRange
-	videoDate     *library.DateRange
-	mode          mode
-	cursor        int
-	overlayCursor int
-	waitingForG   bool
-	width         int
-	height        int
-	status        string
-	theme         theme
-	stats         *latencyStats
-	playback      PlaybackLauncher
-	launching     bool
+	all             []library.Track
+	filtered        []library.Track
+	rows            []row
+	expanded        map[string]bool
+	queued          map[string]library.Variant
+	queueOrder      []string
+	enabled         map[library.Category]bool
+	query           string
+	sort            library.Sort
+	trackDate       *library.DateRange
+	videoDate       *library.DateRange
+	mode            mode
+	cursor          int
+	overlayCursor   int
+	waitingForG     bool
+	width           int
+	height          int
+	status          string
+	theme           theme
+	stats           *latencyStats
+	playback        PlaybackLauncher
+	playbackOptions backend.PlaybackOptions
+	draftOptions    backend.PlaybackOptions
+	filterDraft     [2]string
+	launching       bool
 }
 
 func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
@@ -86,16 +95,17 @@ func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
 		enabled[category] = category == library.MusicVideo
 	}
 	m := Model{
-		all:      tracks,
-		expanded: make(map[string]bool),
-		queued:   make(map[string]library.Variant),
-		enabled:  enabled,
-		sort:     library.ModifiedNewest,
-		mode:     modeNavigate,
-		width:    120,
-		height:   36,
-		theme:    newTheme(),
-		stats:    &latencyStats{},
+		all:             tracks,
+		expanded:        make(map[string]bool),
+		queued:          make(map[string]library.Variant),
+		enabled:         enabled,
+		sort:            library.ModifiedNewest,
+		mode:            modeNavigate,
+		width:           120,
+		height:          36,
+		theme:           newTheme(),
+		stats:           &latencyStats{},
+		playbackOptions: backend.DefaultPlaybackOptions(),
 	}
 	if len(playback) > 0 {
 		m.playback = playback[0]
@@ -148,6 +158,10 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleSortKey(key), nil
 	case modeQueue:
 		return m.handleQueueKey(key), nil
+	case modePlaybackOptions:
+		return m.handleOptionsKey(key), nil
+	case modeFilters:
+		return m.handleFiltersKey(key), nil
 	default:
 		return m.handleNavigationKey(key), nil
 	}
@@ -172,7 +186,7 @@ func (m Model) launchQueue() (tea.Model, tea.Cmd) {
 	return m, func() tea.Msg {
 		result, err := m.playback.Launch(context.Background(), backend.PlaybackRequest{
 			VideoIDs: ids,
-			Options:  backend.DefaultPlaybackOptions(),
+			Options:  m.playbackOptions,
 		})
 		if err == nil && !result.Succeeded {
 			err = fmt.Errorf("%s", result.UserSafeError)
@@ -212,6 +226,10 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 		m.toggleExpanded()
 	case "space":
 		m.toggleQueue()
+	case "a":
+		m.queueAll(false)
+	case "A":
+		m.queueAll(true)
 	case "/":
 		m.mode = modeSearch
 		m.status = "Search mode: type freely; Enter or Esc returns to navigation"
@@ -221,6 +239,16 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 	case "s":
 		m.mode = modeSort
 		m.overlayCursor = slices.Index(library.Sorts, m.sort)
+	case "o":
+		m.mode, m.overlayCursor, m.draftOptions = modePlaybackOptions, 0, m.playbackOptions
+	case "f":
+		m.mode, m.overlayCursor = modeFilters, 0
+		if m.trackDate != nil {
+			m.filterDraft[0] = m.trackDate.Label
+		}
+		if m.videoDate != nil {
+			m.filterDraft[1] = m.videoDate.Label
+		}
 	case "q":
 		m.mode = modeQueue
 		m.overlayCursor = min(m.overlayCursor, max(len(m.queueOrder)-1, 0))
@@ -228,6 +256,147 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 		m.status = "Esc closes modes; Ctrl+Q quits"
 	}
 	return m
+}
+
+func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
+	switch key.String() {
+	case "esc":
+		m.mode = modeNavigate
+		return m
+	case "j", "down", "ctrl+j":
+		m.overlayCursor = min(m.overlayCursor+1, 3)
+		return m
+	case "k", "up", "ctrl+k":
+		m.overlayCursor = max(m.overlayCursor-1, 0)
+		return m
+	case "r":
+		m.draftOptions = backend.DefaultPlaybackOptions()
+		return m
+	case "enter":
+		m.playbackOptions = validateOptions(m.draftOptions)
+		m.mode = modeNavigate
+		m.status = "Playback options saved"
+		return m
+	case "space":
+		if m.overlayCursor == 0 {
+			m.draftOptions.Shuffle = !m.draftOptions.Shuffle
+		}
+		if m.overlayCursor == 1 {
+			m.draftOptions.OneVideoPerTrack = !m.draftOptions.OneVideoPerTrack
+		}
+		return m
+	case "h", "left":
+		if m.overlayCursor == 2 {
+			m.draftOptions.RepeatEach = max(1, m.draftOptions.RepeatEach-1)
+		} else if m.overlayCursor == 3 {
+			m.draftOptions.MaximumItems = max(0, m.draftOptions.MaximumItems-1)
+		}
+		return m
+	case "l", "right":
+		if m.overlayCursor == 2 {
+			m.draftOptions.RepeatEach = min(10, m.draftOptions.RepeatEach+1)
+		} else if m.overlayCursor == 3 {
+			m.draftOptions.MaximumItems++
+		}
+		return m
+	}
+	if key.Text >= "0" && key.Text <= "9" {
+		if m.overlayCursor == 2 {
+			m.draftOptions.RepeatEach = min(10, m.draftOptions.RepeatEach*10+int(key.Text[0]-'0'))
+		} else if m.overlayCursor == 3 {
+			m.draftOptions.MaximumItems = m.draftOptions.MaximumItems*10 + int(key.Text[0]-'0')
+		}
+	}
+	return m
+}
+
+func (m Model) handleFiltersKey(key tea.KeyPressMsg) Model {
+	switch key.String() {
+	case "esc":
+		m.mode = modeNavigate
+		return m
+	case "j", "down", "ctrl+j":
+		m.overlayCursor = min(m.overlayCursor+1, 3)
+		return m
+	case "k", "up", "ctrl+k":
+		m.overlayCursor = max(m.overlayCursor-1, 0)
+		return m
+	case "ctrl+u":
+		if m.overlayCursor < 2 {
+			m.filterDraft[m.overlayCursor] = ""
+		}
+		return m
+	case "backspace":
+		if m.overlayCursor < 2 && len(m.filterDraft[m.overlayCursor]) > 0 {
+			_, s := utf8.DecodeLastRuneInString(m.filterDraft[m.overlayCursor])
+			m.filterDraft[m.overlayCursor] = m.filterDraft[m.overlayCursor][:len(m.filterDraft[m.overlayCursor])-s]
+		}
+		return m
+	case "r":
+		m.resetFilters()
+		return m
+	case "enter":
+		if m.overlayCursor == 3 {
+			m.resetFilters()
+			return m
+		}
+		track, err := library.ParseDateRange(m.filterDraft[0])
+		if err != nil {
+			m.status = "Track date: " + err.Error()
+			return m
+		}
+		video, err := library.ParseDateRange(m.filterDraft[1])
+		if err != nil {
+			m.status = "Video date: " + err.Error()
+			return m
+		}
+		m.trackDate, m.videoDate, m.mode = track, video, modeNavigate
+		m.refreshResults()
+		return m
+	}
+	if m.overlayCursor < 2 && key.Text != "" {
+		m.filterDraft[m.overlayCursor] += key.Text
+	}
+	return m
+}
+func (m *Model) resetFilters() {
+	m.query = ""
+	m.trackDate = nil
+	m.videoDate = nil
+	for _, c := range library.Categories {
+		m.enabled[c] = c == library.MusicVideo
+	}
+	m.mode = modeNavigate
+	m.cursor = 0
+	m.refreshResults()
+}
+
+func (m *Model) queueAll(allVariants bool) {
+	added, skipped := 0, 0
+	for _, track := range m.filtered {
+		variants := library.EligibleVariants(track, m.currentQuery())
+		if !allVariants {
+			if selected, ok := library.DefaultVariant(track, m.currentQuery()); ok {
+				variants = []library.Variant{selected}
+			}
+		}
+		for _, variant := range variants {
+			if _, exists := m.queued[variant.ID]; exists {
+				skipped++
+				continue
+			}
+			m.queued[variant.ID] = variant
+			m.queueOrder = append(m.queueOrder, variant.ID)
+			added++
+		}
+	}
+	if len(m.filtered) == 0 {
+		m.status = "No matching tracks"
+	} else if skipped > 0 {
+		m.status = fmt.Sprintf("Queued %d; %d already queued", added, skipped)
+	} else {
+		m.status = fmt.Sprintf("Queued %d video(s)", added)
+	}
 }
 
 func (m Model) handleSearchKey(key tea.KeyPressMsg) Model {
@@ -485,7 +654,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -619,12 +788,31 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			}
 			lines = append(lines, "", "j/k move  •  shift+j/k reorder  •  delete remove  •  q/esc close")
 		}
+	case modePlaybackOptions:
+		title = "Playback options"
+		lines = []string{fmt.Sprintf("%s Shuffle: %t", cursorMark(m.overlayCursor, 0), m.draftOptions.Shuffle), fmt.Sprintf("%s One per track: %t", cursorMark(m.overlayCursor, 1), m.draftOptions.OneVideoPerTrack), fmt.Sprintf("%s Repeat: %d", cursorMark(m.overlayCursor, 2), m.draftOptions.RepeatEach), fmt.Sprintf("%s Maximum: %d", cursorMark(m.overlayCursor, 3), m.draftOptions.MaximumItems), "", "space toggle • h/l adjust • enter save • esc cancel"}
+	case modeFilters:
+		title = "Filters"
+		lines = []string{fmt.Sprintf("%s Track: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • esc cancel"}
 	}
 
 	overlayWidth := min(max(width*2/3, 42), 88)
 	content := m.theme.overlayTitle.Render(title) + "\n\n" + strings.Join(lines, "\n")
 	overlay := m.theme.overlay.Width(overlayWidth).Render(content)
 	return placeOverlay(base, overlay, width, height)
+}
+
+func cursorMark(cursor, index int) string {
+	if cursor == index {
+		return "›"
+	}
+	return " "
+}
+func emptyAny(value string) string {
+	if value == "" {
+		return "Any"
+	}
+	return value
 }
 
 func joinAligned(left, right string, width int) string {
