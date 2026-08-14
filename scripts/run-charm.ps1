@@ -76,6 +76,9 @@ try {
     }
     $arguments += $ApplicationArguments
     & $executable $arguments
+    if ($LASTEXITCODE -ne 0) {
+        exit $LASTEXITCODE
+    }
 }
 finally {
     Pop-Location

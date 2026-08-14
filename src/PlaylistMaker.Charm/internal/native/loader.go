@@ -57,6 +57,7 @@ func loadCache(path string) (map[string]cacheEntry, error) {
 		return nil, fmt.Errorf("read FLAC cache %q: %w", path, err)
 	}
 	var entries []cacheEntry
+	contents = []byte(strings.TrimPrefix(string(contents), "\ufeff"))
 	if err := json.Unmarshal(contents, &entries); err != nil {
 		return nil, fmt.Errorf("parse FLAC cache %q: %w", path, err)
 	}
@@ -114,7 +115,7 @@ func buildLibrary(mappings []mappingEntry, cache map[string]cacheEntry) (backend
 			if !left.Date.Equal(right.Date) {
 				return left.Date.After(right.Date)
 			}
-			return pathid.ComparisonKey(left.VideoPath) < pathid.ComparisonKey(right.VideoPath)
+			return strings.ToUpper(pathid.Normalize(left.VideoPath)) < strings.ToUpper(pathid.Normalize(right.VideoPath))
 		})
 		for _, variant := range track.Variants {
 			if variant.ModifiedAt.After(track.ModifiedAt) {
@@ -146,12 +147,18 @@ func makeVariant(entry mappingEntry) (library.Variant, error) {
 var fullDatePattern = regexp.MustCompile(`(?i)(?:\b|_)(?:(\d{4})|(?:20)?(\d{2}))[./-]?(\d{2})[./-]?(\d{2})(?:\b|_)`)
 
 func releaseDate(tag, audioPath string) (time.Time, string, bool) {
-	if matches := fullDatePattern.FindAllStringSubmatch(audioPath, -1); len(matches) == 1 {
-		year := matches[0][1]
+	labels := make(map[string]bool)
+	for _, match := range fullDatePattern.FindAllStringSubmatch(audioPath, -1) {
+		year := match[1]
 		if year == "" {
-			year = "20" + matches[0][2]
+			year = "20" + match[2]
 		}
-		return dateLabel(year + "-" + matches[0][3] + "-" + matches[0][4])
+		labels[year+"-"+match[3]+"-"+match[4]] = true
+	}
+	if len(labels) == 1 {
+		for label := range labels {
+			return dateLabel(label)
+		}
 	}
 	return dateLabel(tag)
 }
