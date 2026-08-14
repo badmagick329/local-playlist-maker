@@ -5,6 +5,7 @@ type shortcut struct{ section, key, description string }
 var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
 	{"Views", "/", "search"}, {"Views", "c / s / f / o", "categories / sort / filters / options"}, {"Views", "?", "shortcut help"},
+	{"Views", "d", "selected media details"},
 	{"Queue", "Space", "toggle current"}, {"Queue", "a / A", "queue defaults / all matching videos"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace", "remove"},
 	{"Options", "Space", "toggle boolean"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
 	{"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / Esc", "apply / cancel"},
@@ -54,6 +55,8 @@ func footerHint(current mode, width int) string {
 		hint = "j/k move  •  type date/range  •  ctrl+u clear  •  r reset  •  enter apply  •  esc cancel"
 	case modeHelp:
 		hint = "j/k scroll  •  ctrl+u/d or pgup/dn page  •  gg/G first/last  •  ?/esc close"
+	case modeDetails:
+		hint = "j/k scroll  •  ctrl+u/d or pgup/dn page  •  gg/G first/last  •  d/esc close"
 	}
 	return truncate(hint, width)
 }

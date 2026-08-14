@@ -233,7 +233,7 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 	}
 
 	for _, size := range []struct{ width, height int }{{40, 12}, {80, 24}, {140, 40}} {
-		for _, current := range []mode{modeNavigate, modeSearch, modeCategories, modeSort, modeQueue, modePlaybackOptions, modeFilters, modeHelp} {
+		for _, current := range []mode{modeNavigate, modeSearch, modeCategories, modeSort, modeQueue, modePlaybackOptions, modeFilters, modeHelp, modeDetails} {
 			m := New(library.Generate(20, 80))
 			m.mode = current
 			m.overlayCursor = 9
@@ -268,5 +268,23 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 	m = updateKey(t, m, "?")
 	if m.mode != modeSearch || m.query != "?" {
 		t.Fatal("question mark did not remain searchable text in search mode")
+	}
+}
+
+func TestDetailsOverlayShowsSelectedHistoryAndOwnsKeys(t *testing.T) {
+	m := New(library.Generate(2, 4))
+	percent := 100.0
+	m.filtered[0].History = library.History{PlayedCount: 1, CompletedCount: 1, Recent: []library.HistoryEvent{{Outcome: "completed", Percent: &percent}}}
+	m = updateKey(t, m, "d")
+	if m.mode != modeDetails || !strings.Contains(stripStyles(m.render()), "History: 1 played") {
+		t.Fatal("details did not open with selected history")
+	}
+	m = updateKey(t, m, "a")
+	if len(m.queueOrder) != 0 {
+		t.Fatal("details action leaked into queue")
+	}
+	m = updateKey(t, m, "d")
+	if m.mode != modeNavigate {
+		t.Fatal("details did not close")
 	}
 }

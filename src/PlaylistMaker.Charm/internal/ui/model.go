@@ -29,6 +29,7 @@ const (
 	modePlaybackOptions
 	modeFilters
 	modeHelp
+	modeDetails
 )
 
 func (m mode) String() string {
@@ -47,6 +48,8 @@ func (m mode) String() string {
 		return "FILTERS"
 	case modeHelp:
 		return "HELP"
+	case modeDetails:
+		return "DETAILS"
 	default:
 		return "NAV"
 	}
@@ -95,6 +98,7 @@ type Model struct {
 	optionEditField int
 	optionError     string
 	helpOffset      int
+	detailsOffset   int
 	launching       bool
 }
 
@@ -175,6 +179,8 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleFiltersKey(key), nil
 	case modeHelp:
 		return m.handleHelpKey(key), nil
+	case modeDetails:
+		return m.handleDetailsKey(key), nil
 	default:
 		return m.handleNavigationKey(key), nil
 	}
@@ -269,8 +275,31 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 		m.overlayCursor = min(m.overlayCursor, max(len(m.queueOrder)-1, 0))
 	case "?":
 		m.mode, m.helpOffset = modeHelp, 0
+	case "d":
+		m.mode, m.detailsOffset = modeDetails, 0
 	case "esc":
 		m.status = "Esc closes modes; Ctrl+Q quits"
+	}
+	return m
+}
+
+func (m Model) handleDetailsKey(key tea.KeyPressMsg) Model {
+	maxOffset := max(len(m.detailsLines())-overlayListCapacity(m.height), 0)
+	switch key.String() {
+	case "esc", "d":
+		m.mode = modeNavigate
+	case "j", "down", "ctrl+j":
+		m.detailsOffset = min(m.detailsOffset+1, maxOffset)
+	case "k", "up", "ctrl+k":
+		m.detailsOffset = max(m.detailsOffset-1, 0)
+	case "ctrl+d", "pgdown":
+		m.detailsOffset = min(m.detailsOffset+overlayListCapacity(m.height), maxOffset)
+	case "ctrl+u", "pgup":
+		m.detailsOffset = max(m.detailsOffset-overlayListCapacity(m.height), 0)
+	case "g":
+		m.detailsOffset = 0
+	case "G":
+		m.detailsOffset = maxOffset
 	}
 	return m
 }
@@ -781,7 +810,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -963,6 +992,13 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		end := min(m.helpOffset+visible, len(all))
 		lines = append(lines, all[m.helpOffset:end]...)
 		lines = append(lines, "", "j/k scroll • ctrl+u/d page • gg/G ends • ?/esc close")
+	case modeDetails:
+		title = "Details"
+		all := m.detailsLines()
+		m.detailsOffset = min(m.detailsOffset, max(len(all)-overlayListCapacity(height), 0))
+		end := min(m.detailsOffset+overlayListCapacity(height), len(all))
+		lines = append(lines, all[m.detailsOffset:end]...)
+		lines = append(lines, "", "j/k scroll • ctrl+u/d page • gg/G ends • d/esc close")
 	}
 
 	overlayWidth := min(max(width*2/3, 28), min(88, width))
@@ -1025,6 +1061,50 @@ func onOff(value bool) string {
 		return "On"
 	}
 	return "Off"
+}
+
+func (m Model) detailsLines() []string {
+	current, ok := m.currentRow()
+	if !ok {
+		return []string{"No selected media"}
+	}
+	track := m.filtered[current.trackIndex]
+	if current.isVariant() {
+		variant := track.Variants[current.variantIndex]
+		return append([]string{"Video: " + variant.Filename, "Video path: " + variant.VideoPath, "Audio path: " + variant.AudioPath, "Category: " + string(variant.Category), "Video date: " + variant.DateLabel, "Modified: " + variant.ModifiedAt.UTC().Format(time.RFC3339), queueState(m.queuedID(variant.ID) != "")}, historyLines(variant.History)...)
+	}
+	eligible := len(library.EligibleVariants(track, m.currentQuery()))
+	lines := []string{"Artist: " + track.Artist, "Title: " + track.Title, "Audio path: " + track.ID, "Release: " + track.ReleaseDateLabel, fmt.Sprintf("Variants: %d total • %d eligible", len(track.Variants), eligible), queueState(m.trackQueued(track))}
+	return append(lines, historyLines(track.History)...)
+}
+
+func (m Model) trackQueued(track library.Track) bool {
+	for _, variant := range track.Variants {
+		if m.queuedID(variant.ID) != "" {
+			return true
+		}
+	}
+	return false
+}
+func queueState(queued bool) string {
+	if queued {
+		return "Queue: queued"
+	}
+	return "Queue: not queued"
+}
+func historyLines(value library.History) []string {
+	lines := []string{fmt.Sprintf("History: %d played • %d completed • %d stopped • %d skipped", value.PlayedCount, value.CompletedCount, value.StoppedCount, value.SkippedCount), fmt.Sprintf("Recovery: %d not started • %d abandoned", value.NotStartedCount, value.AbandonedCount)}
+	if value.LastPlayedAtUTC != nil {
+		lines = append(lines, "Last played: "+value.LastPlayedAtUTC.UTC().Format(time.RFC3339))
+	}
+	for _, event := range value.Recent {
+		detail := event.Outcome + " • " + event.AtUTC.UTC().Format("2006-01-02 15:04")
+		if event.Percent != nil {
+			detail += fmt.Sprintf(" • %.0f%%", *event.Percent)
+		}
+		lines = append(lines, detail)
+	}
+	return lines
 }
 
 func cursorMark(cursor, index int) string {

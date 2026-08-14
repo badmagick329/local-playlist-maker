@@ -69,7 +69,16 @@ type History struct {
 	CompletedCount  int
 	StoppedCount    int
 	SkippedCount    int
+	NotStartedCount int
+	AbandonedCount  int
 	LastPlayedAtUTC *time.Time
+	Recent          []HistoryEvent
+}
+
+type HistoryEvent struct {
+	Outcome string
+	AtUTC   time.Time
+	Percent *float64
 }
 
 type Sort int
