@@ -76,28 +76,105 @@ type Sort int
 
 const (
 	ModifiedNewest Sort = iota
+	ModifiedOldest
 	ArtistAscending
+	ArtistDescending
 	TitleAscending
+	TitleDescending
 	ReleaseNewest
+	ReleaseOldest
 	VideoNewest
+	VideoOldest
 )
 
 func (s Sort) String() string {
 	switch s {
+	case ModifiedOldest:
+		return "Modified oldest"
 	case ArtistAscending:
 		return "Artist A-Z"
+	case ArtistDescending:
+		return "Artist Z-A"
 	case TitleAscending:
 		return "Title A-Z"
+	case TitleDescending:
+		return "Title Z-A"
 	case ReleaseNewest:
 		return "Track release newest"
+	case ReleaseOldest:
+		return "Track release oldest"
 	case VideoNewest:
 		return "Video date newest"
+	case VideoOldest:
+		return "Video date oldest"
 	default:
 		return "Modified newest"
 	}
 }
 
-var Sorts = []Sort{ModifiedNewest, ArtistAscending, TitleAscending, ReleaseNewest, VideoNewest}
+var Sorts = []Sort{ModifiedNewest, ModifiedOldest, ArtistAscending, ArtistDescending, TitleAscending, TitleDescending, ReleaseNewest, ReleaseOldest, VideoNewest, VideoOldest}
+
+type DateRange struct {
+	Label string
+	Start time.Time
+	End   time.Time
+}
+
+func (r DateRange) Contains(value time.Time) bool {
+	return !value.Before(r.Start) && !value.After(r.End)
+}
+
+type Query struct {
+	SearchText   string
+	Enabled      map[Category]bool
+	TrackRelease *DateRange
+	VideoDate    *DateRange
+	Sort         Sort
+}
+
+func ParseDateRange(value string) (*DateRange, error) {
+	if strings.TrimSpace(value) == "" {
+		return nil, nil
+	}
+	parts := strings.Split(value, "..")
+	if len(parts) > 2 {
+		return nil, fmt.Errorf("date range must use START..END")
+	}
+	if len(parts) == 1 {
+		parts = []string{parts[0], parts[0]}
+	}
+	start, _, err := parseDateEndpoint(parts[0], false)
+	if err != nil {
+		return nil, err
+	}
+	end, _, err := parseDateEndpoint(parts[1], true)
+	if err != nil {
+		return nil, err
+	}
+	if start.After(end) {
+		return nil, fmt.Errorf("range start is after its end")
+	}
+	return &DateRange{Label: value, Start: start, End: end.Add(time.Second - time.Nanosecond)}, nil
+}
+func parseDateEndpoint(value string, end bool) (time.Time, string, error) {
+	layouts := []string{"2006-01-02", "2006-01", "2006"}
+	for _, layout := range layouts {
+		if parsed, err := time.Parse(layout, value); err == nil {
+			switch layout {
+			case "2006":
+				if end {
+					return parsed.AddDate(1, 0, 0).Add(-time.Nanosecond), value, nil
+				}
+			case "2006-01":
+				if end {
+					return parsed.AddDate(0, 1, 0).Add(-time.Nanosecond), value, nil
+				}
+			}
+			return parsed, value, nil
+		}
+	}
+	return time.Time{}, "", fmt.Errorf("invalid date %q", value)
+}
 
 func Generate(trackCount, variantCount int) []Track {
 	artists := []string{
@@ -171,8 +248,8 @@ func Generate(trackCount, variantCount int) []Track {
 	return tracks
 }
 
-func FilterAndSort(all []Track, query string, enabled map[Category]bool, order Sort) []Track {
-	normalizedQuery := normalize(query)
+func FilterAndSort(all []Track, query Query) []Track {
+	normalizedQuery := normalize(query.SearchText)
 	tokens := strings.Fields(normalizedQuery)
 	type scored struct {
 		track Track
@@ -181,14 +258,16 @@ func FilterAndSort(all []Track, query string, enabled map[Category]bool, order S
 	matches := make([]scored, 0, len(all))
 
 	for _, track := range all {
-		if !hasEnabledVariant(track, enabled) {
+		if query.TrackRelease != nil && !query.TrackRelease.Contains(track.ReleaseDate) {
+			continue
+		}
+		eligible := EligibleVariants(track, query)
+		if len(eligible) == 0 {
 			continue
 		}
 		candidate := track.BaseSearchText
-		for category, categorySearchText := range track.SearchTextByCategory {
-			if enabled[category] {
-				candidate += categorySearchText
-			}
+		for _, variant := range eligible {
+			candidate += " " + normalize(variant.Filename)
 		}
 		score, ok := fuzzyScore(candidate, tokens)
 		if !ok {
@@ -202,26 +281,30 @@ func FilterAndSort(all []Track, query string, enabled map[Category]bool, order S
 		if normalizedQuery != "" && left.score != right.score {
 			return left.score > right.score
 		}
-		switch order {
-		case ArtistAscending:
+		switch query.Sort {
+		case ArtistAscending, ArtistDescending:
 			if value := strings.Compare(strings.ToLower(left.track.Artist), strings.ToLower(right.track.Artist)); value != 0 {
-				return value < 0
+				return (value < 0) == (query.Sort == ArtistAscending)
 			}
-		case TitleAscending:
+		case TitleAscending, TitleDescending:
 			if value := strings.Compare(strings.ToLower(left.track.Title), strings.ToLower(right.track.Title)); value != 0 {
-				return value < 0
+				return (value < 0) == (query.Sort == TitleAscending)
 			}
-		case ReleaseNewest:
+		case ReleaseNewest, ReleaseOldest:
 			if !left.track.ReleaseDate.Equal(right.track.ReleaseDate) {
-				return left.track.ReleaseDate.After(right.track.ReleaseDate)
+				return left.track.ReleaseDate.After(right.track.ReleaseDate) == (query.Sort == ReleaseNewest)
 			}
-		case VideoNewest:
-			if !left.track.NewestVideoDate.Equal(right.track.NewestVideoDate) {
-				return left.track.NewestVideoDate.After(right.track.NewestVideoDate)
+		case VideoNewest, VideoOldest, ModifiedNewest, ModifiedOldest:
+			leftDefault, _ := DefaultVariant(left.track, query)
+			rightDefault, _ := DefaultVariant(right.track, query)
+			leftValue, rightValue := leftDefault.ModifiedAt, rightDefault.ModifiedAt
+			newest := query.Sort == ModifiedNewest
+			if query.Sort == VideoNewest || query.Sort == VideoOldest {
+				leftValue, rightValue = leftDefault.Date, rightDefault.Date
+				newest = query.Sort == VideoNewest
 			}
-		default:
-			if !left.track.ModifiedAt.Equal(right.track.ModifiedAt) {
-				return left.track.ModifiedAt.After(right.track.ModifiedAt)
+			if !leftValue.Equal(rightValue) {
+				return leftValue.After(rightValue) == newest
 			}
 		}
 		return left.track.ID < right.track.ID
@@ -234,18 +317,18 @@ func FilterAndSort(all []Track, query string, enabled map[Category]bool, order S
 	return result
 }
 
-func EligibleVariants(track Track, enabled map[Category]bool) []Variant {
+func EligibleVariants(track Track, query Query) []Variant {
 	result := make([]Variant, 0, len(track.Variants))
 	for _, variant := range track.Variants {
-		if enabled[variant.Category] {
+		if query.Enabled[variant.Category] && (query.VideoDate == nil || query.VideoDate.Contains(variant.Date)) {
 			result = append(result, variant)
 		}
 	}
 	return result
 }
 
-func DefaultVariant(track Track, enabled map[Category]bool) (Variant, bool) {
-	eligible := EligibleVariants(track, enabled)
+func DefaultVariant(track Track, query Query) (Variant, bool) {
+	eligible := EligibleVariants(track, query)
 	if len(eligible) == 0 {
 		return Variant{}, false
 	}
@@ -266,15 +349,6 @@ func DefaultVariant(track Track, enabled map[Category]bool) (Variant, bool) {
 		}
 	}
 	return best, true
-}
-
-func hasEnabledVariant(track Track, enabled map[Category]bool) bool {
-	for _, variant := range track.Variants {
-		if enabled[variant.Category] {
-			return true
-		}
-	}
-	return false
 }
 
 func normalize(value string) string {

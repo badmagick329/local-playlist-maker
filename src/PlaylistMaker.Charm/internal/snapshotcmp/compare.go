@@ -48,9 +48,9 @@ func compareTrack(record func(string, ...any), prefix string, left, right librar
 	for index := 0; index < min(len(left.Variants), len(right.Variants)); index++ {
 		compareVariant(record, fmt.Sprintf("%s variant[%d]", prefix, index), left.Variants[index], right.Variants[index])
 	}
-	all := map[library.Category]bool{library.MusicVideo: true}
-	leftDefault, leftOK := library.DefaultVariant(left, all)
-	rightDefault, rightOK := library.DefaultVariant(right, all)
+	query := library.Query{Enabled: map[library.Category]bool{library.MusicVideo: true}}
+	leftDefault, leftOK := library.DefaultVariant(left, query)
+	rightDefault, rightOK := library.DefaultVariant(right, query)
 	if leftOK != rightOK || (leftOK && leftDefault.ID != rightDefault.ID) {
 		record("%s default variant: bridge=%q go=%q", prefix, leftDefault.ID, rightDefault.ID)
 	}

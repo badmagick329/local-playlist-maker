@@ -73,6 +73,7 @@ func TestSortEnterAppliesSelectionAndClosesOverlay(t *testing.T) {
 	m.cursor = 20
 	m = updateKey(t, m, "s")
 	m = updateKey(t, m, "j")
+	m = updateKey(t, m, "j")
 	m = updateKey(t, m, "enter")
 
 	if m.sort != library.ArtistAscending {

@@ -65,6 +65,8 @@ type Model struct {
 	enabled       map[library.Category]bool
 	query         string
 	sort          library.Sort
+	trackDate     *library.DateRange
+	videoDate     *library.DateRange
 	mode          mode
 	cursor        int
 	overlayCursor int
@@ -315,7 +317,7 @@ func (m *Model) refreshResults() {
 	if current, ok := m.currentRow(); ok {
 		selectedTrackID = m.filtered[current.trackIndex].ID
 	}
-	m.filtered = library.FilterAndSort(m.all, m.query, m.enabled, m.sort)
+	m.filtered = library.FilterAndSort(m.all, m.currentQuery())
 	m.rebuildRows()
 	if selectedTrackID != "" {
 		for index, current := range m.rows {
@@ -328,6 +330,14 @@ func (m *Model) refreshResults() {
 	m.keepCursorVisible()
 }
 
+func (m Model) currentQuery() library.Query {
+	return library.Query{SearchText: m.query, Enabled: m.enabled, TrackRelease: m.trackDate, VideoDate: m.videoDate, Sort: m.sort}
+}
+
+func (m Model) isEligible(variant library.Variant) bool {
+	return m.enabled[variant.Category] && (m.videoDate == nil || m.videoDate.Contains(variant.Date))
+}
+
 func (m *Model) rebuildRows() {
 	rows := make([]row, 0, len(m.filtered)+64)
 	for trackIndex, track := range m.filtered {
@@ -336,7 +346,7 @@ func (m *Model) rebuildRows() {
 			continue
 		}
 		for variantIndex, variant := range track.Variants {
-			if m.enabled[variant.Category] {
+			if m.isEligible(variant) {
 				rows = append(rows, row{trackIndex: trackIndex, variantIndex: variantIndex})
 			}
 		}
@@ -401,7 +411,7 @@ func (m *Model) toggleQueue() {
 	if current.isVariant() {
 		variant = track.Variants[current.variantIndex]
 	} else {
-		defaultVariant, ok := library.DefaultVariant(track, m.enabled)
+		defaultVariant, ok := library.DefaultVariant(track, m.currentQuery())
 		if !ok {
 			return
 		}
@@ -537,7 +547,7 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 		}
 	}
 	left := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
-	eligibleCount := len(library.EligibleVariants(track, m.enabled))
+	eligibleCount := len(library.EligibleVariants(track, m.currentQuery()))
 	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", track.ReleaseDateLabel, eligibleCount))
 	line := joinAligned(left, right, width)
 	if selected {

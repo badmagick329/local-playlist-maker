@@ -22,7 +22,7 @@ func TestFilterSearchesVariantFilenames(t *testing.T) {
 	for _, category := range Categories {
 		enabled[category] = true
 	}
-	result := FilterAndSort(tracks, "performance 02", enabled, ModifiedNewest)
+	result := FilterAndSort(tracks, Query{SearchText: "performance 02", Enabled: enabled, Sort: ModifiedNewest})
 	if len(result) == 0 {
 		t.Fatal("expected a variant filename match")
 	}
@@ -36,6 +36,6 @@ func BenchmarkFilterAndSortParityScale(b *testing.B) {
 	}
 	b.ResetTimer()
 	for range b.N {
-		FilterAndSort(tracks, "aes kiss", enabled, ModifiedNewest)
+		FilterAndSort(tracks, Query{SearchText: "aes kiss", Enabled: enabled, Sort: ModifiedNewest})
 	}
 }
