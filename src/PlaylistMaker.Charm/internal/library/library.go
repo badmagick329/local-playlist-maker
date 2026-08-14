@@ -154,13 +154,17 @@ func ParseDateRange(value string) (*DateRange, error) {
 	if start.After(end) {
 		return nil, fmt.Errorf("range start is after its end")
 	}
-	return &DateRange{Label: value, Start: start, End: end.Add(time.Second - time.Nanosecond)}, nil
+	return &DateRange{Label: value, Start: start, End: end}, nil
 }
 func parseDateEndpoint(value string, end bool) (time.Time, string, error) {
 	layouts := []string{"2006-01-02", "2006-01", "2006"}
 	for _, layout := range layouts {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			switch layout {
+			case "2006-01-02":
+				if end {
+					return parsed.AddDate(0, 0, 1).Add(-time.Nanosecond), value, nil
+				}
 			case "2006":
 				if end {
 					return parsed.AddDate(1, 0, 0).Add(-time.Nanosecond), value, nil

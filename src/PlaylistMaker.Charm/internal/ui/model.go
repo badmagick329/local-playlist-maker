@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -14,6 +15,7 @@ import (
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
+	"playlistmaker/charm/internal/pathid"
 )
 
 type mode int
@@ -89,6 +91,9 @@ type Model struct {
 	playbackOptions backend.PlaybackOptions
 	draftOptions    backend.PlaybackOptions
 	filterDraft     [2]string
+	optionEdit      string
+	optionEditField int
+	optionError     string
 	helpOffset      int
 	launching       bool
 }
@@ -110,6 +115,7 @@ func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
 		theme:           newTheme(),
 		stats:           &latencyStats{},
 		playbackOptions: backend.DefaultPlaybackOptions(),
+		optionEditField: -1,
 	}
 	if len(playback) > 0 {
 		m.playback = playback[0]
@@ -139,6 +145,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = max(message.Width, 40)
 		m.height = max(message.Height, 12)
 		m.keepCursorVisible()
+		m.helpOffset = min(m.helpOffset, m.helpMaxOffset())
 		return m, nil
 	case tea.KeyPressMsg:
 		if message.String() == "ctrl+q" {
@@ -188,7 +195,7 @@ func (m Model) launchQueue() (tea.Model, tea.Cmd) {
 	}
 	ids := append([]string(nil), m.queueOrder...)
 	m.launching = true
-	m.status = fmt.Sprintf("Launching %d queued video(s)…", len(ids))
+	m.status = fmt.Sprintf("Launching %d planned video(s)…", plannedCount(ids, m.queued, m.playbackOptions))
 	return m, func() tea.Msg {
 		result, err := m.playback.Launch(context.Background(), backend.PlaybackRequest{
 			VideoIDs: ids,
@@ -247,8 +254,10 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 		m.overlayCursor = slices.Index(library.Sorts, m.sort)
 	case "o":
 		m.mode, m.overlayCursor, m.draftOptions = modePlaybackOptions, 0, m.playbackOptions
+		m.optionEdit, m.optionEditField, m.optionError = "", -1, ""
 	case "f":
 		m.mode, m.overlayCursor = modeFilters, 0
+		m.filterDraft = [2]string{}
 		if m.trackDate != nil {
 			m.filterDraft[0] = m.trackDate.Label
 		}
@@ -267,7 +276,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 }
 
 func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {
-	maxOffset := max(len(helpLines())-max(m.height-8, 1), 0)
+	maxOffset := m.helpMaxOffset()
 	switch key.String() {
 	case "esc", "?":
 		m.mode = modeNavigate
@@ -287,22 +296,36 @@ func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {
 	return m
 }
 
+func (m Model) helpMaxOffset() int {
+	return max(len(helpLines())-overlayListCapacity(m.height), 0)
+}
+
 func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
 	case "esc":
 		m.mode = modeNavigate
 		return m
 	case "j", "down", "ctrl+j":
+		if !m.commitOptionEdit() {
+			return m
+		}
 		m.overlayCursor = min(m.overlayCursor+1, 3)
 		return m
 	case "k", "up", "ctrl+k":
+		if !m.commitOptionEdit() {
+			return m
+		}
 		m.overlayCursor = max(m.overlayCursor-1, 0)
 		return m
 	case "r":
 		m.draftOptions = backend.DefaultPlaybackOptions()
+		m.clearOptionEdit()
 		return m
 	case "enter":
-		m.playbackOptions = validateOptions(m.draftOptions)
+		if !m.commitOptionEdit() {
+			return m
+		}
+		m.playbackOptions = m.draftOptions
 		m.mode = modeNavigate
 		m.status = "Playback options saved"
 		return m
@@ -315,6 +338,7 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 		}
 		return m
 	case "h", "left":
+		m.clearOptionEdit()
 		if m.overlayCursor == 2 {
 			m.draftOptions.RepeatEach = max(1, m.draftOptions.RepeatEach-1)
 		} else if m.overlayCursor == 3 {
@@ -322,21 +346,85 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 		}
 		return m
 	case "l", "right":
+		m.clearOptionEdit()
 		if m.overlayCursor == 2 {
 			m.draftOptions.RepeatEach = min(10, m.draftOptions.RepeatEach+1)
 		} else if m.overlayCursor == 3 {
 			m.draftOptions.MaximumItems++
 		}
 		return m
+	case "backspace":
+		if m.overlayCursor >= 2 {
+			if m.optionEditField != m.overlayCursor {
+				m.optionEditField = m.overlayCursor
+				m.optionEdit = m.optionValue()
+			}
+			if m.optionEdit != "" {
+				m.optionEdit = m.optionEdit[:len(m.optionEdit)-1]
+			}
+			m.applyOptionEdit()
+		}
+		return m
 	}
 	if key.Text >= "0" && key.Text <= "9" {
-		if m.overlayCursor == 2 {
-			m.draftOptions.RepeatEach = min(10, m.draftOptions.RepeatEach*10+int(key.Text[0]-'0'))
-		} else if m.overlayCursor == 3 {
-			m.draftOptions.MaximumItems = m.draftOptions.MaximumItems*10 + int(key.Text[0]-'0')
+		if m.overlayCursor >= 2 {
+			if m.optionEditField != m.overlayCursor {
+				m.optionEditField, m.optionEdit = m.overlayCursor, ""
+			}
+			m.optionEdit += key.Text
+			m.applyOptionEdit()
 		}
 	}
 	return m
+}
+
+func (m *Model) clearOptionEdit() {
+	m.optionEdit, m.optionError, m.optionEditField = "", "", -1
+}
+
+func (m Model) optionValue() string {
+	if m.overlayCursor == 2 {
+		return strconv.Itoa(m.draftOptions.RepeatEach)
+	}
+	return strconv.Itoa(m.draftOptions.MaximumItems)
+}
+
+func (m *Model) applyOptionEdit() bool {
+	if m.optionEdit == "" {
+		m.optionError = "A number is required"
+		return false
+	}
+	value, err := strconv.Atoi(m.optionEdit)
+	if err != nil {
+		m.optionError = "Number is too large"
+		return false
+	}
+	if m.optionEditField == 2 {
+		if value < 1 || value > 10 {
+			m.optionError = "Repeat must be 1 through 10"
+			return false
+		}
+		m.draftOptions.RepeatEach = value
+	} else if m.optionEditField == 3 {
+		if value < 0 {
+			m.optionError = "Maximum must be zero or greater"
+			return false
+		}
+		m.draftOptions.MaximumItems = value
+	}
+	m.optionError = ""
+	return true
+}
+
+func (m *Model) commitOptionEdit() bool {
+	if m.optionEditField < 0 {
+		return true
+	}
+	if !m.applyOptionEdit() {
+		return false
+	}
+	m.clearOptionEdit()
+	return true
 }
 
 func (m Model) handleFiltersKey(key tea.KeyPressMsg) Model {
@@ -410,7 +498,7 @@ func (m *Model) queueAll(allVariants bool) {
 			}
 		}
 		for _, variant := range variants {
-			if _, exists := m.queued[variant.ID]; exists {
+			if m.queuedID(variant.ID) != "" {
 				skipped++
 				continue
 			}
@@ -615,15 +703,25 @@ func (m *Model) toggleQueue() {
 		}
 		variant = defaultVariant
 	}
-	if _, exists := m.queued[variant.ID]; exists {
-		delete(m.queued, variant.ID)
-		m.queueOrder = slices.DeleteFunc(m.queueOrder, func(id string) bool { return id == variant.ID })
+	if queuedID := m.queuedID(variant.ID); queuedID != "" {
+		delete(m.queued, queuedID)
+		m.queueOrder = slices.DeleteFunc(m.queueOrder, func(id string) bool { return id == queuedID })
 		m.status = "Removed from queue"
 		return
 	}
 	m.queued[variant.ID] = variant
 	m.queueOrder = append(m.queueOrder, variant.ID)
 	m.status = "Queued " + variant.Filename
+}
+
+func (m Model) queuedID(id string) string {
+	identity := pathid.ComparisonKey(id)
+	for _, queuedID := range m.queueOrder {
+		if pathid.ComparisonKey(queuedID) == identity {
+			return queuedID
+		}
+	}
+	return ""
 }
 
 func (m *Model) removeQueueAt(index int) {
@@ -698,8 +796,23 @@ func (m Model) renderHeader(width int) string {
 		query += m.theme.accent.Render("▏")
 	}
 	left := modeText + "  " + query
-	right := fmt.Sprintf("%d tracks  •  %d queued  •  %s", len(m.filtered), len(m.queueOrder), m.sort)
+	filters := m.activeFilterLabel()
+	right := fmt.Sprintf("%d tracks  •  %d queued  •  %s%s", len(m.filtered), len(m.queueOrder), m.sort, filters)
 	return joinAligned(left, m.theme.muted.Render(right), width)
+}
+
+func (m Model) activeFilterLabel() string {
+	labels := make([]string, 0, 2)
+	if m.trackDate != nil {
+		labels = append(labels, "track "+m.trackDate.Label)
+	}
+	if m.videoDate != nil {
+		labels = append(labels, "video "+m.videoDate.Label)
+	}
+	if len(labels) == 0 {
+		return ""
+	}
+	return "  •  " + strings.Join(labels, ", ")
 }
 
 func (m Model) renderRows(width, height int) string {
@@ -721,7 +834,7 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 	if current.isVariant() {
 		variant := track.Variants[current.variantIndex]
 		mark := "  "
-		if _, queued := m.queued[variant.ID]; queued {
+		if m.queuedID(variant.ID) != "" {
 			mark = m.theme.queued.Render("● ")
 		}
 		left := "    " + mark + m.theme.variant.Render(variant.Filename)
@@ -739,7 +852,7 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 	}
 	queued := "  "
 	for _, variant := range track.Variants {
-		if _, ok := m.queued[variant.ID]; ok {
+		if m.queuedID(variant.ID) != "" {
 			queued = m.theme.queued.Render("● ")
 			break
 		}
@@ -756,11 +869,11 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 
 func (m Model) renderFooter(width int) string {
 	stats := m.stats.snapshot()
-	left := "j/k move  ctrl+u/d page  gg/G ends  h/l fold  space queue  ctrl+enter play  / search  c/s/q"
-	if m.mode == modeSearch {
-		left = "type search  space inserts space  ctrl+j/k move  ctrl+u clear  enter/esc nav"
+	left := footerHint(m.mode, width)
+	right := ""
+	if width >= 165 {
+		right = fmt.Sprintf("update p95 %.2fms  view p95 %.2fms", milliseconds(stats.updateP95), milliseconds(stats.viewP95))
 	}
-	right := fmt.Sprintf("update p95 %.2fms  view p95 %.2fms", milliseconds(stats.updateP95), milliseconds(stats.viewP95))
 	status := m.status
 	if status == "" {
 		status = "Synthetic parity-scale library; no files or players are touched"
@@ -774,6 +887,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 	switch m.mode {
 	case modeCategories:
 		title = "Categories"
+		items := make([]string, 0, len(library.Categories))
 		for index, category := range library.Categories {
 			check := "○"
 			if m.enabled[category] {
@@ -783,11 +897,12 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			if index == m.overlayCursor {
 				prefix = "› "
 			}
-			lines = append(lines, fmt.Sprintf("%s%s  %s", prefix, check, category))
+			items = append(items, fmt.Sprintf("%s%s  %s", prefix, check, category))
 		}
-		lines = append(lines, "", "space/enter toggle  •  c/esc close")
+		lines = append(overlayWindow(items, m.overlayCursor, height), "", "j/k move  •  space/enter toggle  •  c/esc close")
 	case modeSort:
 		title = "Sort tracks"
+		items := make([]string, 0, len(library.Sorts))
 		for index, option := range library.Sorts {
 			prefix := "  "
 			if index == m.overlayCursor {
@@ -797,15 +912,19 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			if option == m.sort {
 				selected = "●"
 			}
-			lines = append(lines, fmt.Sprintf("%s%s  %s", prefix, selected, option))
+			items = append(items, fmt.Sprintf("%s%s  %s", prefix, selected, option))
 		}
-		lines = append(lines, "", "enter apply  •  esc close")
+		lines = append(overlayWindow(items, m.overlayCursor, height), "", "j/k move  •  enter/space apply  •  s/esc close")
 	case modeQueue:
-		title = fmt.Sprintf("Queue (%d)", len(m.queueOrder))
+		queued, planned := len(m.queueOrder), plannedCount(m.queueOrder, m.queued, m.playbackOptions)
+		title = fmt.Sprintf("Queue (%d)", queued)
+		if planned != queued {
+			title += fmt.Sprintf(" → %d plays", planned)
+		}
 		if len(m.queueOrder) == 0 {
 			lines = []string{"Queue is empty", "", "q/esc close"}
 		} else {
-			available := max(min(height-10, 14), 3)
+			available := min(overlayListCapacity(height), 14)
 			start := min(max(m.overlayCursor-available/2, 0), max(len(m.queueOrder)-available, 0))
 			end := min(start+available, len(m.queueOrder))
 			for index := start; index < end; index++ {
@@ -819,23 +938,88 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		}
 	case modePlaybackOptions:
 		title = "Playback options"
-		lines = []string{fmt.Sprintf("%s Shuffle: %t", cursorMark(m.overlayCursor, 0), m.draftOptions.Shuffle), fmt.Sprintf("%s One per track: %t", cursorMark(m.overlayCursor, 1), m.draftOptions.OneVideoPerTrack), fmt.Sprintf("%s Repeat: %d", cursorMark(m.overlayCursor, 2), m.draftOptions.RepeatEach), fmt.Sprintf("%s Maximum: %d", cursorMark(m.overlayCursor, 3), m.draftOptions.MaximumItems), "", "space toggle • h/l adjust • enter save • esc cancel"}
+		maximum := "All"
+		if m.draftOptions.MaximumItems > 0 || m.optionEditField == 3 && m.optionEdit != "" {
+			maximum = m.optionDisplay(3)
+		}
+		lines = []string{
+			fmt.Sprintf("%s Shuffle: %s", cursorMark(m.overlayCursor, 0), onOff(m.draftOptions.Shuffle)),
+			fmt.Sprintf("%s One video per track: %s", cursorMark(m.overlayCursor, 1), onOff(m.draftOptions.OneVideoPerTrack)),
+			fmt.Sprintf("%s Repeat: %s", cursorMark(m.overlayCursor, 2), m.optionDisplay(2)),
+			fmt.Sprintf("%s Maximum: %s", cursorMark(m.overlayCursor, 3), maximum),
+			m.plannedPreview(),
+		}
+		if m.optionError != "" {
+			lines = append(lines, m.theme.warning.Render(m.optionError))
+		}
+		lines = append(lines, "", "j/k move • digits edit • h/l adjust • r reset • enter save • esc cancel")
 	case modeFilters:
 		title = "Filters"
 		lines = []string{fmt.Sprintf("%s Track: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • esc cancel"}
 	case modeHelp:
 		title = "Keyboard shortcuts"
 		all := helpLines()
-		visible := max(height-8, 1)
+		visible := overlayListCapacity(height)
 		end := min(m.helpOffset+visible, len(all))
 		lines = append(lines, all[m.helpOffset:end]...)
-		lines = append(lines, "", "j/k scroll • ?/esc close")
+		lines = append(lines, "", "j/k scroll • ctrl+u/d page • gg/G ends • ?/esc close")
 	}
 
 	overlayWidth := min(max(width*2/3, 42), 88)
-	content := m.theme.overlayTitle.Render(title) + "\n\n" + strings.Join(lines, "\n")
+	separator := "\n\n"
+	if height < 16 {
+		separator = "\n"
+		lines = slices.DeleteFunc(lines, func(line string) bool { return line == "" })
+	}
+	content := m.theme.overlayTitle.Render(title) + separator + strings.Join(lines, "\n")
 	overlay := m.theme.overlay.Width(overlayWidth).Render(content)
 	return placeOverlay(base, overlay, width, height)
+}
+
+func overlayWindow(items []string, cursor, height int) []string {
+	visible := overlayListCapacity(height)
+	start := min(max(cursor-visible/2, 0), max(len(items)-visible, 0))
+	end := min(start+visible, len(items))
+	return items[start:end]
+}
+
+func overlayListCapacity(height int) int {
+	if height < 16 {
+		return max(height-6, 1)
+	}
+	return max(height-8, 1)
+}
+
+func (m Model) optionDisplay(field int) string {
+	if m.optionEditField == field {
+		if m.optionEdit == "" {
+			return "_"
+		}
+		return m.optionEdit + "_"
+	}
+	if field == 2 {
+		return strconv.Itoa(m.draftOptions.RepeatEach)
+	}
+	return strconv.Itoa(m.draftOptions.MaximumItems)
+}
+
+func (m Model) plannedPreview() string {
+	queued := len(m.queueOrder)
+	if queued == 0 {
+		return "Queue is empty"
+	}
+	planned := plannedCount(m.queueOrder, m.queued, m.draftOptions)
+	if planned == queued {
+		return fmt.Sprintf("%d queued", queued)
+	}
+	return fmt.Sprintf("%d queued → %d plays", queued, planned)
+}
+
+func onOff(value bool) string {
+	if value {
+		return "On"
+	}
+	return "Off"
 }
 
 func cursorMark(cursor, index int) string {

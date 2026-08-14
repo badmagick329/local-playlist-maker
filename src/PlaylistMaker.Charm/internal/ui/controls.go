@@ -16,16 +16,21 @@ func validateOptions(options backend.PlaybackOptions) backend.PlaybackOptions {
 
 func plannedCount(queue []string, variants map[string]library.Variant, options backend.PlaybackOptions) int {
 	options = validateOptions(options)
-	count := len(queue)
-	if options.OneVideoPerTrack {
-		seen := map[string]bool{}
-		count = 0
-		for _, id := range queue {
-			if item, ok := variants[id]; ok && !seen[pathid.ComparisonKey(item.AudioPath)] {
-				seen[pathid.ComparisonKey(item.AudioPath)] = true
-				count++
-			}
+	count := 0
+	seen := map[string]bool{}
+	for _, id := range queue {
+		item, ok := variants[id]
+		if !ok {
+			continue
 		}
+		if options.OneVideoPerTrack {
+			identity := pathid.ComparisonKey(item.AudioPath)
+			if seen[identity] {
+				continue
+			}
+			seen[identity] = true
+		}
+		count++
 	}
 	if count > math.MaxInt/options.RepeatEach {
 		count = math.MaxInt

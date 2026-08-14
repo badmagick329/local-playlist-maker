@@ -3,9 +3,12 @@ package ui
 type shortcut struct{ section, key, description string }
 
 var shortcuts = []shortcut{
-	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"},
-	{"Views", "/", "search"}, {"Views", "c/s/f/o", "categories, sort, filters, options"}, {"Views", "?", "help"},
-	{"Queue", "Space", "toggle current"}, {"Queue", "a / A", "queue defaults / all"}, {"Queue", "q", "queue overlay"},
+	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
+	{"Views", "/", "search"}, {"Views", "c / s / f / o", "categories / sort / filters / options"}, {"Views", "?", "shortcut help"},
+	{"Queue", "Space", "toggle current"}, {"Queue", "a / A", "queue defaults / all matching videos"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace", "remove"},
+	{"Options", "Space", "toggle boolean"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
+	{"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / Esc", "apply / cancel"},
+	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
 	{"Playback", "Ctrl+Enter", "launch queue"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
 }
 
@@ -19,4 +22,38 @@ func helpLines() []string {
 		lines = append(lines, item.key+"  —  "+item.description)
 	}
 	return lines
+}
+
+func footerHint(current mode, width int) string {
+	if current == modeNavigate {
+		switch {
+		case width >= 115:
+			return "j/k move  h/l fold  space queue  ctrl+enter play  / search  c categories  s sort  f filters  ? help"
+		case width >= 75:
+			return "j/k move  / search  c categories  s sort  f filters  ? help"
+		case width >= 50:
+			return "/ search  c cats  s sort  f filter  ? help"
+		default:
+			return "/ search  ? help"
+		}
+	}
+
+	var hint string
+	switch current {
+	case modeSearch:
+		hint = "type search  •  space inserts space  •  ctrl+j/k or arrows move  •  ctrl+u clear  •  enter/esc nav"
+	case modeCategories:
+		hint = "j/k move  •  space/enter toggle  •  c/esc close"
+	case modeSort:
+		hint = "j/k move  •  enter/space apply  •  s/esc close"
+	case modeQueue:
+		hint = "j/k move  •  shift+j/k reorder  •  delete/backspace/space remove  •  q/esc close"
+	case modePlaybackOptions:
+		hint = "j/k move  •  space toggle  •  h/l adjust  •  digits edit  •  r reset  •  enter save  •  esc cancel"
+	case modeFilters:
+		hint = "j/k move  •  type date/range  •  ctrl+u clear  •  r reset  •  enter apply  •  esc cancel"
+	case modeHelp:
+		hint = "j/k scroll  •  ctrl+u/d or pgup/dn page  •  gg/G first/last  •  ?/esc close"
+	}
+	return truncate(hint, width)
 }
