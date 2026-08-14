@@ -54,7 +54,7 @@ func TestPlannedCountAppliesQueueRulesInOrder(t *testing.T) {
 func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	m := New(library.Generate(4, 8))
 	m = updateKey(t, m, "a")
-	m = updateKey(t, m, "o")
+	m = updateKey(t, m, "p")
 	if m.mode != modePlaybackOptions || m.draftOptions != m.playbackOptions {
 		t.Fatal("options did not open from saved values")
 	}
@@ -100,7 +100,7 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	if m.mode != modeNavigate || m.playbackOptions.RepeatEach != 2 {
 		t.Fatal("valid options did not save")
 	}
-	m = updateKey(t, m, "o")
+	m = updateKey(t, m, "p")
 	if m.draftOptions.RepeatEach != 2 {
 		t.Fatal("reopened options did not use saved values")
 	}
@@ -116,12 +116,12 @@ func TestPlaybackLaunchUsesSavedOptionSnapshotAndKeepsQueueOnFailure(t *testing.
 	m := New(library.Generate(4, 8), launcher)
 	m = updateKey(t, m, "a")
 	m.playbackOptions = backend.PlaybackOptions{Shuffle: true, MaximumItems: 7, RepeatEach: 2, OneVideoPerTrack: true}
-	next, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	next, command := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = next.(Model)
 	if command == nil || !m.launching {
 		t.Fatal("launch did not start")
 	}
-	if next, second := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl}); second != nil || !strings.Contains(next.(Model).status, "already") {
+	if next, second := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"}); second != nil || !strings.Contains(next.(Model).status, "already") {
 		t.Fatal("concurrent launch was not blocked")
 	}
 	m.playbackOptions = backend.DefaultPlaybackOptions()
@@ -137,7 +137,7 @@ func TestPlaybackLaunchUsesSavedOptionSnapshotAndKeepsQueueOnFailure(t *testing.
 	failure := &playbackStub{err: errors.New("transport unavailable")}
 	m = New(library.Generate(2, 4), failure)
 	m = updateKey(t, m, "a")
-	next, command = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	next, command = m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	next, _ = next.(Model).Update(command())
 	m = next.(Model)
 	if len(m.queueOrder) == 0 || !strings.Contains(m.status, "transport unavailable") {
@@ -146,7 +146,7 @@ func TestPlaybackLaunchUsesSavedOptionSnapshotAndKeepsQueueOnFailure(t *testing.
 
 	m = New(library.Generate(2, 4), &playbackStub{result: backend.PlaybackResult{Succeeded: false, UserSafeError: "player rejected queue"}})
 	m = updateKey(t, m, "a")
-	next, command = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	next, command = m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	next, _ = next.(Model).Update(command())
 	if got := next.(Model); len(got.queueOrder) == 0 || !strings.Contains(got.status, "player rejected queue") {
 		t.Fatal("safe backend failure lost queue or message")
@@ -154,8 +154,30 @@ func TestPlaybackLaunchUsesSavedOptionSnapshotAndKeepsQueueOnFailure(t *testing.
 
 	m = New(library.Generate(2, 4), launcher)
 	next, command = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
-	if command != nil || !strings.Contains(next.(Model).status, "empty") {
-		t.Fatal("empty queue launch was not blocked")
+	if command != nil || next.(Model).launching {
+		t.Fatal("retired ctrl+enter launched playback")
+	}
+}
+
+func TestOPlaysHighlightedMediaWithoutQueueMutation(t *testing.T) {
+	launcher := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 1}}
+	m := New(library.Generate(2, 4), launcher)
+	next, command := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	if command == nil || !next.(Model).launching || len(next.(Model).queueOrder) != 0 {
+		t.Fatal("parent o did not launch ephemerally")
+	}
+	next, _ = next.(Model).Update(command())
+	if len(next.(Model).queueOrder) != 0 || len(launcher.ids) != 1 {
+		t.Fatal("parent ephemeral launch changed queue")
+	}
+	m = New(library.Generate(2, 4), launcher)
+	m = updateKey(t, m, "l")
+	m = updateKey(t, m, "j")
+	want := m.filtered[m.rows[m.cursor].trackIndex].Variants[m.rows[m.cursor].variantIndex].ID
+	next, command = m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	_, _ = next.(Model).Update(command())
+	if got := launcher.ids; len(got) != 1 || got[0] != want {
+		t.Fatalf("child launch = %#v, want %q", got, want)
 	}
 }
 
@@ -226,7 +248,7 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 		}
 	}
 	help := strings.Join(helpLines(), "\n")
-	for _, value := range []string{"h/l, left/right, Enter", "digits / Backspace", "Shift+J/K", "Ctrl+U/D, PgUp/Dn", "Ctrl+Enter"} {
+	for _, value := range []string{"h/l, left/right, Enter", "digits / Backspace", "Shift+J/K", "Ctrl+U/D, PgUp/Dn", "o  —  play queue or highlighted media"} {
 		if !strings.Contains(help, value) {
 			t.Fatalf("help missing %q", value)
 		}

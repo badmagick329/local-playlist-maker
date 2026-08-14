@@ -65,8 +65,10 @@ func (r row) isVariant() bool { return r.variantIndex >= 0 }
 type PlaybackLauncher = backend.PlaybackService
 
 type playbackResultMsg struct {
-	count int
-	err   error
+	count      int
+	err        error
+	queued     bool
+	queueOrder []string
 }
 
 type Model struct {
@@ -141,8 +143,10 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "Playback failed: " + message.err.Error()
 			return m, nil
 		}
-		m.queued = make(map[string]library.Variant)
-		m.queueOrder = nil
+		if message.queued && slices.Equal(m.queueOrder, message.queueOrder) {
+			m.queued = make(map[string]library.Variant)
+			m.queueOrder = nil
+		}
 		m.status = fmt.Sprintf("Launched %d video(s)", message.count)
 		return m, nil
 	case tea.WindowSizeMsg:
@@ -161,9 +165,6 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if key.String() == "ctrl+enter" && m.mode == modeNavigate {
-		return m.launchQueue()
-	}
 	switch m.mode {
 	case modeSearch:
 		return m.handleSearchKey(key), nil
@@ -182,16 +183,44 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeDetails:
 		return m.handleDetailsKey(key), nil
 	default:
-		return m.handleNavigationKey(key), nil
+		return m.handleNavigationKey(key)
 	}
 }
 
 func (m Model) launchQueue() (tea.Model, tea.Cmd) {
+	if len(m.queueOrder) == 0 {
+		return m.launchHighlighted()
+	}
+	return m.launchIDs(append([]string(nil), m.queueOrder...), true)
+}
+
+func (m Model) launchHighlighted() (tea.Model, tea.Cmd) {
+	current, ok := m.currentRow()
+	if !ok {
+		m.status = "No selected media"
+		return m, nil
+	}
+	track := m.filtered[current.trackIndex]
+	variant := library.Variant{}
+	if current.isVariant() {
+		variant = track.Variants[current.variantIndex]
+	} else {
+		var found bool
+		variant, found = library.DefaultVariant(track, m.currentQuery())
+		if !found {
+			m.status = "No eligible media"
+			return m, nil
+		}
+	}
+	return m.launchIDs([]string{variant.ID}, false)
+}
+
+func (m Model) launchIDs(ids []string, queued bool) (tea.Model, tea.Cmd) {
 	if m.launching {
 		m.status = "Playback launch already in progress"
 		return m, nil
 	}
-	if len(m.queueOrder) == 0 {
+	if len(ids) == 0 {
 		m.status = "Queue is empty"
 		return m, nil
 	}
@@ -199,9 +228,12 @@ func (m Model) launchQueue() (tea.Model, tea.Cmd) {
 		m.status = "Playback is unavailable in synthetic spike mode"
 		return m, nil
 	}
-	ids := append([]string(nil), m.queueOrder...)
 	m.launching = true
-	m.status = fmt.Sprintf("Launching %d planned video(s)…", plannedCount(ids, m.queued, m.playbackOptions))
+	variants := m.queued
+	if !queued {
+		variants = m.variantIndex()
+	}
+	m.status = fmt.Sprintf("Launching %d planned video(s)…", plannedCount(ids, variants, m.playbackOptions))
 	return m, func() tea.Msg {
 		result, err := m.playback.Launch(context.Background(), backend.PlaybackRequest{
 			VideoIDs: ids,
@@ -210,11 +242,21 @@ func (m Model) launchQueue() (tea.Model, tea.Cmd) {
 		if err == nil && !result.Succeeded {
 			err = fmt.Errorf("%s", result.UserSafeError)
 		}
-		return playbackResultMsg{count: result.PlannedVideoCount, err: err}
+		return playbackResultMsg{count: result.PlannedVideoCount, err: err, queued: queued, queueOrder: append([]string(nil), ids...)}
 	}
 }
 
-func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
+func (m Model) variantIndex() map[string]library.Variant {
+	result := make(map[string]library.Variant)
+	for _, track := range m.all {
+		for _, variant := range track.Variants {
+			result[variant.ID] = variant
+		}
+	}
+	return result
+}
+
+func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.String() != "g" {
 		m.waitingForG = false
 	}
@@ -259,6 +301,8 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 		m.mode = modeSort
 		m.overlayCursor = slices.Index(library.Sorts, m.sort)
 	case "o":
+		return m.launchQueue()
+	case "p":
 		m.mode, m.overlayCursor, m.draftOptions = modePlaybackOptions, 0, m.playbackOptions
 		m.optionEdit, m.optionEditField, m.optionError = "", -1, ""
 	case "f":
@@ -280,7 +324,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) Model {
 	case "esc":
 		m.status = "Esc closes modes; Ctrl+Q quits"
 	}
-	return m
+	return m, nil
 }
 
 func (m Model) handleDetailsKey(key tea.KeyPressMsg) Model {

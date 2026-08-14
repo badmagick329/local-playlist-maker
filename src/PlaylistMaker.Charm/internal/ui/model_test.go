@@ -130,15 +130,15 @@ func TestControlUDMoveOneVisiblePage(t *testing.T) {
 	}
 }
 
-func TestControlEnterLaunchesAndClearsQueueAfterSuccess(t *testing.T) {
+func TestOLaunchesAndClearsQueueAfterSuccess(t *testing.T) {
 	launcher := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 1}}
 	m := New(library.Generate(50, 200), launcher)
 	m = updateKey(t, m, "space")
 
-	next, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	next, command := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = next.(Model)
 	if command == nil || !m.launching {
-		t.Fatal("ctrl+enter did not start playback")
+		t.Fatal("o did not start playback")
 	}
 	next, _ = m.Update(command())
 	m = next.(Model)
@@ -154,7 +154,7 @@ func TestFailedPlaybackKeepsQueue(t *testing.T) {
 	launcher := &playbackStub{err: errors.New("mpv unavailable")}
 	m := New(library.Generate(50, 200), launcher)
 	m = updateKey(t, m, "space")
-	next, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter, Mod: tea.ModCtrl})
+	next, command := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = next.(Model)
 	next, _ = m.Update(command())
 	m = next.(Model)

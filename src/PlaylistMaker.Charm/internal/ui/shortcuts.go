@@ -4,13 +4,13 @@ type shortcut struct{ section, key, description string }
 
 var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
-	{"Views", "/", "search"}, {"Views", "c / s / f / o", "categories / sort / filters / options"}, {"Views", "?", "shortcut help"},
+	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Views", "?", "shortcut help"},
 	{"Views", "d", "selected media details"},
 	{"Queue", "Space", "toggle current"}, {"Queue", "a / A", "queue defaults / all matching videos"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace", "remove"},
 	{"Options", "Space", "toggle boolean"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
 	{"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / Esc", "apply / cancel"},
 	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
-	{"Playback", "Ctrl+Enter", "launch queue"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
+	{"Playback", "o", "play queue or highlighted media"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
 }
 
 func helpLines() []string {
@@ -29,13 +29,13 @@ func footerHint(current mode, width int) string {
 	if current == modeNavigate {
 		switch {
 		case width >= 115:
-			return "j/k move  h/l fold  space queue  ctrl+enter play  / search  c categories  s sort  f filters  ? help"
+			return "j/k move  h/l fold  space queue  o play  p options  / search  c categories  s sort  f filters  ? help"
 		case width >= 75:
-			return "j/k move  / search  c categories  s sort  f filters  ? help"
+			return "o play  / search  c categories  s sort  f filters  ? help"
 		case width >= 50:
-			return "/ search  c cats  s sort  f filter  ? help"
+			return "o play  / search  c cats  s sort  f filter  ? help"
 		default:
-			return "/ search  ? help"
+			return "o play  / search  ? help"
 		}
 	}
 
