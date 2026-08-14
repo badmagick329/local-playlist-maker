@@ -93,6 +93,9 @@ public sealed class CharmBackendFixtureTests : IDisposable
             variants = track.Variants.Select(variant => new
             {
                 id = Portable(variant.Id, root),
+                videoPath = Portable(variant.VideoPath, root),
+                audioPath = Portable(variant.AudioPath, root),
+                fileName = variant.FileName,
                 category = variant.Category,
                 videoDate = variant.VideoDate,
                 modifiedAtUtc = variant.ModifiedAtUtc.ToString("O", CultureInfo.InvariantCulture),

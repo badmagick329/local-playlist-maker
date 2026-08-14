@@ -1,0 +1,117 @@
+package native
+
+import (
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"playlistmaker/charm/internal/config"
+)
+
+func TestLoaderBuildsThePortableLibraryFixture(t *testing.T) {
+	root := copyFixture(t)
+	loaded, err := config.Load(filepath.Join(root, "fixture.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := (Loader{Config: loaded}).Load(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Tracks) != 2 || len(snapshot.Tracks[0].Variants) != 3 || snapshot.Tracks[0].Artist != "AURORA" {
+		t.Fatalf("unexpected snapshot: %#v", snapshot.Tracks)
+	}
+	if got := snapshot.Tracks[0].Variants[2]; got.ID != filepath.Join(root, "VIDEOS", "240101 AURORA - Northern Lights.mkv") || got.Category != "Music Video" {
+		t.Fatalf("default video identity/category = %#v", got)
+	}
+	if snapshot.Tracks[1].Title != "Pop!" || snapshot.Tracks[1].Variants[0].Filename != "240301 나연 - Pop!.mkv" {
+		t.Fatalf("unicode track = %#v", snapshot.Tracks[1])
+	}
+}
+
+func TestLoaderReportsMappedAudioMissingFromCache(t *testing.T) {
+	root := copyFixture(t)
+	cache := filepath.Join(root, "data", "flac_cache.json")
+	if err := os.WriteFile(cache, []byte(`[]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := config.Load(filepath.Join(root, "fixture.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = (Loader{Config: loaded}).Load(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "missing from the FLAC cache") || !strings.Contains(err.Error(), "2 mapped") {
+		t.Fatalf("cache-miss error = %v", err)
+	}
+}
+
+func TestDecodeMappingRejectsInvalidValuesAndPreservesOrderedOverwrite(t *testing.T) {
+	entries, err := decodeMapping(strings.NewReader(`{"C:\\Video.mkv":"C:\\one.flac","c:/video.mkv":"C:\\two.flac"}`))
+	if err != nil || len(entries) != 2 {
+		t.Fatalf("decode = %#v, %v", entries, err)
+	}
+	if _, err := decodeMapping(strings.NewReader(`{"video": 5}`)); err == nil {
+		t.Fatal("non-string mapping value was accepted")
+	}
+}
+
+func copyFixture(t *testing.T) string {
+	t.Helper()
+	source, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "testdata", "charm-backend", "library-basic"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination := t.TempDir()
+	if err := filepath.WalkDir(source, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		relative, err := filepath.Rel(source, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(destination, relative)
+		if entry.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if filepath.Ext(path) == ".json" {
+			contents = []byte(strings.ReplaceAll(string(contents), "@ROOT@", strings.ReplaceAll(destination, `\`, `\\`)))
+		} else {
+			contents = []byte(strings.ReplaceAll(string(contents), "@ROOT@", destination))
+		}
+		return os.WriteFile(target, contents, 0o600)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manifestContents, err := os.ReadFile(filepath.Join(destination, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest struct {
+		VideoModificationTimesUTC map[string]time.Time `json:"videoModificationTimesUtc"`
+	}
+	if err := json.Unmarshal(manifestContents, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	for relative, modified := range manifest.VideoModificationTimesUTC {
+		path := filepath.Join(destination, filepath.FromSlash(relative))
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Chtimes(path, modified, modified); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return destination
+}
