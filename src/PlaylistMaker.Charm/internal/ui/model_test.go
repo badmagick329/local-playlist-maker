@@ -12,14 +12,16 @@ import (
 )
 
 type playbackStub struct {
-	result backend.PlaybackResult
-	err    error
-	ids    []string
+	result  backend.PlaybackResult
+	err     error
+	ids     []string
+	request backend.PlaybackRequest
 }
 
 func (p *playbackStub) Launch(_ context.Context, request backend.PlaybackRequest) (backend.PlaybackResult, error) {
 	ids := request.VideoIDs
 	p.ids = append([]string(nil), ids...)
+	p.request = backend.PlaybackRequest{VideoIDs: append([]string(nil), request.VideoIDs...), Options: request.Options}
 	return p.result, p.err
 }
 
@@ -203,6 +205,22 @@ func updateKey(t *testing.T, m Model, key string) Model {
 		message = tea.KeyPressMsg{Code: ' ', Text: " "}
 	case "enter":
 		message = tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "backspace":
+		message = tea.KeyPressMsg{Code: tea.KeyBackspace}
+	case "delete":
+		message = tea.KeyPressMsg{Code: tea.KeyDelete}
+	case "up":
+		message = tea.KeyPressMsg{Code: tea.KeyUp}
+	case "down":
+		message = tea.KeyPressMsg{Code: tea.KeyDown}
+	case "left":
+		message = tea.KeyPressMsg{Code: tea.KeyLeft}
+	case "right":
+		message = tea.KeyPressMsg{Code: tea.KeyRight}
+	case "pgup":
+		message = tea.KeyPressMsg{Code: tea.KeyPgUp}
+	case "pgdown":
+		message = tea.KeyPressMsg{Code: tea.KeyPgDown}
 	case "ctrl+d":
 		message = tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}
 	case "ctrl+u":

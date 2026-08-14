@@ -965,7 +965,12 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		lines = append(lines, "", "j/k scroll • ctrl+u/d page • gg/G ends • ?/esc close")
 	}
 
-	overlayWidth := min(max(width*2/3, 42), 88)
+	overlayWidth := min(max(width*2/3, 28), min(88, width))
+	contentWidth := max(overlayWidth-6, 1)
+	title = truncate(title, contentWidth)
+	for index, line := range lines {
+		lines[index] = truncateANSI(line, contentWidth)
+	}
 	separator := "\n\n"
 	if height < 16 {
 		separator = "\n"
