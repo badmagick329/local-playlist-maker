@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"playlistmaker/charm/internal/config"
+	"playlistmaker/charm/internal/metadata"
 )
 
 func TestLoaderBuildsThePortableLibraryFixture(t *testing.T) {
@@ -33,7 +34,7 @@ func TestLoaderBuildsThePortableLibraryFixture(t *testing.T) {
 	}
 }
 
-func TestLoaderReportsMappedAudioMissingFromCache(t *testing.T) {
+func TestLoaderCompletesMappedAudioMissingFromCache(t *testing.T) {
 	root := copyFixture(t)
 	cache := filepath.Join(root, "data", "flac_cache.json")
 	if err := os.WriteFile(cache, []byte(`[]`), 0o600); err != nil {
@@ -43,10 +44,20 @@ func TestLoaderReportsMappedAudioMissingFromCache(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = (Loader{Config: loaded}).Load(context.Background())
-	if err == nil || !strings.Contains(err.Error(), "missing from the FLAC cache") || !strings.Contains(err.Error(), "2 mapped") {
-		t.Fatalf("cache-miss error = %v", err)
+	reader := fakeTagReader{}
+	snapshot, err := (Loader{Config: loaded, TagReader: reader}).Load(context.Background())
+	if err != nil || len(snapshot.Tracks) != 2 {
+		t.Fatalf("cache completion = %#v, %v", snapshot, err)
 	}
+}
+
+type fakeTagReader struct{}
+
+func (fakeTagReader) Read(_ context.Context, path string) (metadata.Entry, error) {
+	if strings.Contains(path, "Northern") {
+		return metadata.Entry{Artist: "AURORA", Title: "Northern Lights", Date: "2024-01-15", TrackNumber: 1}, nil
+	}
+	return metadata.Entry{Artist: "나연", Title: "Pop!", Date: "2024-05", TrackNumber: 2}, nil
 }
 
 func TestDecodeMappingRejectsInvalidValuesAndPreservesOrderedOverwrite(t *testing.T) {

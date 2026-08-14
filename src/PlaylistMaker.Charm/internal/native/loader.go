@@ -14,10 +14,14 @@ import (
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
+	"playlistmaker/charm/internal/metadata"
 	"playlistmaker/charm/internal/pathid"
 )
 
-type Loader struct{ Config config.Config }
+type Loader struct {
+	Config    config.Config
+	TagReader metadata.Reader
+}
 type cacheEntry struct {
 	FilePath    string `json:"filePath"`
 	Artist      string `json:"artist"`
@@ -39,6 +43,18 @@ func (l Loader) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
 		return backend.LibrarySnapshot{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		return backend.LibrarySnapshot{}, err
+	}
+	audioPaths := make([]string, 0, len(mappings))
+	for _, entry := range mappings {
+		audioPaths = append(audioPaths, entry.audioPath)
+	}
+	reader := l.TagReader
+	if reader == nil {
+		reader = metadata.FLACReader{}
+	}
+	_, _, err = metadata.Ensure(ctx, l.Config.FlacCacheFile, audioPaths, reader)
+	if err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
 	cache, err := loadCache(l.Config.FlacCacheFile)
