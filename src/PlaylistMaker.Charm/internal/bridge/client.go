@@ -21,6 +21,7 @@ type Client struct {
 	stderr  bytes.Buffer
 	mu      sync.Mutex
 	nextID  int
+	closed  bool
 }
 
 type response struct {
@@ -84,8 +85,12 @@ type playResult struct {
 	Error             string `json:"error"`
 }
 
-func Start(executable, configPath string) (*Client, []library.Track, error) {
-	command := exec.Command(executable, "--config", configPath)
+func Start(executable, configPath string, disableHistory bool) (*Client, []library.Track, error) {
+	arguments := []string{"--config", configPath}
+	if disableHistory {
+		arguments = append(arguments, "--disable-history")
+	}
+	command := exec.Command(executable, arguments...)
 	input, err := command.StdinPipe()
 	if err != nil {
 		return nil, nil, err
@@ -161,8 +166,32 @@ func (c *Client) Close() error {
 	if c == nil || c.command == nil || c.command.Process == nil {
 		return nil
 	}
+
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return nil
+	}
+	c.closed = true
+	c.nextID++
+	shutdown, _ := json.Marshal(struct {
+		ID   int    `json:"id"`
+		Type string `json:"type"`
+	}{ID: c.nextID, Type: "shutdown"})
+	_, _ = c.input.Write(append(shutdown, '\n'))
 	_ = c.input.Close()
-	return c.command.Wait()
+	c.mu.Unlock()
+
+	done := make(chan error, 1)
+	go func() { done <- c.command.Wait() }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(3 * time.Second):
+		_ = c.command.Process.Kill()
+		<-done
+		return fmt.Errorf("bridge did not stop after shutdown and was terminated")
+	}
 }
 
 func (c *Client) readResponse() (response, error) {

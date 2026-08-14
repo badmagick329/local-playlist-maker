@@ -21,7 +21,8 @@ internal static class Program
         try
         {
             var configPath = ArgumentValue(args, "--config") ?? "config.yaml";
-            var services = BridgeServices.Create(configPath);
+            var disableHistory = args.Contains("--disable-history", StringComparer.OrdinalIgnoreCase);
+            var services = BridgeServices.Create(configPath, disableHistory);
             Write(protocol, new BridgeResponse(
                 0,
                 "ready",
@@ -120,7 +121,7 @@ internal sealed class BridgeServices
         _playback = playback;
     }
 
-    public static BridgeServices Create(string configPath)
+    public static BridgeServices Create(string configPath, bool disableHistory = false)
     {
         if (!File.Exists(configPath))
         {
@@ -140,7 +141,7 @@ internal sealed class BridgeServices
         );
 
         PlaybackHistoryService? historyService = null;
-        if (config.PlaybackHistoryEnabled)
+        if (config.PlaybackHistoryEnabled && !disableHistory)
         {
             historyService = new PlaybackHistoryService(
                 config.DataDirectory,
@@ -155,8 +156,8 @@ internal sealed class BridgeServices
         var playback = new QueuePlaybackService(
             new PlaybackPlanner(),
             new PlaybackCoordinator(
-                PlaylistPlayerFactory.CreateAudio(config),
-                PlaylistPlayerFactory.CreateVideo(config),
+                PlaylistPlayerFactory.CreateAudio(config, isolateChildProcessIO: true),
+                PlaylistPlayerFactory.CreateVideo(config, isolateChildProcessIO: true),
                 historyService
             )
         );

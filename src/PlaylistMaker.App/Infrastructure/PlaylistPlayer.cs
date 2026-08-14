@@ -9,8 +9,13 @@ public class PlaylistPlayer : IPlaylistPlayer
 {
     private string PlaylistName { get; set; }
     private PlaylistPlayerConfig Config { get; }
+    private bool IsolateChildProcessIO { get; }
 
-    public PlaylistPlayer(PlaylistPlayerConfig config) => Config = config;
+    public PlaylistPlayer(PlaylistPlayerConfig config, bool isolateChildProcessIO = false)
+    {
+        Config = config;
+        IsolateChildProcessIO = isolateChildProcessIO;
+    }
 
     public void Play(string playlistPath)
     {
@@ -52,7 +57,7 @@ public class PlaylistPlayer : IPlaylistPlayer
         return StartProcess(Config.SingleFileCommand, additionalArguments, trackPath);
     }
 
-    private static int StartProcess(
+    private int StartProcess(
         ICliCommand command,
         IReadOnlyList<string>? additionalArguments = null,
         string? trailingArgument = null
@@ -65,6 +70,9 @@ public class PlaylistPlayer : IPlaylistPlayer
                 FileName = command.Program,
                 UseShellExecute = false,
                 CreateNoWindow = false,
+                RedirectStandardInput = IsolateChildProcessIO,
+                RedirectStandardOutput = IsolateChildProcessIO,
+                RedirectStandardError = IsolateChildProcessIO,
             },
         };
         foreach (var argument in command.ParsedArgumentList())
@@ -86,7 +94,19 @@ public class PlaylistPlayer : IPlaylistPlayer
         }
 
         process.Start();
-        return process.Id;
+        var processId = process.Id;
+        if (IsolateChildProcessIO)
+        {
+            process.StandardInput.Close();
+            process.OutputDataReceived += (_, _) => { };
+            process.ErrorDataReceived += (_, _) => { };
+            process.BeginOutputReadLine();
+            process.BeginErrorReadLine();
+            process.EnableRaisingEvents = true;
+            process.Exited += (_, _) => process.Dispose();
+        }
+
+        return processId;
     }
 
     private string GenerateTimestampName()

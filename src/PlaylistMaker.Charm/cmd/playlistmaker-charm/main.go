@@ -17,6 +17,7 @@ func main() {
 	variantCount := flag.Int("variants", 6420, "number of synthetic video variants")
 	bridgePath := flag.String("bridge", "", "path to PlaylistMaker.Bridge executable")
 	configPath := flag.String("config", "config.yaml", "path to PlaylistMaker config")
+	disableHistory := flag.Bool("disable-history", false, "disable new playback-history sessions")
 	check := flag.Bool("check", false, "load the selected library and exit")
 	flag.Parse()
 
@@ -30,7 +31,7 @@ func main() {
 	var bridgeClient *bridge.Client
 	if *bridgePath != "" {
 		var err error
-		bridgeClient, tracks, err = bridge.Start(*bridgePath, *configPath)
+		bridgeClient, tracks, err = bridge.Start(*bridgePath, *configPath, *disableHistory)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "PlaylistMaker bridge failed: %v\n", err)
 			os.Exit(1)
@@ -43,7 +44,13 @@ func main() {
 		for _, track := range tracks {
 			variants += len(track.Variants)
 		}
-		fmt.Printf("Tracks: %d\nVideos: %d\nPlayback connected: %t\n", len(tracks), variants, playback != nil)
+		fmt.Printf(
+			"Tracks: %d\nVideos: %d\nPlayback connected: %t\nHistory logging enabled: %t\n",
+			len(tracks),
+			variants,
+			playback != nil,
+			playback != nil && !*disableHistory,
+		)
 		return
 	}
 
