@@ -33,6 +33,8 @@ public sealed class MainWindow : Runnable
     private string _statusMessage = "Ready.";
     private string _pendingSearchText = string.Empty;
     private int _searchRevision;
+    private object? _searchTimeoutToken;
+    private object? _detailsTimeoutToken;
 
     public MainWindow(TuiServices services)
     {
@@ -123,10 +125,11 @@ public sealed class MainWindow : Runnable
             CanFocus = true,
             TabStop = TabBehavior.TabStop,
             SchemeName = nameof(Schemes.Base),
+            OptimizeSelectionDrawing = true,
         };
         _libraryList.Source = _librarySource;
         _libraryList.Accepted += (_, _) => ToggleExpansion();
-        _libraryList.ValueChanged += (_, _) => RefreshDetails();
+        _libraryList.ValueChanged += (_, _) => ScheduleDetailsRefresh();
         ((SearchAwareListView)_libraryList).BeforeKeyDown = key =>
         {
             if (HandleListNavigation(_libraryList, key))
@@ -262,7 +265,11 @@ public sealed class MainWindow : Runnable
         };
         _search.HasFocusChanged += (_, _) => UpdatePaneTitles();
         _categoryList.HasFocusChanged += (_, _) => UpdatePaneTitles();
-        _libraryList.HasFocusChanged += (_, _) => UpdatePaneTitles();
+        _libraryList.HasFocusChanged += (_, _) =>
+        {
+            ((SearchAwareListView)_libraryList).CancelPartialSelectionDraw();
+            UpdatePaneTitles();
+        };
         _queueList.HasFocusChanged += (_, _) => UpdatePaneTitles();
 
         ViewportChanged += (_, _) => ApplyResponsiveLayout();
@@ -300,7 +307,8 @@ public sealed class MainWindow : Runnable
             App?.Invoke(() =>
             {
                 _state.RefreshHistory();
-                RefreshAll("History refreshed.");
+                RefreshDetails();
+                SetStatus("History refreshed.");
             });
         });
 
@@ -345,7 +353,6 @@ public sealed class MainWindow : Runnable
         RefreshCategories();
         RefreshLibrary();
         RefreshQueue();
-        RefreshDetails();
         SetStatus(status ?? "Ready.");
     }
 
@@ -365,6 +372,7 @@ public sealed class MainWindow : Runnable
 
     private void RefreshLibrary()
     {
+        ((SearchAwareListView)_libraryList).CancelPartialSelectionDraw();
         var selected = _libraryList.SelectedItem ?? 0;
         _librarySource.Replace(_state.Rows);
         if (_state.Rows.Count > 0)
@@ -378,11 +386,14 @@ public sealed class MainWindow : Runnable
     private void RefreshQueue()
     {
         var selected = _queueList.SelectedItem ?? 0;
+        var repeatLabel = _state.PlaybackOptions.RepeatEach > 1
+            ? $" ×{_state.PlaybackOptions.RepeatEach}"
+            : string.Empty;
         ReplaceSource(
             _queueList,
             ref _queueRows,
             _state.Queue.Items.Select((item, index) =>
-                $"{index + 1,3}. {item.Artist} — {item.Title} [{item.Category}]")
+                $"{index + 1,3}. {item.Artist} — {item.Title} [{item.Category}{repeatLabel}]")
         );
         if (_queueRows.Count > 0)
         {
@@ -392,7 +403,43 @@ public sealed class MainWindow : Runnable
     }
 
     private void RefreshDetails() =>
-        _details.Text = _state.DetailsFor(_state.RowAt(_libraryList.SelectedItem ?? -1));
+        SetDetails(_state.DetailsFor(_state.RowAt(_libraryList.SelectedItem ?? -1)));
+
+    private void SetDetails(string text)
+    {
+        if (App is not null && _detailsTimeoutToken is not null)
+        {
+            App.RemoveTimeout(_detailsTimeoutToken);
+            _detailsTimeoutToken = null;
+        }
+        if (!string.Equals(_details.Text.ToString(), text, StringComparison.Ordinal))
+        {
+            _details.Text = text;
+        }
+    }
+
+    private void ScheduleDetailsRefresh()
+    {
+        if (App is null)
+        {
+            RefreshDetails();
+            return;
+        }
+
+        if (_detailsTimeoutToken is not null)
+        {
+            App.RemoveTimeout(_detailsTimeoutToken);
+        }
+        _detailsTimeoutToken = App.AddTimeout(
+            TimeSpan.FromMilliseconds(150),
+            () =>
+            {
+                _detailsTimeoutToken = null;
+                RefreshDetails();
+                return false;
+            }
+        );
+    }
 
     private void ToggleSelectedCategory()
     {
@@ -470,8 +517,8 @@ public sealed class MainWindow : Runnable
 
     private void RefreshLibraryRows()
     {
-        _librarySource.Refresh();
-        UpdatePaneTitles();
+        ((SearchAwareListView)_libraryList).CancelPartialSelectionDraw();
+        _libraryList.SetNeedsDraw();
     }
 
     private void MoveSelectedQueueItem(int offset)
@@ -487,19 +534,25 @@ public sealed class MainWindow : Runnable
     private void QueueVisibleTracks()
     {
         _state.QueueVisibleTracks();
-        RefreshAll("Queued one default version for every visible track.");
+        RefreshLibraryRows();
+        RefreshQueue();
+        SetStatus("Queued one default version for every visible track.");
     }
 
     private void QueueMatchingVideos()
     {
         _state.QueueMatchingVideos();
-        RefreshAll("Queued every matching video.");
+        RefreshLibraryRows();
+        RefreshQueue();
+        SetStatus("Queued every matching video.");
     }
 
     private void ClearQueue()
     {
         _state.Queue.Clear();
-        RefreshAll("Queue cleared.");
+        RefreshLibraryRows();
+        RefreshQueue();
+        SetStatus("Queue cleared.");
     }
 
     private void PlayQueue()
@@ -520,7 +573,9 @@ public sealed class MainWindow : Runnable
         var result = new PlaylistTextImporter(_state.Catalog)
             .ImportFile(_services.Config.PlaylistTxtFilePath);
         _state.Queue.AddRange(result.Videos);
-        RefreshAll($"Imported {result.Videos.Count} video(s).");
+        RefreshLibraryRows();
+        RefreshQueue();
+        SetStatus($"Imported {result.Videos.Count} video(s).");
         if (result.Issues.Count > 0)
         {
             var issues = string.Join(Environment.NewLine, result.Issues.Take(12)
@@ -883,10 +938,15 @@ public sealed class MainWindow : Runnable
             return;
         }
 
-        App.AddTimeout(
+        if (_searchTimeoutToken is not null)
+        {
+            App.RemoveTimeout(_searchTimeoutToken);
+        }
+        _searchTimeoutToken = App.AddTimeout(
             TimeSpan.FromMilliseconds(90),
             () =>
             {
+                _searchTimeoutToken = null;
                 if (revision == _searchRevision)
                 {
                     ApplySearch(_pendingSearchText);
@@ -900,6 +960,11 @@ public sealed class MainWindow : Runnable
     {
         _pendingSearchText = _search.Text.ToString() ?? string.Empty;
         _searchRevision++;
+        if (App is not null && _searchTimeoutToken is not null)
+        {
+            App.RemoveTimeout(_searchTimeoutToken);
+            _searchTimeoutToken = null;
+        }
         ApplySearch(_pendingSearchText);
     }
 
@@ -947,7 +1012,8 @@ public sealed class MainWindow : Runnable
         dialog.Add(list, remove, up, down, close, play);
         Refresh();
         App!.Run(dialog);
-        RefreshAll();
+        RefreshLibraryRows();
+        RefreshQueue();
     }
 
     private void ShowPlaybackOptions()
@@ -972,9 +1038,31 @@ public sealed class MainWindow : Runnable
         var maxLabel = new Label { Text = "Maximum items (0=all):", X = 2, Y = 7 };
         var maximum = new TextField { Text = _state.PlaybackOptions.MaximumItems.ToString(), X = 25, Y = 7, Width = 8 };
         var cancel = new Button { Text = "_Cancel", X = Pos.Center() - 10, Y = 9 };
-        var save = new Button { Text = "_Save", X = Pos.Center() + 2, Y = 9 };
-        cancel.Accepted += (_, _) => dialog.RequestStop();
-        save.Accepted += (_, _) =>
+        var save = new Button
+        {
+            Text = "_Save",
+            X = Pos.Center() + 2,
+            Y = 9,
+            IsDefault = true,
+        };
+        foreach (var control in new View[] { shuffle, onePerTrack, repeat, maximum, cancel, save })
+        {
+            control.KeyDown += (_, key) =>
+            {
+                if (IsPlainKey(key, 'j') || key == Key.J.WithCtrl)
+                {
+                    dialog.AdvanceFocus(NavigationDirection.Forward, TabBehavior.TabStop);
+                    key.Handled = true;
+                }
+                else if (IsPlainKey(key, 'k') || key == Key.K.WithCtrl)
+                {
+                    dialog.AdvanceFocus(NavigationDirection.Backward, TabBehavior.TabStop);
+                    key.Handled = true;
+                }
+            };
+        }
+        var saved = false;
+        void Save()
         {
             if (!int.TryParse(repeat.Text.ToString(), out var repeatValue)
                 || !int.TryParse(maximum.Text.ToString(), out var maxValue))
@@ -989,11 +1077,37 @@ public sealed class MainWindow : Runnable
                 repeatValue,
                 onePerTrack.Value == CheckState.Checked
             ).Validate();
+            saved = true;
             dialog.RequestStop();
+        }
+        cancel.Accepted += (_, _) => dialog.RequestStop();
+        save.Accepted += (_, _) => Save();
+        repeat.KeyDown += (_, key) =>
+        {
+            if (key == Key.Enter)
+            {
+                Save();
+                key.Handled = true;
+            }
+        };
+        maximum.KeyDown += (_, key) =>
+        {
+            if (key == Key.Enter)
+            {
+                Save();
+                key.Handled = true;
+            }
         };
         dialog.Add(shuffle, onePerTrack, repeatLabel, repeat, maxLabel, maximum, cancel, save);
         App!.Run(dialog);
-        SetStatus("Playback options updated.");
+        if (saved)
+        {
+            RefreshQueue();
+            SetStatus(
+                $"Playback options saved: repeat each {_state.PlaybackOptions.RepeatEach}×; "
+                + $"{PlannedQueueCount()} planned play(s)."
+            );
+        }
     }
 
     private void ShowDateDialog(bool trackDate)
@@ -1130,6 +1244,28 @@ public sealed class MainWindow : Runnable
             return;
         }
 
+        var focusedList = _libraryList.HasFocus
+            ? _libraryList
+            : _categoryList.HasFocus
+                ? _categoryList
+                : _queueList.HasFocus
+                    ? _queueList
+                    : null;
+        if (focusedList is not null
+            && (IsPlainKey(key, 'j') || key == Key.J.WithCtrl || key == Key.CursorDown))
+        {
+            MoveSelection(focusedList, 1);
+            key.Handled = true;
+            return;
+        }
+        if (focusedList is not null
+            && (IsPlainKey(key, 'k') || key == Key.K.WithCtrl || key == Key.CursorUp))
+        {
+            MoveSelection(focusedList, -1);
+            key.Handled = true;
+            return;
+        }
+
         if (IsPlainKey(key, 'c') && !_search.HasFocus)
         {
             ToggleCategoriesFocus();
@@ -1206,12 +1342,12 @@ public sealed class MainWindow : Runnable
             FocusLibrary();
             return true;
         }
-        if (key == Key.J || key == Key.J.WithCtrl)
+        if (key == Key.J || key == Key.J.WithCtrl || key == Key.CursorDown)
         {
             MoveSelection(list, 1);
             return true;
         }
-        if (key == Key.K || key == Key.K.WithCtrl)
+        if (key == Key.K || key == Key.K.WithCtrl || key == Key.CursorUp)
         {
             MoveSelection(list, -1);
             return true;
@@ -1231,16 +1367,7 @@ public sealed class MainWindow : Runnable
     }
 
     private static void MoveSelection(ListView list, int offset)
-    {
-        if (offset > 0)
-        {
-            list.MoveDown(false);
-        }
-        else
-        {
-            list.MoveUp(false);
-        }
-    }
+        => FastListNavigation.Move(list, offset);
 
     private void RunAfterInput(Action action)
     {
@@ -1292,9 +1419,18 @@ public sealed class MainWindow : Runnable
         _filtersFrame.Title = $"{(_categoryList.HasFocus ? "▶ " : string.Empty)}Filters";
         _libraryFrame.Title = $"{(_libraryList.HasFocus ? "▶ " : string.Empty)}Tracks ({_state.Results.Count})"
             + (narrow ? " — F filters · Q queue · : commands" : string.Empty);
-        _queueFrame.Title = $"{(_queueList.HasFocus ? "▶ " : string.Empty)}Queue ({_state.Queue.Items.Count})";
+        var plannedCount = PlannedQueueCount();
+        var queueCount = plannedCount == _state.Queue.Items.Count
+            ? _state.Queue.Items.Count.ToString()
+            : $"{_state.Queue.Items.Count} → {plannedCount} plays";
+        _queueFrame.Title = $"{(_queueList.HasFocus ? "▶ " : string.Empty)}Queue ({queueCount})";
         UpdateStatusText();
     }
+
+    private int PlannedQueueCount() => PlaybackPlanner.PlannedItemCount(
+        _state.Queue.Items,
+        _state.PlaybackOptions
+    );
 
     private void SetStatus(string text)
     {
@@ -1394,6 +1530,9 @@ public sealed class MainWindow : Runnable
 
 internal sealed class SearchAwareListView : ListView
 {
+    private readonly HashSet<int> _selectionRowsToDraw = [];
+    private System.Drawing.Rectangle _selectionViewport;
+
     public SearchAwareListView()
     {
         AddCommand(Command.Context, context =>
@@ -1410,6 +1549,8 @@ internal sealed class SearchAwareListView : ListView
         {
             Key.S, new Key('s'), Key.F, new Key('f'), Key.O, new Key('o'),
             Key.Q, new Key('q'), Key.C, new Key('c'), new Key(':'),
+            Key.J, new Key('j'), Key.J.WithCtrl, Key.CursorDown,
+            Key.K, new Key('k'), Key.K.WithCtrl, Key.CursorUp,
         })
         {
             KeyBindings.Remove(key);
@@ -1418,6 +1559,79 @@ internal sealed class SearchAwareListView : ListView
     }
 
     public Func<Key, bool>? BeforeKeyDown { get; set; }
+    public bool OptimizeSelectionDrawing { get; init; }
+
+    public void MoveSelection(int offset)
+    {
+        var previous = SelectedItem;
+        var previousViewport = Viewport;
+        if (offset > 0)
+        {
+            MoveDown(false);
+        }
+        else
+        {
+            MoveUp(false);
+        }
+
+        if (!OptimizeSelectionDrawing
+            || previous is null
+            || SelectedItem is null
+            || previous == SelectedItem
+            || previousViewport != Viewport)
+        {
+            _selectionRowsToDraw.Clear();
+            return;
+        }
+
+        if (_selectionRowsToDraw.Count > 0 && _selectionViewport != Viewport)
+        {
+            _selectionRowsToDraw.Clear();
+        }
+        _selectionViewport = Viewport;
+        _selectionRowsToDraw.Add(previous.Value);
+        _selectionRowsToDraw.Add(SelectedItem.Value);
+    }
+
+    public void CancelPartialSelectionDraw() => _selectionRowsToDraw.Clear();
+
+    protected override bool OnClearingViewport() =>
+        CanDrawSelectionRowsOnly() || base.OnClearingViewport();
+
+    protected override bool OnDrawingContent(DrawContext? context)
+    {
+        if (!CanDrawSelectionRowsOnly() || Source is null || context is null)
+        {
+            _selectionRowsToDraw.Clear();
+            return base.OnDrawingContent(context);
+        }
+
+        foreach (var item in _selectionRowsToDraw)
+        {
+            var row = item - Viewport.Y;
+            if (row < 0 || row >= Viewport.Height)
+            {
+                continue;
+            }
+            Source.Render(
+                this,
+                item == SelectedItem,
+                item,
+                0,
+                row,
+                Viewport.Width,
+                Viewport.X
+            );
+            context.AddDrawnRectangle(new System.Drawing.Rectangle(0, row, Viewport.Width, 1));
+        }
+        _selectionRowsToDraw.Clear();
+        return true;
+    }
+
+    private bool CanDrawSelectionRowsOnly() => OptimizeSelectionDrawing
+        && _selectionRowsToDraw.Count > 0
+        && _selectionViewport == Viewport
+        && !NeedsLayout;
 
     protected override bool OnKeyDown(Key key)
     {

@@ -12,7 +12,16 @@ namespace PlaylistMaker.Tui;
 
 internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
 {
+    private const string Separator = " — ";
+    private static readonly int SeparatorWidth = Separator.GetColumns();
+    private static readonly int TrackPrefixWidth = "▶ ● ".GetColumns();
+    private static readonly int VariantPrefixWidth = "   ●  ".GetColumns();
+    private const int MetadataGapWidth = 2;
     private IReadOnlyList<LibraryRow> _rows = [];
+    private RowPresentation?[] _presentations = [];
+    private IList _items = Array.Empty<LibraryRow>();
+    private readonly Dictionary<(int Item, int Width), RowTextLayout> _layoutCache = [];
+    private readonly Dictionary<int, string> _blankRows = [];
 
     public event NotifyCollectionChangedEventHandler? CollectionChanged;
 
@@ -27,6 +36,9 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
     public void Replace(IReadOnlyList<LibraryRow> rows)
     {
         _rows = rows;
+        _items = rows as IList ?? rows.ToList();
+        _presentations = new RowPresentation?[rows.Count];
+        _layoutCache.Clear();
         Refresh();
     }
 
@@ -49,7 +61,7 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
 
     public bool RenderMark(ListView listView, int item, int row, bool isMarked, bool markMultiple) => false;
 
-    public IList ToList() => _rows.ToList();
+    public IList ToList() => _items;
 
     public void Render(
         ListView listView,
@@ -71,22 +83,23 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
         );
         listView.SetAttribute(baseAttribute);
         listView.Move(col, row);
-        listView.AddStr(new string(' ', width));
+        listView.AddStr(BlankRow(width));
 
-        var libraryRow = _rows[item];
-        if (libraryRow.IsTrack)
+        var presentation = _presentations[item] ??= CreatePresentation(_rows[item]);
+        if (presentation.Row.IsTrack)
         {
-            RenderTrack(listView, libraryRow, selected, baseAttribute, col, row, width);
+            RenderTrack(listView, item, presentation, selected, baseAttribute, col, row, width);
         }
         else
         {
-            RenderVariant(listView, libraryRow, selected, baseAttribute, col, row, width);
+            RenderVariant(listView, item, presentation, selected, baseAttribute, col, row, width);
         }
     }
 
     private void RenderTrack(
         ListView listView,
-        LibraryRow row,
+        int item,
+        RowPresentation presentation,
         bool selected,
         TuiAttribute baseAttribute,
         int col,
@@ -94,46 +107,31 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
         int width
     )
     {
+        var row = presentation.Row;
         var result = row.Result;
         var expanded = state.IsExpanded(result.Group.Id) ? "▼" : "▶";
-        var queued = result.EligibleVariants.Any(state.Queue.Contains);
+        var queued = IsAnyVariantQueued(result.EligibleVariants);
         var queueMark = queued ? "●" : " ";
-        var date = result.Group.Track.Date.ToString();
-        var count = result.EligibleVariants.Count;
-        var metadata = $"{date}  {count}";
-        var prefix = $"{expanded} {queueMark} ";
-        var gap = "  ";
-        var prefixWidth = prefix.GetColumns();
-        var metadataWidth = metadata.GetColumns();
-        var leftWidth = Math.Max(0, width - prefixWidth - gap.GetColumns() - metadataWidth);
-
-        var artist = result.Group.Track.Artist;
-        var title = result.Group.Track.Title;
-        const string separator = " — ";
-        if ((artist + separator + title).GetColumns() > leftWidth)
-        {
-            var artistBudget = Math.Min(24, Math.Max(6, leftWidth / 3));
-            artist = Clip(artist, artistBudget);
-            title = Clip(title, Math.Max(0, leftWidth - artist.GetColumns() - separator.GetColumns()));
-        }
+        var layout = LayoutFor(item, width, presentation);
 
         var x = col;
-        Draw(listView, ref x, screenRow, prefix[..1], AttributeFor(baseAttribute, selected, ColorName16.DarkGray));
-        Draw(listView, ref x, screenRow, " ", baseAttribute);
-        Draw(listView, ref x, screenRow, queueMark, AttributeFor(baseAttribute, selected, ColorName16.BrightGreen));
-        Draw(listView, ref x, screenRow, " ", baseAttribute);
-        Draw(listView, ref x, screenRow, artist, AttributeFor(baseAttribute, selected, ColorName16.BrightCyan));
-        Draw(listView, ref x, screenRow, separator, AttributeFor(baseAttribute, selected, ColorName16.DarkGray));
-        Draw(listView, ref x, screenRow, title, AttributeFor(baseAttribute, selected, ColorName16.White));
+        Draw(listView, ref x, screenRow, expanded, 1, AttributeFor(baseAttribute, selected, ColorName16.DarkGray));
+        Draw(listView, ref x, screenRow, " ", 1, baseAttribute);
+        Draw(listView, ref x, screenRow, queueMark, 1, AttributeFor(baseAttribute, selected, ColorName16.BrightGreen));
+        Draw(listView, ref x, screenRow, " ", 1, baseAttribute);
+        Draw(listView, ref x, screenRow, layout.Primary, layout.PrimaryWidth, AttributeFor(baseAttribute, selected, ColorName16.BrightCyan));
+        Draw(listView, ref x, screenRow, Separator, SeparatorWidth, AttributeFor(baseAttribute, selected, ColorName16.DarkGray));
+        Draw(listView, ref x, screenRow, layout.Secondary, layout.SecondaryWidth, AttributeFor(baseAttribute, selected, ColorName16.White));
 
-        var metadataX = col + Math.Max(prefixWidth, width - metadataWidth);
+        var metadataX = col + Math.Max(TrackPrefixWidth, width - presentation.RightWidth);
         listView.SetAttribute(AttributeFor(baseAttribute, selected, ColorName16.DarkGray));
-        listView.AddStr(metadataX, screenRow, metadata);
+        listView.AddStr(metadataX, screenRow, presentation.RightText);
     }
 
     private void RenderVariant(
         ListView listView,
-        LibraryRow row,
+        int item,
+        RowPresentation presentation,
         bool selected,
         TuiAttribute baseAttribute,
         int col,
@@ -141,23 +139,122 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
         int width
     )
     {
+        var row = presentation.Row;
         var variant = row.Variant!;
         var queued = state.Queue.Contains(variant);
         var prefix = queued ? "   ●  " : "   └  ";
-        var details = $"{variant.VideoDate}  {CategoryLabel(variant.Category)}";
-        var leftWidth = Math.Max(0, width - details.GetColumns() - prefix.GetColumns() - 2);
-        var filename = Clip(variant.FileName, leftWidth);
+        var layout = LayoutFor(item, width, presentation);
         var x = col;
         Draw(
             listView,
             ref x,
             screenRow,
             prefix,
+            VariantPrefixWidth,
             AttributeFor(baseAttribute, selected, queued ? ColorName16.BrightGreen : ColorName16.DarkGray)
         );
-        Draw(listView, ref x, screenRow, filename, AttributeFor(baseAttribute, selected, ColorName16.Gray));
+        Draw(listView, ref x, screenRow, layout.Primary, layout.PrimaryWidth, AttributeFor(baseAttribute, selected, ColorName16.Gray));
         listView.SetAttribute(AttributeFor(baseAttribute, selected, ColorName16.DarkGray));
-        listView.AddStr(col + Math.Max(prefix.GetColumns(), width - details.GetColumns()), screenRow, details);
+        listView.AddStr(
+            col + Math.Max(VariantPrefixWidth, width - presentation.RightWidth),
+            screenRow,
+            presentation.RightText
+        );
+    }
+
+    private RowTextLayout LayoutFor(int item, int width, RowPresentation presentation)
+    {
+        if (_layoutCache.TryGetValue((item, width), out var cached))
+        {
+            return cached;
+        }
+
+        RowTextLayout layout;
+        if (presentation.Row.IsTrack)
+        {
+            var track = presentation.Row.Result.Group.Track;
+            var artist = track.Artist;
+            var title = track.Title;
+            var artistWidth = presentation.PrimaryWidth;
+            var titleWidth = presentation.SecondaryWidth;
+            var leftWidth = Math.Max(
+                0,
+                width - TrackPrefixWidth - MetadataGapWidth - presentation.RightWidth
+            );
+            if (artistWidth + SeparatorWidth + titleWidth > leftWidth)
+            {
+                var artistBudget = Math.Min(24, Math.Max(6, leftWidth / 3));
+                artist = Clip(artist, artistBudget);
+                artistWidth = artist.GetColumns();
+                title = Clip(title, Math.Max(0, leftWidth - artistWidth - SeparatorWidth));
+                titleWidth = title.GetColumns();
+            }
+            layout = new RowTextLayout(artist, artistWidth, title, titleWidth);
+        }
+        else
+        {
+            var fileName = presentation.Row.Variant!.FileName;
+            var leftWidth = Math.Max(
+                0,
+                width - presentation.RightWidth - VariantPrefixWidth - MetadataGapWidth
+            );
+            if (presentation.PrimaryWidth > leftWidth)
+            {
+                fileName = Clip(fileName, leftWidth);
+            }
+            layout = new RowTextLayout(fileName, fileName.GetColumns(), string.Empty, 0);
+        }
+
+        _layoutCache[(item, width)] = layout;
+        return layout;
+    }
+
+    private static RowPresentation CreatePresentation(LibraryRow row)
+    {
+        if (row.IsTrack)
+        {
+            var track = row.Result.Group.Track;
+            var metadata = $"{track.Date}  {row.Result.EligibleVariants.Count}";
+            return new RowPresentation(
+                row,
+                metadata,
+                metadata.GetColumns(),
+                track.Artist.GetColumns(),
+                track.Title.GetColumns()
+            );
+        }
+
+        var variant = row.Variant!;
+        var details = $"{variant.VideoDate}  {CategoryLabel(variant.Category)}";
+        return new RowPresentation(
+            row,
+            details,
+            details.GetColumns(),
+            variant.FileName.GetColumns(),
+            0
+        );
+    }
+
+    private bool IsAnyVariantQueued(IReadOnlyList<VideoVariant> variants)
+    {
+        foreach (var variant in variants)
+        {
+            if (state.Queue.Contains(variant))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private string BlankRow(int width)
+    {
+        if (!_blankRows.TryGetValue(width, out var blank))
+        {
+            blank = new string(' ', width);
+            _blankRows[width] = blank;
+        }
+        return blank;
     }
 
     private static TuiAttribute AttributeFor(
@@ -173,12 +270,13 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
         ref int x,
         int row,
         string text,
+        int textWidth,
         TuiAttribute attribute
     )
     {
         listView.SetAttribute(attribute);
         listView.AddStr(x, row, text);
-        x += text.GetColumns();
+        x += textWidth;
     }
 
     private static string Clip(string value, int width)
@@ -224,4 +322,19 @@ internal sealed class LibraryListDataSource(TuiState state) : IListDataSource
         VideoCategory.MusicShow => "Music Show",
         _ => category.ToString(),
     };
+
+    private sealed record RowPresentation(
+        LibraryRow Row,
+        string RightText,
+        int RightWidth,
+        int PrimaryWidth,
+        int SecondaryWidth
+    );
+
+    private sealed record RowTextLayout(
+        string Primary,
+        int PrimaryWidth,
+        string Secondary,
+        int SecondaryWidth
+    );
 }

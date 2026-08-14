@@ -1,6 +1,6 @@
 using PlaylistMaker.Core;
 using PlaylistMaker.Exceptions;
-using Raffinert.FuzzySharp;
+using Raffinert.FuzzySharp.SimilarityRatio.Scorer.StrategySensitive;
 
 namespace PlaylistMaker.Application;
 
@@ -9,6 +9,8 @@ public sealed class MediaLibraryCatalog
     private readonly IReadOnlyList<TrackGroup> _tracks;
     private readonly Dictionary<string, VideoVariant> _videosByPath;
     private readonly Dictionary<string, List<VideoVariant>> _videosByName;
+    private readonly Dictionary<string, string[]> _trackSearchCandidates;
+    private readonly Dictionary<string, string[]> _videoSearchCandidates;
 
     public MediaLibraryCatalog(IVorbisReader reader, IReadOnlyDictionary<string, string> videoAudioMap)
     {
@@ -48,6 +50,21 @@ public sealed class MediaLibraryCatalog
                     .ToList()
             ))
             .ToList();
+        _trackSearchCandidates = _tracks.ToDictionary(
+            track => track.Id,
+            track => new[]
+            {
+                NormalizeSearchText(track.Track.Artist),
+                NormalizeSearchText(track.Track.Title),
+                NormalizeSearchText($"{track.Track.Artist} {track.Track.Title}"),
+            },
+            PathIdentity.Comparer
+        );
+        _videoSearchCandidates = consolidated.ToDictionary(
+            video => video.Id,
+            video => BuildVideoSearchCandidates(video.FileName),
+            PathIdentity.Comparer
+        );
     }
 
     public IReadOnlyList<TrackGroup> Tracks => _tracks;
@@ -55,7 +72,11 @@ public sealed class MediaLibraryCatalog
 
     public IReadOnlyList<TrackSearchResult> Search(LibraryQuery query)
     {
-        var results = new List<TrackSearchResult>();
+        var searchText = NormalizeSearchText(query.SearchText.Trim());
+        using var fuzzyScorer = searchText.Length == 0
+            ? null
+            : new CachedDefaultRatioScorer(searchText);
+        var results = new List<TrackSearchResult>(_tracks.Count);
         foreach (var track in _tracks)
         {
             if (query.TrackDate is not null && !query.TrackDate.Contains(track.Track.Date))
@@ -63,17 +84,22 @@ public sealed class MediaLibraryCatalog
                 continue;
             }
 
-            var eligible = track.Variants
-                .Where(v => query.Categories.Contains(v.Category))
-                .Where(v => query.VideoDate is null || query.VideoDate.Contains(v.VideoDate))
-                .ToList();
+            var eligible = new List<VideoVariant>(track.Variants.Count);
+            foreach (var variant in track.Variants)
+            {
+                if (query.Categories.Contains(variant.Category)
+                    && (query.VideoDate is null || query.VideoDate.Contains(variant.VideoDate)))
+                {
+                    eligible.Add(variant);
+                }
+            }
             if (eligible.Count == 0)
             {
                 continue;
             }
 
-            var score = SearchScore(query.SearchText, track, eligible);
-            if (!string.IsNullOrWhiteSpace(query.SearchText) && score < 35)
+            var score = SearchScore(searchText, fuzzyScorer, track, eligible);
+            if (searchText.Length > 0 && score < 35)
             {
                 continue;
             }
@@ -81,10 +107,9 @@ public sealed class MediaLibraryCatalog
             results.Add(new TrackSearchResult(track, eligible, SelectDefault(eligible), score));
         }
 
-        var sorted = ApplySort(results, query.Sort);
-        return string.IsNullOrWhiteSpace(query.SearchText)
-            ? sorted.ToList()
-            : sorted.OrderByDescending(result => result.SearchScore)
+        return searchText.Length == 0
+            ? ApplySort(results, query.Sort).ToList()
+            : results.OrderByDescending(result => result.SearchScore)
                 .ThenBy(result => result.Group.Track.Artist)
                 .ThenBy(result => result.Group.Track.Title)
                 .ToList();
@@ -109,32 +134,120 @@ public sealed class MediaLibraryCatalog
 
     public static VideoVariant SelectDefault(IReadOnlyList<VideoVariant> variants)
     {
-        var official = variants.Where(v => v.Category == VideoCategory.MusicVideo).ToList();
-        var candidates = official.Count > 0 ? official : variants;
-        return candidates
-            .OrderByDescending(v => v.VideoDate.Year)
-            .ThenByDescending(v => v.VideoDate.Month ?? 0)
-            .ThenByDescending(v => v.VideoDate.Day ?? 0)
-            .ThenByDescending(v => v.ModifiedAtUtc)
-            .ThenBy(v => v.VideoPath, PathIdentity.Comparer)
-            .First();
+        if (variants.Count == 0)
+        {
+            throw new ArgumentException("At least one video variant is required.", nameof(variants));
+        }
+
+        var hasOfficial = false;
+        VideoVariant? selected = null;
+        foreach (var variant in variants)
+        {
+            var isOfficial = variant.Category == VideoCategory.MusicVideo;
+            if (selected is null
+                || (isOfficial && !hasOfficial)
+                || (isOfficial == hasOfficial && IsPreferredDefault(variant, selected)))
+            {
+                selected = variant;
+                hasOfficial = isOfficial;
+            }
+        }
+
+        return selected!;
     }
 
-    private static int SearchScore(string searchText, TrackGroup track, IReadOnlyList<VideoVariant> variants)
+    private static bool IsPreferredDefault(VideoVariant candidate, VideoVariant current)
     {
-        if (string.IsNullOrWhiteSpace(searchText))
+        var dateComparison = CompareVideoDate(candidate, current);
+        if (dateComparison != 0)
+        {
+            return dateComparison > 0;
+        }
+
+        var modifiedComparison = candidate.ModifiedAtUtc.CompareTo(current.ModifiedAtUtc);
+        return modifiedComparison != 0
+            ? modifiedComparison > 0
+            : PathIdentity.Comparer.Compare(candidate.VideoPath, current.VideoPath) < 0;
+    }
+
+    private static int CompareVideoDate(VideoVariant left, VideoVariant right)
+    {
+        var comparison = left.VideoDate.Year.CompareTo(right.VideoDate.Year);
+        if (comparison != 0)
+        {
+            return comparison;
+        }
+
+        comparison = (left.VideoDate.Month ?? 0).CompareTo(right.VideoDate.Month ?? 0);
+        return comparison != 0
+            ? comparison
+            : (left.VideoDate.Day ?? 0).CompareTo(right.VideoDate.Day ?? 0);
+    }
+
+    private int SearchScore(
+        string searchText,
+        CachedDefaultRatioScorer? fuzzyScorer,
+        TrackGroup track,
+        IReadOnlyList<VideoVariant> variants
+    )
+    {
+        if (searchText.Length == 0)
         {
             return 100;
         }
 
-        var query = searchText.Trim();
-        var candidates = new[] { track.Track.Artist, track.Track.Title, $"{track.Track.Artist} {track.Track.Title}" }
-            .Concat(variants.Select(v => v.FileName));
-        return candidates.Max(candidate =>
-            candidate.Contains(query, StringComparison.InvariantCultureIgnoreCase)
-                ? 100
-                : Fuzz.WeightedRatio(query, candidate));
+        var score = ScoreCandidates(searchText, fuzzyScorer!, _trackSearchCandidates[track.Id]);
+        if (score == 100)
+        {
+            return score;
+        }
+
+        foreach (var variant in variants)
+        {
+            score = Math.Max(
+                score,
+                ScoreCandidates(searchText, fuzzyScorer!, _videoSearchCandidates[variant.Id])
+            );
+            if (score == 100)
+            {
+                return score;
+            }
+        }
+
+        return score;
     }
+
+    private static int ScoreCandidates(
+        string searchText,
+        CachedDefaultRatioScorer fuzzyScorer,
+        IReadOnlyList<string> candidates
+    )
+    {
+        var score = 0;
+        foreach (var candidate in candidates)
+        {
+            if (candidate.Contains(searchText, StringComparison.Ordinal))
+            {
+                return 100;
+            }
+            score = Math.Max(score, fuzzyScorer.Score(candidate));
+        }
+        return score;
+    }
+
+    private static string[] BuildVideoSearchCandidates(string fileName)
+    {
+        var normalized = NormalizeSearchText(fileName);
+        return new[] { normalized }
+            .Concat(normalized.Split(
+                [' ', '-', '_', '.', '(', ')', '[', ']', '{', '}'],
+                StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries
+            ))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
+    }
+
+    private static string NormalizeSearchText(string value) => value.ToLowerInvariant();
 
     private static IOrderedEnumerable<TrackSearchResult> ApplySort(
         IEnumerable<TrackSearchResult> source,

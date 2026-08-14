@@ -58,4 +58,21 @@ public sealed class PlaybackPlanner
 
         return new PlaybackRequest(expanded.Select(item => item.Video).ToList(), source);
     }
+
+    public static int PlannedItemCount(
+        IReadOnlyList<VideoVariant> draft,
+        PlaybackOptions options
+    )
+    {
+        options = options.Validate();
+        var selectedCount = options.OneVideoPerTrack
+            ? draft.Select(item => PathIdentity.Normalize(item.AudioPath))
+                .Distinct(PathIdentity.Comparer)
+                .Count()
+            : draft.Count;
+        var repeatedCount = selectedCount * options.RepeatEach;
+        return options.MaximumItems > 0
+            ? Math.Min(repeatedCount, options.MaximumItems)
+            : repeatedCount;
+    }
 }

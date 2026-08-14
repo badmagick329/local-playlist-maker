@@ -2,6 +2,9 @@ using PlaylistMaker.Application;
 using PlaylistMaker.Core;
 using PlaylistMaker.Infrastructure;
 using PlaylistMaker.Tui;
+using System.Collections;
+using System.Collections.Specialized;
+using System.Collections.ObjectModel;
 using Terminal.Gui.App;
 using Terminal.Gui.Drawing;
 using Terminal.Gui.Input;
@@ -115,7 +118,7 @@ public class MainWindowHeadlessTests : IDisposable
 
             Assert.Single(state.Queue.Items);
             Assert.Equal(0, sourceChanges);
-            Assert.Equal(1, collectionChanges);
+            Assert.Equal(0, collectionChanges);
         }
     }
 
@@ -189,6 +192,136 @@ public class MainWindowHeadlessTests : IDisposable
         }
 
         Assert.True(worked);
+    }
+
+    [Fact]
+    public void PlaybackOptionsSupportsVimStyleFocusNavigation()
+    {
+        var (window, _) = CreateWindow();
+        using var app = Terminal.Gui.App.Application.Create().Init("dotnet");
+        app.Driver!.SetScreenSize(120, 40);
+        var worked = false;
+        var opened = false;
+        app.Iteration += (_, _) =>
+        {
+            if (opened)
+            {
+                return;
+            }
+            opened = true;
+            app.AddTimeout(TimeSpan.Zero, () =>
+            {
+                var dialog = Assert.IsType<Dialog>(app.TopRunnableView);
+                var textFields = Descendants(dialog).OfType<TextField>().ToList();
+                var repeat = textFields[0];
+                var maximum = textFields[1];
+                var originalRepeat = repeat.Text.ToString();
+
+                app.Keyboard!.RaiseKeyDownEvent(Key.J);
+                app.Keyboard.RaiseKeyDownEvent(Key.J);
+                var plainJReachedRepeat = repeat.HasFocus && repeat.Text.ToString() == originalRepeat;
+                app.Keyboard.RaiseKeyDownEvent(Key.J);
+                var plainJLeftTextField = maximum.HasFocus && repeat.Text.ToString() == originalRepeat;
+                app.Keyboard.RaiseKeyDownEvent(Key.K.WithCtrl);
+                var controlKReturned = repeat.HasFocus;
+                app.Keyboard.RaiseKeyDownEvent(Key.J.WithCtrl);
+                var controlJAdvanced = maximum.HasFocus;
+
+                worked = plainJReachedRepeat && plainJLeftTextField && controlKReturned && controlJAdvanced;
+                app.RequestStop(dialog);
+                return false;
+            });
+
+            app.Keyboard!.RaiseKeyDownEvent(Key.O.WithCtrl);
+            app.RequestStop();
+        };
+
+        using (window)
+        {
+            app.Run(window);
+        }
+
+        Assert.True(worked);
+    }
+
+    [Fact]
+    public void EnterSavesRepeatOptionAndShowsPlannedQueueCount()
+    {
+        var (window, state) = CreateWindow();
+        state.Queue.Add(state.Results[0].DefaultVariant);
+        using var app = Terminal.Gui.App.Application.Create().Init("dotnet");
+        app.Driver!.SetScreenSize(120, 40);
+        var opened = false;
+        app.Iteration += (_, _) =>
+        {
+            if (opened)
+            {
+                return;
+            }
+            opened = true;
+            app.AddTimeout(TimeSpan.Zero, () =>
+            {
+                var dialog = Assert.IsType<Dialog>(app.TopRunnableView);
+                var repeat = Descendants(dialog).OfType<TextField>().First();
+                repeat.Text = "3";
+                repeat.SetFocus();
+                app.Keyboard!.RaiseKeyDownEvent(Key.Enter);
+                return false;
+            });
+
+            app.Keyboard!.RaiseKeyDownEvent(Key.O.WithCtrl);
+            app.RequestStop();
+        };
+
+        string queueTitle;
+        using (window)
+        {
+            app.Run(window);
+            queueTitle = FindFirst<FrameView>(window, frame => frame.Title.Contains("Queue")).Title;
+        }
+
+        Assert.Equal(3, state.PlaybackOptions.RepeatEach);
+        Assert.Contains("1 → 3 plays", queueTitle);
+    }
+
+    [Fact]
+    public void RepeatedNavigationRendersOnlyRowsWhoseSelectionChanged()
+    {
+        using var app = Terminal.Gui.App.Application.Create().Init("dotnet");
+        app.Driver!.SetScreenSize(80, 25);
+        using var window = new Window { Width = Dim.Fill(), Height = Dim.Fill() };
+        var list = new SearchAwareListView
+        {
+            Width = 40,
+            Height = 10,
+            OptimizeSelectionDrawing = true,
+        };
+        list.SetSource(new ObservableCollection<string>(Enumerable.Range(0, 50).Select(i => $"Track {i}")));
+        var counter = new CountingListDataSource(list.Source!);
+        list.Source = counter;
+        list.SelectedItem = 2;
+        window.Add(list);
+
+        var phase = 0;
+        var renderedRows = -1;
+        app.Iteration += (_, _) =>
+        {
+            if (phase == 0)
+            {
+                counter.RenderCount = 0;
+                FastListNavigation.Move(list, 1);
+                FastListNavigation.Move(list, 1);
+                phase = 1;
+                return;
+            }
+
+            renderedRows = counter.RenderCount;
+            app.RequestStop();
+        };
+
+        app.Run(window);
+        Assert.Equal(4, list.SelectedItem);
+        Assert.InRange(renderedRows, 1, 3);
     }
 
     [Fact]
@@ -356,6 +489,35 @@ public class MainWindowHeadlessTests : IDisposable
     private sealed class StubCoordinator : IPlaybackCoordinator
     {
         public PlaybackLaunchResult Launch(PlaybackRequest request) => new(true);
+    }
+
+    private sealed class CountingListDataSource(IListDataSource inner) : IListDataSource
+    {
+        public int RenderCount { get; set; }
+        public int Count => inner.Count;
+        public int MaxItemLength => inner.MaxItemLength;
+        public bool SuspendCollectionChangedEvent
+        {
+            get => inner.SuspendCollectionChangedEvent;
+            set => inner.SuspendCollectionChangedEvent = value;
+        }
+        public event NotifyCollectionChangedEventHandler? CollectionChanged
+        {
+            add => inner.CollectionChanged += value;
+            remove => inner.CollectionChanged -= value;
+        }
+
+        public bool IsMarked(int item) => inner.IsMarked(item);
+        public void SetMark(int item, bool value) => inner.SetMark(item, value);
+        public bool RenderMark(ListView listView, int item, int row, bool isMarked, bool markMultiple) =>
+            inner.RenderMark(listView, item, row, isMarked, markMultiple);
+        public IList ToList() => inner.ToList();
+        public void Render(ListView listView, bool selected, int item, int col, int row, int width, int viewportX)
+        {
+            RenderCount++;
+            inner.Render(listView, selected, item, col, row, width, viewportX);
+        }
+        public void Dispose() { }
     }
 
     public void Dispose()

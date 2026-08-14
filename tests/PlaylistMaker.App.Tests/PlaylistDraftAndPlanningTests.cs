@@ -43,6 +43,20 @@ public class PlaylistDraftAndPlanningTests
         Assert.Equal(2, request.Videos.Select(video => video.Track.FilePath).Distinct(PathIdentity.Comparer).Count());
     }
 
+    [Fact]
+    public void PlannedCountMatchesRepeatedRequest()
+    {
+        var variants = new[] { Variant("a1", "track-a"), Variant("b1", "track-b") };
+        var options = new PlaybackOptions(MaximumItems: 5, RepeatEach: 3);
+
+        var request = new PlaybackPlanner().Create(variants, options);
+
+        Assert.Equal(5, PlaybackPlanner.PlannedItemCount(variants, options));
+        Assert.Equal(5, request.Videos.Count);
+        Assert.Equal(3, request.Videos.Count(video => video.FilePath.Contains("a1")));
+        Assert.Equal(2, request.Videos.Count(video => video.FilePath.Contains("b1")));
+    }
+
     private static VideoVariant Variant(string video, string audio)
     {
         var track = new Track(1, "Artist", audio, new ReleaseDate(2024, 1, 1), $@"C:\audio\{audio}.flac");

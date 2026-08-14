@@ -74,6 +74,25 @@ public class MediaLibraryCatalogTests
         Assert.Single(visiblePerformance);
     }
 
+    [Theory]
+    [InlineData("aesppa")]
+    [InlineData("performnce")]
+    public void FuzzySearchHandlesTyposInArtistsAndFilenameTokens(string query)
+    {
+        var catalog = CreateCatalog(new Dictionary<string, string>
+        {
+            [@"C:\videos\240102 aespa - Supernova Performance.mkv"] = @"C:\audio\supernova.flac",
+        });
+
+        var results = catalog.Search(new LibraryQuery
+        {
+            SearchText = query,
+            Categories = new HashSet<VideoCategory> { VideoCategory.Performance },
+        });
+
+        Assert.Single(results);
+    }
+
     private static MediaLibraryCatalog CreateCatalog(IReadOnlyDictionary<string, string> map) =>
         new(new StubVorbisReader(map.Values.Distinct()), map);
 

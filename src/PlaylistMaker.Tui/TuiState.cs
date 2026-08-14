@@ -137,7 +137,6 @@ public sealed class TuiState
     public void RefreshHistory()
     {
         History = HistoryReader.Read();
-        BuildRows();
     }
 
     public string DetailsFor(LibraryRow? row)
@@ -182,7 +181,7 @@ public sealed class TuiState
 
     private void BuildRows()
     {
-        var rows = new List<LibraryRow>();
+        var rows = new List<LibraryRow>(Results.Count + _expandedTracks.Count * 2);
         foreach (var result in Results)
         {
             rows.Add(new LibraryRow(result));

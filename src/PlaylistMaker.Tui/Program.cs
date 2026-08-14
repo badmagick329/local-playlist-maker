@@ -73,6 +73,9 @@ internal static class Program
                 new MpvScriptManager()
             );
 
+            // Terminal.Gui defaults to 25 iterations per second, which makes rapid
+            // keyboard navigation visibly lag behind input even when drawing is cheap.
+            Terminal.Gui.App.Application.MaximumIterationsPerSecond = 120;
             using var app = Terminal.Gui.App.Application.Create().Init();
             using var window = new MainWindow(services);
             app.Run(window);

@@ -9,7 +9,7 @@ $project = Join-Path $repositoryRoot 'src\PlaylistMaker.Tui\PlaylistMaker.Tui.cs
 
 Push-Location $repositoryRoot
 try {
-    dotnet run --project $project -- @ApplicationArguments
+    dotnet run --configuration Release --project $project -- @ApplicationArguments
 }
 finally {
     Pop-Location
