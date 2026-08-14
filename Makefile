@@ -1,5 +1,6 @@
 PROJECT_PATH := ./src/PlaylistMaker.Console/PlaylistMaker.csproj
 TUI_PROJECT_PATH := ./src/PlaylistMaker.Tui/PlaylistMaker.Tui.csproj
+CHARM_PROJECT_PATH := ./src/PlaylistMaker.Charm
 PROJECT_NAME := PlaylistMaker
 CONFIGURATION := Release
 OUTPUT_DIR := ./publish
@@ -35,4 +36,13 @@ run-tui:
 publish-tui-win:
 	dotnet publish $(TUI_PROJECT_PATH) -c $(CONFIGURATION) -r win-x64 --output $(OUTPUT_DIR)/tui-windows --self-contained -p:PublishSingleFile=true
 
-.PHONY: all win osx linux clean run run-legacy run-tui publish-tui-win
+run-charm-spike:
+	cd $(CHARM_PROJECT_PATH) && go run ./cmd/playlistmaker-charm
+
+run-charm:
+	powershell -NoProfile -File ./scripts/run-charm.ps1
+
+test-charm-spike:
+	cd $(CHARM_PROJECT_PATH) && go test ./...
+
+.PHONY: all win osx linux clean run run-legacy run-tui publish-tui-win run-charm run-charm-spike test-charm-spike
