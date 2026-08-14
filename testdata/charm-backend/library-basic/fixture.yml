@@ -1,0 +1,16 @@
+dataDirectory: data
+musicVideoToAudioMap:
+  - mappings/first.json
+  - mappings/second.json
+flacsMegaPlaylist: data/library.txt
+flacCacheFile: flac_cache.json
+playlistTemplate: "{playlistPath}"
+videoPlaylistCommand: ["mpv.exe", "--playlist={playlistPath}"]
+videoPlaylistSuffix: "_videos.m3u"
+audioPlaylistCommand: ["foobar2000.exe", "{playlistPath}"]
+audioPlaylistSuffix: "_audios.m3u8"
+videoSingleFileCommand: ["mpv.exe"]
+audioSingleFileCommand: ["foobar2000.exe"]
+playlistTxtFilePath: imports/queue.txt
+playbackHistoryEnabled: false
+playbackHistoryMinimumWatchedPercent: 50

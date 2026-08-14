@@ -1,0 +1,3 @@
+# The cache is complete; this file only satisfies the legacy C# reader constructor.
+@ROOT@\\audio\\Northern Lights.flac
+@ROOT@\\audio\\Pop.flac

@@ -15,7 +15,7 @@ public sealed class CharmBackendFixtureTests : IDisposable
     public void LibraryBasicFixtureProducesTheCanonicalSnapshot()
     {
         using var fixture = CopyFixture("library-basic");
-        var config = new ConfigReader(Path.Combine(fixture.Directory, "config.yaml")).ReadConfig();
+        var config = new ConfigReader(Path.Combine(fixture.Directory, "fixture.yml")).ReadConfig();
         var mappingFiles = config.MusicVideoToAudioMap
             .Select(path => Path.Combine(fixture.Directory, path))
             .ToList();

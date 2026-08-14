@@ -41,7 +41,7 @@ func Load(configPath string) (Config, error) {
 		return Config{}, fmt.Errorf("read config %q: %w", absConfigPath, err)
 	}
 
-	var result Config
+	result := Config{PlaybackHistoryMinimumWatchedPercent: 50}
 	if err := yaml.Unmarshal(contents, &result); err != nil {
 		return Config{}, fmt.Errorf("parse config %q: %w", absConfigPath, err)
 	}
@@ -73,7 +73,6 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 		value *string
 	}{
 		{"flacsMegaPlaylist", &c.FlacsMegaPlaylist},
-		{"flacCacheFile", &c.FlacCacheFile},
 		{"playlistTxtFilePath", &c.PlaylistTxtFilePath},
 	} {
 		if err := required(field.name, *field.value); err != nil {
@@ -81,6 +80,10 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 		}
 		*field.value = pathid.Resolve(configDirectory, *field.value)
 	}
+	if err := required("flacCacheFile", c.FlacCacheFile); err != nil {
+		return err
+	}
+	c.FlacCacheFile = pathid.Resolve(c.DataDirectory, c.FlacCacheFile)
 
 	if err := required("playlistTemplate", c.PlaylistTemplate); err != nil {
 		return err
@@ -108,6 +111,26 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 		return fmt.Errorf("playbackHistoryMinimumWatchedPercent must be between 0 and 100")
 	}
 	return nil
+}
+
+// Discover returns a config path without loading it. An explicit path keeps its
+// caller-relative meaning; otherwise only the executable directory is searched.
+func Discover(explicitPath, executablePath string) (string, error) {
+	if strings.TrimSpace(explicitPath) != "" {
+		path, err := filepath.Abs(explicitPath)
+		if err != nil {
+			return "", fmt.Errorf("resolve explicit config path %q: %w", explicitPath, err)
+		}
+		return path, nil
+	}
+	if strings.TrimSpace(executablePath) == "" {
+		return "", fmt.Errorf("PlaylistMaker config was not found; pass --config with its path")
+	}
+	candidate := filepath.Join(filepath.Dir(executablePath), "config.yaml")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return "", fmt.Errorf("PlaylistMaker config was not found beside %q; pass --config with its path", executablePath)
 }
 
 func required(name, value string) error {
