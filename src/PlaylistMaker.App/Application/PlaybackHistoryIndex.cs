@@ -120,13 +120,24 @@ public sealed class PlaybackHistoryReader(string historyPath)
         double? percent = historyEvent.WatchedPercent is null
             ? null
             : Math.Clamp(historyEvent.WatchedPercent.Value, 0, 100);
+        var reachedEof = string.Equals(
+            historyEvent.EndReason,
+            "eof",
+            StringComparison.OrdinalIgnoreCase
+        );
+        if (reachedEof)
+        {
+            percent = 100;
+        }
         var seconds = historyEvent.WatchedSeconds;
         if (seconds is not null && historyEvent.DurationSeconds is > 0)
         {
             seconds = Math.Clamp(seconds.Value, 0, historyEvent.DurationSeconds.Value);
         }
 
-        var outcome = historyEvent.Event == "stopped" && percent >= CompletionPercent
+        var outcome = reachedEof
+            ? "completed"
+            : historyEvent.Event == "stopped" && percent >= CompletionPercent
             ? "completed"
             : historyEvent.Event;
         var counted = outcome == "completed" || historyEvent.CountedAsPlayed == true;

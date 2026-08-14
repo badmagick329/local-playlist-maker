@@ -1,4 +1,4 @@
--- playlistmaker-history-version: 2
+-- playlistmaker-history-version: 3
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
@@ -75,6 +75,24 @@ local function watched_percent(watched_seconds, duration_seconds)
     return math.max(0, math.min(100, watched_seconds / duration_seconds * 100))
 end
 
+local function playback_duration()
+    local raw_duration_seconds = mp.get_property_number("duration", nil)
+    local demuxer_start_seconds = mp.get_property_number("demuxer-start-time", nil)
+    local duration_seconds = raw_duration_seconds
+
+    -- With rebased playback, some containers retain a positive source timestamp
+    -- in duration even though playback begins at zero. Remove that non-playable
+    -- prefix so active wall-clock time is compared with the real playable span.
+    if duration_seconds
+        and demuxer_start_seconds
+        and demuxer_start_seconds > 0
+        and duration_seconds > demuxer_start_seconds then
+        duration_seconds = duration_seconds - demuxer_start_seconds
+    end
+
+    return duration_seconds, raw_duration_seconds, demuxer_start_seconds
+end
+
 local function finish_active(reason)
     if not active or terminal_entries[active.entry.entryId] then
         return
@@ -85,13 +103,19 @@ local function finish_active(reason)
         active.watched_seconds = active.watched_seconds + math.max(0, now - active.last_tick)
     end
 
-    local duration_seconds = mp.get_property_number("duration", active.duration_seconds)
+    local duration_seconds, raw_duration_seconds, demuxer_start_seconds = playback_duration()
+    duration_seconds = duration_seconds or active.duration_seconds
+    raw_duration_seconds = raw_duration_seconds or active.raw_duration_seconds
+    demuxer_start_seconds = demuxer_start_seconds or active.demuxer_start_seconds
     local final_position_seconds = mp.get_property_number("time-pos", nil)
     local normalized_watched_seconds = active.watched_seconds
     if duration_seconds and duration_seconds > 0 then
         normalized_watched_seconds = math.max(0, math.min(duration_seconds, normalized_watched_seconds))
     end
     local percent = watched_percent(normalized_watched_seconds, duration_seconds)
+    if reason == "eof" then
+        percent = 100
+    end
     local event_name
     local counted_as_played
 
@@ -108,6 +132,8 @@ local function finish_active(reason)
 
     write_event(event_name, active.entry, {
         durationSeconds = duration_seconds,
+        rawDurationSeconds = raw_duration_seconds,
+        demuxerStartSeconds = demuxer_start_seconds,
         watchedSeconds = normalized_watched_seconds,
         watchedPercent = percent,
         finalPositionSeconds = final_position_seconds,
@@ -125,14 +151,19 @@ mp.register_event("file-loaded", function()
         return
     end
 
+    local duration_seconds, raw_duration_seconds, demuxer_start_seconds = playback_duration()
     active = {
         entry = entry,
         watched_seconds = 0,
         last_tick = mp.get_time(),
-        duration_seconds = mp.get_property_number("duration", nil),
+        duration_seconds = duration_seconds,
+        raw_duration_seconds = raw_duration_seconds,
+        demuxer_start_seconds = demuxer_start_seconds,
     }
     write_event("started", entry, {
         durationSeconds = active.duration_seconds,
+        rawDurationSeconds = active.raw_duration_seconds,
+        demuxerStartSeconds = active.demuxer_start_seconds,
     })
 end)
 

@@ -46,12 +46,32 @@ public class PlaybackHistoryReaderTests : IDisposable
             Event("stopped", "one", DateTime.UtcNow, percent, true)).Outcome);
     }
 
+    [Fact]
+    public void EofIsDisplayedAsCompletedAtOneHundredPercent()
+    {
+        var historyEvent = Event(
+            "completed",
+            "one",
+            DateTime.UtcNow,
+            97.7,
+            true,
+            "eof"
+        );
+
+        var normalized = PlaybackHistoryReader.Normalize(historyEvent);
+
+        Assert.Equal("completed", normalized.Outcome);
+        Assert.Equal(100, normalized.WatchedPercent);
+        Assert.Equal(97.7, normalized.Raw.WatchedPercent);
+    }
+
     private static PlaybackHistoryEvent Event(
         string eventName,
         string entry,
         DateTime at,
         double? percent = null,
-        bool? counted = null
+        bool? counted = null,
+        string? endReason = null
     ) => new()
     {
         Event = eventName,
@@ -64,6 +84,7 @@ public class PlaybackHistoryReaderTests : IDisposable
         WatchedSeconds = percent is null ? null : 200,
         DurationSeconds = percent is null ? null : 180,
         CountedAsPlayed = counted,
+        EndReason = endReason,
     };
 
     public void Dispose()

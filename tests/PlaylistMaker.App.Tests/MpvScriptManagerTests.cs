@@ -19,7 +19,10 @@ public class MpvScriptManagerTests : IDisposable
 
         manager.InstallOrUpdate();
         Assert.Equal(MpvScriptStatus.Current, manager.Status());
-        Assert.Contains("playlistmaker-history-version: 2", File.ReadAllText(path));
+        var installed = File.ReadAllText(path);
+        Assert.Contains("playlistmaker-history-version: 3", installed);
+        Assert.Contains("demuxer-start-time", installed);
+        Assert.Contains("rawDurationSeconds", installed);
     }
 
     public void Dispose()

@@ -36,6 +36,8 @@ public class PlaybackHistoryEvent
     public string Artist { get; init; } = string.Empty;
     public string Title { get; init; } = string.Empty;
     public double? DurationSeconds { get; init; }
+    public double? RawDurationSeconds { get; init; }
+    public double? DemuxerStartSeconds { get; init; }
     public double? WatchedSeconds { get; init; }
     public double? WatchedPercent { get; init; }
     public double? FinalPositionSeconds { get; init; }
