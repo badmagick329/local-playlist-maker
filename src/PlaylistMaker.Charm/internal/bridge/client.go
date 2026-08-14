@@ -3,6 +3,7 @@ package bridge
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,17 +12,19 @@ import (
 	"sync"
 	"time"
 
+	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
 )
 
 type Client struct {
-	command *exec.Cmd
-	input   io.WriteCloser
-	output  *bufio.Scanner
-	stderr  bytes.Buffer
-	mu      sync.Mutex
-	nextID  int
-	closed  bool
+	command  *exec.Cmd
+	input    io.WriteCloser
+	output   *bufio.Scanner
+	stderr   bytes.Buffer
+	mu       sync.Mutex
+	nextID   int
+	closed   bool
+	snapshot backend.LibrarySnapshot
 }
 
 type response struct {
@@ -85,7 +88,7 @@ type playResult struct {
 	Error             string `json:"error"`
 }
 
-func Start(executable, configPath string, disableHistory bool) (*Client, []library.Track, error) {
+func Start(executable, configPath string, disableHistory bool) (*Client, error) {
 	arguments := []string{"--config", configPath}
 	if disableHistory {
 		arguments = append(arguments, "--disable-history")
@@ -93,73 +96,90 @@ func Start(executable, configPath string, disableHistory bool) (*Client, []libra
 	command := exec.Command(executable, arguments...)
 	input, err := command.StdinPipe()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	output, err := command.StdoutPipe()
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	client := &Client{command: command, input: input, nextID: 1}
 	client.output = bufio.NewScanner(output)
 	client.output.Buffer(make([]byte, 64*1024), 32*1024*1024)
 	command.Stderr = &client.stderr
 	if err := command.Start(); err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 
 	ready, err := client.readResponse()
 	if err != nil {
 		client.Close()
-		return nil, nil, fmt.Errorf("bridge startup failed: %w: %s", err, client.stderr.String())
+		return nil, fmt.Errorf("bridge startup failed: %w: %s", err, client.stderr.String())
 	}
 	if !ready.OK {
 		client.Close()
-		return nil, nil, fmt.Errorf("bridge startup failed: %s", ready.Error)
+		return nil, fmt.Errorf("bridge startup failed: %s", ready.Error)
 	}
 	var data snapshot
 	if err := json.Unmarshal(ready.Result, &data); err != nil {
 		client.Close()
-		return nil, nil, fmt.Errorf("invalid bridge snapshot: %w", err)
+		return nil, fmt.Errorf("invalid bridge snapshot: %w", err)
 	}
 	if data.SchemaVersion != 1 {
 		client.Close()
-		return nil, nil, fmt.Errorf("unsupported bridge schema version %d", data.SchemaVersion)
+		return nil, fmt.Errorf("unsupported bridge schema version %d", data.SchemaVersion)
 	}
-	return client, mapTracks(data.Tracks), nil
+	client.snapshot = backend.LibrarySnapshot{Tracks: mapTracks(data.Tracks)}
+	return client, nil
 }
 
-func (c *Client) Launch(videoIDs []string) (int, error) {
+func (c *Client) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
+	if err := ctx.Err(); err != nil {
+		return backend.LibrarySnapshot{}, err
+	}
+	return c.snapshot, nil
+}
+
+func (c *Client) Launch(ctx context.Context, request backend.PlaybackRequest) (backend.PlaybackResult, error) {
+	if err := ctx.Err(); err != nil {
+		return backend.PlaybackResult{}, err
+	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.nextID++
-	request := playRequest{
+	wireRequest := playRequest{
 		ID:       c.nextID,
 		Type:     "play",
-		VideoIDs: videoIDs,
-		Options:  playbackOptions{RepeatEach: 1},
+		VideoIDs: request.VideoIDs,
+		Options: playbackOptions{
+			Shuffle:          request.Options.Shuffle,
+			MaximumItems:     request.Options.MaximumItems,
+			RepeatEach:       request.Options.RepeatEach,
+			OneVideoPerTrack: request.Options.OneVideoPerTrack,
+		},
 	}
-	encoded, err := json.Marshal(request)
+	encoded, err := json.Marshal(wireRequest)
 	if err != nil {
-		return 0, err
+		return backend.PlaybackResult{}, err
 	}
 	if _, err := c.input.Write(append(encoded, '\n')); err != nil {
-		return 0, fmt.Errorf("write playback request: %w", err)
+		return backend.PlaybackResult{}, fmt.Errorf("write playback request: %w", err)
 	}
 	answer, err := c.readResponse()
 	if err != nil {
-		return 0, fmt.Errorf("read playback response: %w", err)
+		return backend.PlaybackResult{}, fmt.Errorf("read playback response: %w", err)
 	}
 	if !answer.OK {
-		return 0, fmt.Errorf("%s", answer.Error)
+		return backend.PlaybackResult{UserSafeError: answer.Error}, nil
 	}
 	var result playResult
 	if err := json.Unmarshal(answer.Result, &result); err != nil {
-		return 0, err
+		return backend.PlaybackResult{}, err
 	}
-	if !result.Succeeded {
-		return 0, fmt.Errorf("%s", result.Error)
-	}
-	return result.PlannedVideoCount, nil
+	return backend.PlaybackResult{
+		Succeeded:         result.Succeeded,
+		PlannedVideoCount: result.PlannedVideoCount,
+		UserSafeError:     result.Error,
+	}, nil
 }
 
 func (c *Client) Close() error {

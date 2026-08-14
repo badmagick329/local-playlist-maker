@@ -1,23 +1,26 @@
 package ui
 
 import (
+	"context"
 	"errors"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
 )
 
 type playbackStub struct {
-	count int
-	err   error
-	ids   []string
+	result backend.PlaybackResult
+	err    error
+	ids    []string
 }
 
-func (p *playbackStub) Launch(ids []string) (int, error) {
+func (p *playbackStub) Launch(_ context.Context, request backend.PlaybackRequest) (backend.PlaybackResult, error) {
+	ids := request.VideoIDs
 	p.ids = append([]string(nil), ids...)
-	return p.count, p.err
+	return p.result, p.err
 }
 
 func TestSearchModeOwnsPrintableKeysAndSpace(t *testing.T) {
@@ -125,7 +128,7 @@ func TestControlUDMoveOneVisiblePage(t *testing.T) {
 }
 
 func TestControlEnterLaunchesAndClearsQueueAfterSuccess(t *testing.T) {
-	launcher := &playbackStub{count: 1}
+	launcher := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 1}}
 	m := New(library.Generate(50, 200), launcher)
 	m = updateKey(t, m, "space")
 

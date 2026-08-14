@@ -18,4 +18,11 @@
     <ProjectReference Include="..\..\src\PlaylistMaker.App\PlaylistMaker.App.csproj" />
   </ItemGroup>
 
+  <ItemGroup>
+    <Content Include="..\..\testdata\charm-backend\**\*">
+      <Link>testdata\charm-backend\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
+  </ItemGroup>
+
 </Project>

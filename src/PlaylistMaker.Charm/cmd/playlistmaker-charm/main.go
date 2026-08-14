@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"os"
 
 	tea "charm.land/bubbletea/v2"
 
+	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/bridge"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/ui"
@@ -27,16 +29,22 @@ func main() {
 	}
 
 	tracks := library.Generate(*trackCount, *variantCount)
-	var playback ui.PlaybackLauncher
+	var playback backend.PlaybackService
 	var bridgeClient *bridge.Client
 	if *bridgePath != "" {
 		var err error
-		bridgeClient, tracks, err = bridge.Start(*bridgePath, *configPath, *disableHistory)
+		bridgeClient, err = bridge.Start(*bridgePath, *configPath, *disableHistory)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "PlaylistMaker bridge failed: %v\n", err)
 			os.Exit(1)
 		}
 		defer bridgeClient.Close()
+		snapshot, err := bridgeClient.Load(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker library load failed: %v\n", err)
+			os.Exit(1)
+		}
+		tracks = snapshot.Tracks
 		playback = bridgeClient
 	}
 	if *check {

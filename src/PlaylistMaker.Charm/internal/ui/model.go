@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
 )
 
@@ -46,9 +48,7 @@ type row struct {
 
 func (r row) isVariant() bool { return r.variantIndex >= 0 }
 
-type PlaybackLauncher interface {
-	Launch(videoIDs []string) (int, error)
-}
+type PlaybackLauncher = backend.PlaybackService
 
 type playbackResultMsg struct {
 	count int
@@ -168,8 +168,14 @@ func (m Model) launchQueue() (tea.Model, tea.Cmd) {
 	m.launching = true
 	m.status = fmt.Sprintf("Launching %d queued video(s)…", len(ids))
 	return m, func() tea.Msg {
-		count, err := m.playback.Launch(ids)
-		return playbackResultMsg{count: count, err: err}
+		result, err := m.playback.Launch(context.Background(), backend.PlaybackRequest{
+			VideoIDs: ids,
+			Options:  backend.DefaultPlaybackOptions(),
+		})
+		if err == nil && !result.Succeeded {
+			err = fmt.Errorf("%s", result.UserSafeError)
+		}
+		return playbackResultMsg{count: result.PlannedVideoCount, err: err}
 	}
 }
 

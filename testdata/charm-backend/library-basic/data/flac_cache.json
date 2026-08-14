@@ -1,0 +1,18 @@
+[
+  {
+    "filePath": "@ROOT@\\audio\\Northern Lights.flac",
+    "artist": "AURORA",
+    "title": "Northern Lights",
+    "date": "2024-01-15",
+    "trackNumber": 1,
+    "lastRead": "fixture"
+  },
+  {
+    "filePath": "@ROOT@\\audio\\Pop.flac",
+    "artist": "나연",
+    "title": "Pop!",
+    "date": "2024-05",
+    "trackNumber": 2,
+    "lastRead": "fixture"
+  }
+]

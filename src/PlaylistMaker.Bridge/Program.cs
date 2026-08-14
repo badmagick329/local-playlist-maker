@@ -74,7 +74,10 @@ internal static class Program
             switch (request.Type.ToLowerInvariant())
             {
                 case "play":
-                    var result = services.Play(request.VideoIds, request.Options ?? new());
+                    var result = services.Play(new BackendPlaybackRequest(
+                        request.VideoIds,
+                        request.Options ?? new()
+                    ));
                     Write(protocol, new BridgeResponse(request.Id, "play", result.Succeeded, result, result.Error));
                     break;
                 default:
@@ -164,32 +167,13 @@ internal sealed class BridgeServices
         return new BridgeServices(catalog, history, playback);
     }
 
-    public BridgeSnapshot CreateSnapshot() => new(
-        1,
-        _catalog.Tracks.Select(track => new BridgeTrack(
-            track.Id,
-            track.Track.Artist,
-            track.Track.Title,
-            track.Track.Date.AsString,
-            ToHistory(_history.ForTrack(track.Track.FilePath)),
-            track.Variants.Select(variant => new BridgeVariant(
-                variant.Id,
-                variant.VideoPath,
-                variant.AudioPath,
-                variant.FileName,
-                CategoryLabel(variant.Category),
-                variant.VideoDate.AsString,
-                variant.ModifiedAtUtc,
-                ToHistory(_history.ForVideo(variant.VideoPath))
-            )).ToList()
-        )).ToList()
-    );
+    public BackendLibrarySnapshot CreateSnapshot() => BackendSnapshotFactory.Create(_catalog, _history);
 
-    public BridgePlayResult Play(IReadOnlyList<string> videoIds, BridgePlaybackOptions options)
+    public BackendPlaybackResult Play(BackendPlaybackRequest request)
     {
         var missing = new List<string>();
         var draft = new PlaylistDraft();
-        foreach (var videoId in videoIds)
+        foreach (var videoId in request.VideoIds)
         {
             var variant = _catalog.FindByPath(videoId);
             if (variant is null)
@@ -204,90 +188,33 @@ internal sealed class BridgeServices
 
         if (missing.Count > 0)
         {
-            return new BridgePlayResult(false, 0, null, $"{missing.Count} queued videos no longer exist in the library.");
+            return new BackendPlaybackResult(false, 0, $"{missing.Count} queued videos no longer exist in the library.");
         }
 
         var result = _playback.Launch(
             draft,
             new PlaybackOptions(
-                options.Shuffle,
-                options.MaximumItems,
-                options.RepeatEach,
-                options.OneVideoPerTrack
+                request.Options.Shuffle,
+                request.Options.MaximumItems,
+                request.Options.RepeatEach,
+                request.Options.OneVideoPerTrack
             ),
             "charm-tui"
         );
-        return new BridgePlayResult(
+        return new BackendPlaybackResult(
             result.Launch.Succeeded,
             result.PlannedVideoCount,
-            result.Launch.MpvProcessId,
-            result.Launch.Error
+            result.Launch.Error,
+            result.Launch.MpvProcessId
         );
     }
-
-    private static BridgeHistory ToHistory(PlaybackHistorySummary history) => new(
-        history.PlayedCount,
-        history.CompletedCount,
-        history.StoppedCount,
-        history.SkippedCount,
-        history.LastPlayedAtUtc
-    );
-
-    private static string CategoryLabel(VideoCategory category) => category switch
-    {
-        VideoCategory.MusicVideo => "Music Video",
-        VideoCategory.BandLive => "Band Live",
-        VideoCategory.BeOriginal => "Be Original",
-        VideoCategory.LiveAudio => "Live Audio",
-        VideoCategory.MusicShow => "Music Show",
-        _ => category.ToString(),
-    };
 }
 
 internal sealed record BridgeRequest(
     int Id,
     string Type,
     IReadOnlyList<string> VideoIds,
-    BridgePlaybackOptions? Options
-);
-
-internal sealed record BridgePlaybackOptions(
-    bool Shuffle = false,
-    int MaximumItems = 0,
-    int RepeatEach = 1,
-    bool OneVideoPerTrack = false
+    BackendPlaybackOptions? Options
 );
 
 internal sealed record BridgeResponse(int Id, string Type, bool Ok, object? Result, string? Error);
-internal sealed record BridgeSnapshot(int SchemaVersion, IReadOnlyList<BridgeTrack> Tracks);
-internal sealed record BridgeTrack(
-    string Id,
-    string Artist,
-    string Title,
-    string ReleaseDate,
-    BridgeHistory History,
-    IReadOnlyList<BridgeVariant> Variants
-);
-internal sealed record BridgeVariant(
-    string Id,
-    string VideoPath,
-    string AudioPath,
-    string FileName,
-    string Category,
-    string VideoDate,
-    DateTime ModifiedAtUtc,
-    BridgeHistory History
-);
-internal sealed record BridgeHistory(
-    int PlayedCount,
-    int CompletedCount,
-    int StoppedCount,
-    int SkippedCount,
-    DateTime? LastPlayedAtUtc
-);
-internal sealed record BridgePlayResult(
-    bool Succeeded,
-    int PlannedVideoCount,
-    int? MpvProcessId,
-    string? Error
-);
