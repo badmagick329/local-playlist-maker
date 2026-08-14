@@ -247,7 +247,7 @@ func (m Model) launchHighlighted() (tea.Model, tea.Cmd) {
 		variant = track.Variants[current.variantIndex]
 	} else {
 		var found bool
-		variant, found = library.DefaultVariant(track, m.currentQuery())
+		variant, found = m.selectVariant(library.EligibleVariants(track, m.currentQuery()))
 		if !found {
 			m.status = "No eligible media"
 			return m, nil
@@ -295,6 +295,10 @@ func (m Model) variantIndex() map[string]library.Variant {
 		}
 	}
 	return result
+}
+
+func (m Model) selectVariant(candidates []library.Variant) (library.Variant, bool) {
+	return library.SelectVariant(candidates, m.playbackOptions.SelectionStrategy)
 }
 
 func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -486,7 +490,7 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 		if !m.commitOptionEdit() {
 			return m
 		}
-		m.overlayCursor = min(m.overlayCursor+1, 3)
+		m.overlayCursor = min(m.overlayCursor+1, 4)
 		return m
 	case "k", "up", "ctrl+k":
 		if !m.commitOptionEdit() {
@@ -513,6 +517,9 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 		if m.overlayCursor == 1 {
 			m.draftOptions.OneVideoPerTrack = !m.draftOptions.OneVideoPerTrack
 		}
+		if m.overlayCursor == 4 {
+			m.draftOptions.SelectionStrategy = m.draftOptions.SelectionStrategy.Next(1)
+		}
 		return m
 	case "h", "left":
 		m.clearOptionEdit()
@@ -520,6 +527,8 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 			m.draftOptions.RepeatEach = max(1, m.draftOptions.RepeatEach-1)
 		} else if m.overlayCursor == 3 {
 			m.draftOptions.MaximumItems = max(0, m.draftOptions.MaximumItems-1)
+		} else if m.overlayCursor == 4 {
+			m.draftOptions.SelectionStrategy = m.draftOptions.SelectionStrategy.Next(-1)
 		}
 		return m
 	case "l", "right":
@@ -528,10 +537,12 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 			m.draftOptions.RepeatEach = min(10, m.draftOptions.RepeatEach+1)
 		} else if m.overlayCursor == 3 {
 			m.draftOptions.MaximumItems++
+		} else if m.overlayCursor == 4 {
+			m.draftOptions.SelectionStrategy = m.draftOptions.SelectionStrategy.Next(1)
 		}
 		return m
 	case "backspace":
-		if m.overlayCursor >= 2 {
+		if m.overlayCursor >= 2 && m.overlayCursor <= 3 {
 			if m.optionEditField != m.overlayCursor {
 				m.optionEditField = m.overlayCursor
 				m.optionEdit = m.optionValue()
@@ -544,7 +555,7 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 		return m
 	}
 	if key.Text >= "0" && key.Text <= "9" {
-		if m.overlayCursor >= 2 {
+		if m.overlayCursor >= 2 && m.overlayCursor <= 3 {
 			if m.optionEditField != m.overlayCursor {
 				m.optionEditField, m.optionEdit = m.overlayCursor, ""
 			}
@@ -670,7 +681,7 @@ func (m *Model) queueAll(allVariants bool) {
 	for _, track := range m.filtered {
 		variants := library.EligibleVariants(track, m.currentQuery())
 		if !allVariants {
-			if selected, ok := library.DefaultVariant(track, m.currentQuery()); ok {
+			if selected, ok := m.selectVariant(library.EligibleVariants(track, m.currentQuery())); ok {
 				variants = []library.Variant{selected}
 			}
 		}
@@ -874,7 +885,7 @@ func (m *Model) toggleQueue() {
 	if current.isVariant() {
 		variant = track.Variants[current.variantIndex]
 	} else {
-		defaultVariant, ok := library.DefaultVariant(track, m.currentQuery())
+		defaultVariant, ok := m.selectVariant(library.EligibleVariants(track, m.currentQuery()))
 		if !ok {
 			return
 		}
@@ -1124,6 +1135,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			fmt.Sprintf("%s One video per track: %s", cursorMark(m.overlayCursor, 1), onOff(m.draftOptions.OneVideoPerTrack)),
 			fmt.Sprintf("%s Repeat: %s", cursorMark(m.overlayCursor, 2), m.optionDisplay(2)),
 			fmt.Sprintf("%s Maximum: %s", cursorMark(m.overlayCursor, 3), maximum),
+			fmt.Sprintf("%s Version choice: %s", cursorMark(m.overlayCursor, 4), m.draftOptions.SelectionStrategy),
 			m.plannedPreview(),
 		}
 		if m.optionError != "" {
@@ -1244,6 +1256,9 @@ func historyLines(value library.History) []string {
 	lines := []string{fmt.Sprintf("History: %d played • %d completed • %d stopped • %d skipped", value.PlayedCount, value.CompletedCount, value.StoppedCount, value.SkippedCount), fmt.Sprintf("Recovery: %d not started • %d abandoned", value.NotStartedCount, value.AbandonedCount)}
 	if value.LastPlayedAtUTC != nil {
 		lines = append(lines, "Last played: "+value.LastPlayedAtUTC.UTC().Format(time.RFC3339))
+	}
+	if value.LastAttemptedAtUTC != nil {
+		lines = append(lines, "Last attempted: "+value.LastAttemptedAtUTC.UTC().Format(time.RFC3339))
 	}
 	for _, event := range value.Recent {
 		detail := event.Outcome + " • " + event.AtUTC.UTC().Format("2006-01-02 15:04")

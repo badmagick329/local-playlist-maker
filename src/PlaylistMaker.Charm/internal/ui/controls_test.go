@@ -111,6 +111,22 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	}
 }
 
+func TestPlaybackOptionsCyclesVersionChoice(t *testing.T) {
+	m := New(library.Generate(2, 4))
+	m = updateKey(t, m, "p")
+	for range 4 {
+		m = updateKey(t, m, "j")
+	}
+	m = updateKey(t, m, "space")
+	if m.draftOptions.SelectionStrategy != library.FavouriteSelection {
+		t.Fatalf("strategy = %s", m.draftOptions.SelectionStrategy)
+	}
+	m = updateKey(t, m, "enter")
+	if m.playbackOptions.SelectionStrategy != library.FavouriteSelection {
+		t.Fatal("strategy did not save")
+	}
+}
+
 func TestPlaybackLaunchUsesSavedOptionSnapshotAndKeepsQueueOnFailure(t *testing.T) {
 	launcher := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 4}}
 	m := New(library.Generate(4, 8), launcher)

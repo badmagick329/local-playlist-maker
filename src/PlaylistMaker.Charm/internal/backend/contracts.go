@@ -18,14 +18,15 @@ type LibraryLoader interface {
 }
 
 type PlaybackOptions struct {
-	Shuffle          bool
-	MaximumItems     int
-	RepeatEach       int
-	OneVideoPerTrack bool
+	Shuffle           bool
+	MaximumItems      int
+	RepeatEach        int
+	OneVideoPerTrack  bool
+	SelectionStrategy library.SelectionStrategy
 }
 
 func DefaultPlaybackOptions() PlaybackOptions {
-	return PlaybackOptions{RepeatEach: 1}
+	return PlaybackOptions{RepeatEach: 1, SelectionStrategy: library.DefaultSelection}
 }
 
 type PlaybackRequest struct {

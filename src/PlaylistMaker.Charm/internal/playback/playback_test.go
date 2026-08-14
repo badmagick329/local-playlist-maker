@@ -73,6 +73,19 @@ func TestLaunchWritesPairedPlaylistsAndStartsAudioBeforeVideo(t *testing.T) {
 	}
 }
 
+func TestOnePerTrackUsesNonDefaultSelectionWithinQueuedCandidates(t *testing.T) {
+	tracks := testTracks(t)
+	tracks[0].Variants[1].AudioPath = tracks[0].Variants[0].AudioPath
+	tracks[0].Variants[0].History.SkippedCount = 5
+	tracks[0].Variants[1].History.CompletedCount = 2
+	tracks[0].Variants[1].History.PlayedCount = 2
+	service := Service{Tracks: tracks, Random: rand.New(rand.NewSource(1))}
+	items, err := service.Plan([]string{"one", "two"}, backend.PlaybackOptions{RepeatEach: 1, OneVideoPerTrack: true, SelectionStrategy: library.FavouriteSelection})
+	if err != nil || len(items) != 1 || items[0].VideoPath != tracks[0].Variants[1].VideoPath {
+		t.Fatalf("history selection = %#v, %v", items, err)
+	}
+}
+
 func testTracks(t *testing.T) []library.Track {
 	t.Helper()
 	directory := t.TempDir()

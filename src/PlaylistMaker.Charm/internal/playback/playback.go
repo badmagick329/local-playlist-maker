@@ -141,14 +141,18 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 			}
 			groups[key] = append(groups[key], variant)
 		}
-		random := s.Random
-		if random == nil {
-			random = rand.New(rand.NewSource(time.Now().UnixNano()))
-		}
 		queued = queued[:0]
 		for _, key := range order {
 			values := groups[key]
-			queued = append(queued, values[random.Intn(len(values))])
+			if options.SelectionStrategy == library.DefaultSelection {
+				random := s.Random
+				if random == nil {
+					random = rand.New(rand.NewSource(time.Now().UnixNano()))
+				}
+				queued = append(queued, values[random.Intn(len(values))])
+			} else if selected, ok := library.SelectVariant(values, options.SelectionStrategy); ok {
+				queued = append(queued, selected)
+			}
 		}
 	}
 	planned := make([]Item, 0, len(queued)*options.RepeatEach)

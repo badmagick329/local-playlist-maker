@@ -8,7 +8,7 @@ var shortcuts = []shortcut{
 	{"Views", "d", "selected media details"},
 	{"Views", "R", "refresh history"},
 	{"Queue", "Space", "toggle current"}, {"Queue", "a / A", "queue defaults / all matching videos"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace", "remove"},
-	{"Options", "Space", "toggle boolean"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
+	{"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
 	{"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / Esc", "apply / cancel"},
 	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
 	{"Playback", "o", "play queue or highlighted media"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
