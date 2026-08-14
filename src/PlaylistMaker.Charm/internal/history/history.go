@@ -46,6 +46,7 @@ type Normalized struct {
 type Summary struct {
 	Played, Completed, Stopped, Skipped, NotStarted, Abandoned int
 	LastPlayed                                                 *time.Time
+	LastAttempted                                              *time.Time
 	Recent                                                     []Normalized
 }
 type Index struct {
@@ -135,6 +136,10 @@ func summarize(events []Normalized, path func(Normalized) string) map[string]Sum
 					value := item.Event.EventAtUTC
 					summary.LastPlayed = &value
 				}
+			}
+			if item.Outcome != "not_started" && summary.LastAttempted == nil {
+				value := item.Event.EventAtUTC
+				summary.LastAttempted = &value
 			}
 			switch item.Outcome {
 			case "completed":

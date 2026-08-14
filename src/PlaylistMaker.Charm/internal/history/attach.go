@@ -17,7 +17,7 @@ func Attach(tracks []library.Track, index Index) []library.Track {
 }
 
 func toLibrary(value Summary) library.History {
-	result := library.History{PlayedCount: value.Played, CompletedCount: value.Completed, StoppedCount: value.Stopped, SkippedCount: value.Skipped, NotStartedCount: value.NotStarted, AbandonedCount: value.Abandoned, LastPlayedAtUTC: value.LastPlayed}
+	result := library.History{PlayedCount: value.Played, CompletedCount: value.Completed, StoppedCount: value.Stopped, SkippedCount: value.Skipped, NotStartedCount: value.NotStarted, AbandonedCount: value.Abandoned, LastPlayedAtUTC: value.LastPlayed, LastAttemptedAtUTC: value.LastAttempted}
 	for _, event := range value.Recent {
 		result.Recent = append(result.Recent, library.HistoryEvent{Outcome: event.Outcome, AtUTC: event.Event.EventAtUTC, Percent: event.Percent})
 	}

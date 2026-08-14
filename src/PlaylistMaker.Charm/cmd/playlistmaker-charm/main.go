@@ -19,6 +19,27 @@ import (
 	"playlistmaker/charm/internal/ui"
 )
 
+type historySource struct {
+	path   string
+	tracks []library.Track
+}
+
+func (s historySource) Refresh(ctx context.Context) ([]library.Track, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	index, err := history.Read(s.path)
+	if err != nil {
+		return nil, err
+	}
+	tracks := make([]library.Track, len(s.tracks))
+	copy(tracks, s.tracks)
+	for index := range tracks {
+		tracks[index].Variants = append([]library.Variant(nil), tracks[index].Variants...)
+	}
+	return history.Attach(tracks, index), nil
+}
+
 func main() {
 	trackCount := flag.Int("tracks", 1337, "number of synthetic tracks")
 	variantCount := flag.Int("variants", 6420, "number of synthetic video variants")
@@ -36,6 +57,7 @@ func main() {
 
 	tracks := library.Generate(*trackCount, *variantCount)
 	var playback backend.PlaybackService
+	historyPath := ""
 	var bridgeClient *bridge.Client
 	if *backendMode != "go" && *backendMode != "bridge" && *backendMode != "go-library" && *backendMode != "compare" {
 		fmt.Fprintf(os.Stderr, "unsupported backend mode %q\n", *backendMode)
@@ -49,6 +71,7 @@ func main() {
 		}
 		loggingEnabled := goConfig.PlaybackHistoryEnabled && !*disableHistory
 		historyService := history.Service{DataDirectory: goConfig.DataDirectory, MinimumWatchedPercent: goConfig.PlaybackHistoryMinimumWatchedPercent}
+		historyPath = historyService.HistoryPath()
 		if loggingEnabled && !*check {
 			if err := historyService.Recover(); err != nil {
 				fmt.Fprintf(os.Stderr, "PlaylistMaker history recovery failed: %v\n", err)
@@ -124,7 +147,11 @@ func main() {
 		return
 	}
 
-	program := tea.NewProgram(ui.New(tracks, playback))
+	model := ui.New(tracks, playback)
+	if *backendMode == "go" {
+		model = model.WithHistorySource(historySource{path: historyPath, tracks: tracks})
+	}
+	program := tea.NewProgram(model)
 	if _, err := program.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "PlaylistMaker Charm spike failed: %v\n", err)
 		os.Exit(1)

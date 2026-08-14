@@ -64,6 +64,10 @@ func (r row) isVariant() bool { return r.variantIndex >= 0 }
 
 type PlaybackLauncher = backend.PlaybackService
 
+type HistorySource interface {
+	Refresh(context.Context) ([]library.Track, error)
+}
+
 type playbackResultMsg struct {
 	count      int
 	err        error
@@ -71,37 +75,46 @@ type playbackResultMsg struct {
 	queueOrder []string
 }
 
+type historyRefreshMsg struct {
+	tracks []library.Track
+	err    error
+}
+
+type historyRefreshTickMsg struct{}
+
 type Model struct {
-	all             []library.Track
-	filtered        []library.Track
-	rows            []row
-	expanded        map[string]bool
-	queued          map[string]library.Variant
-	queueOrder      []string
-	enabled         map[library.Category]bool
-	query           string
-	sort            library.Sort
-	trackDate       *library.DateRange
-	videoDate       *library.DateRange
-	mode            mode
-	cursor          int
-	overlayCursor   int
-	waitingForG     bool
-	width           int
-	height          int
-	status          string
-	theme           theme
-	stats           *latencyStats
-	playback        PlaybackLauncher
-	playbackOptions backend.PlaybackOptions
-	draftOptions    backend.PlaybackOptions
-	filterDraft     [2]string
-	optionEdit      string
-	optionEditField int
-	optionError     string
-	helpOffset      int
-	detailsOffset   int
-	launching       bool
+	all               []library.Track
+	filtered          []library.Track
+	rows              []row
+	expanded          map[string]bool
+	queued            map[string]library.Variant
+	queueOrder        []string
+	enabled           map[library.Category]bool
+	query             string
+	sort              library.Sort
+	trackDate         *library.DateRange
+	videoDate         *library.DateRange
+	mode              mode
+	cursor            int
+	overlayCursor     int
+	waitingForG       bool
+	width             int
+	height            int
+	status            string
+	theme             theme
+	stats             *latencyStats
+	playback          PlaybackLauncher
+	historySource     HistorySource
+	historyRefreshing bool
+	playbackOptions   backend.PlaybackOptions
+	draftOptions      backend.PlaybackOptions
+	filterDraft       [2]string
+	optionEdit        string
+	optionEditField   int
+	optionError       string
+	helpOffset        int
+	detailsOffset     int
+	launching         bool
 }
 
 func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
@@ -130,13 +143,41 @@ func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
 	return m
 }
 
-func (m Model) Init() tea.Cmd { return nil }
+func (m Model) Init() tea.Cmd {
+	if m.historySource == nil {
+		return nil
+	}
+	return m.startHistoryRefreshCmd()
+}
+
+func (m Model) WithHistorySource(source HistorySource) Model {
+	m.historySource = source
+	return m
+}
 
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	started := time.Now()
 	defer func() { m.stats.recordUpdate(time.Since(started)) }()
 
 	switch message := message.(type) {
+	case historyRefreshMsg:
+		m.historyRefreshing = false
+		if message.err != nil {
+			m.status = "History refresh failed: " + message.err.Error()
+		} else {
+			m.applyHistory(message.tracks)
+			m.status = "History refreshed"
+		}
+		if m.historySource != nil {
+			return m, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return historyRefreshTickMsg{} })
+		}
+		return m, nil
+	case historyRefreshTickMsg:
+		if m.historyRefreshing || m.historySource == nil {
+			return m, nil
+		}
+		m.historyRefreshing = true
+		return m, m.startHistoryRefreshCmd()
 	case playbackResultMsg:
 		m.launching = false
 		if message.err != nil {
@@ -260,6 +301,9 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if key.String() != "g" {
 		m.waitingForG = false
 	}
+	if key.Text == "R" {
+		return m.requestHistoryRefresh()
+	}
 
 	switch key.String() {
 	case "j", "down", "ctrl+j":
@@ -305,6 +349,8 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "p":
 		m.mode, m.overlayCursor, m.draftOptions = modePlaybackOptions, 0, m.playbackOptions
 		m.optionEdit, m.optionEditField, m.optionError = "", -1, ""
+	case "R", "shift+r":
+		return m.requestHistoryRefresh()
 	case "f":
 		m.mode, m.overlayCursor = modeFilters, 0
 		m.filterDraft = [2]string{}
@@ -325,6 +371,64 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.status = "Esc closes modes; Ctrl+Q quits"
 	}
 	return m, nil
+}
+
+func (m Model) requestHistoryRefresh() (tea.Model, tea.Cmd) {
+	if m.historySource == nil {
+		m.status = "History refresh is unavailable"
+		return m, nil
+	}
+	if m.historyRefreshing {
+		m.status = "History refresh already in progress"
+		return m, nil
+	}
+	m.status, m.historyRefreshing = "Refreshing history…", true
+	return m, m.startHistoryRefreshCmd()
+}
+
+func (m Model) startHistoryRefreshCmd() tea.Cmd {
+	if m.historySource == nil {
+		return nil
+	}
+	source := m.historySource
+	return func() tea.Msg {
+		tracks, err := source.Refresh(context.Background())
+		return historyRefreshMsg{tracks: tracks, err: err}
+	}
+}
+
+func (m *Model) applyHistory(updated []library.Track) {
+	byTrack := make(map[string]library.Track, len(updated))
+	for _, track := range updated {
+		byTrack[track.ID] = track
+	}
+	for trackIndex := range m.all {
+		fresh, ok := byTrack[m.all[trackIndex].ID]
+		if !ok {
+			continue
+		}
+		m.all[trackIndex].History = fresh.History
+		byVariant := make(map[string]library.History, len(fresh.Variants))
+		for _, variant := range fresh.Variants {
+			byVariant[variant.ID] = variant.History
+		}
+		for variantIndex := range m.all[trackIndex].Variants {
+			if value, ok := byVariant[m.all[trackIndex].Variants[variantIndex].ID]; ok {
+				m.all[trackIndex].Variants[variantIndex].History = value
+			}
+		}
+	}
+	for id, variant := range m.queued {
+		for _, track := range m.all {
+			for _, fresh := range track.Variants {
+				if fresh.ID == id {
+					variant.History = fresh.History
+					m.queued[id] = variant
+				}
+			}
+		}
+	}
+	m.refreshResults()
 }
 
 func (m Model) handleDetailsKey(key tea.KeyPressMsg) Model {

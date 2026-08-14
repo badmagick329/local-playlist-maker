@@ -72,3 +72,19 @@ func TestNormalizeClampsDurationAndPercent(t *testing.T) {
 	}
 	_ = time.Now()
 }
+
+func TestLastAttemptedIgnoresNotStarted(t *testing.T) {
+	path := filepath.Join(t.TempDir(), HistoryFileName)
+	contents := "{\"event\":\"not_started\",\"eventAtUtc\":\"2026-01-03T00:00:00Z\",\"sessionId\":\"s\",\"entryId\":\"one\",\"videoPath\":\"video\"}\n" +
+		"{\"event\":\"skipped\",\"eventAtUtc\":\"2026-01-02T00:00:00Z\",\"sessionId\":\"s\",\"entryId\":\"two\",\"videoPath\":\"video\"}\n"
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	index, err := Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := index.Videos["video"].LastAttempted; got == nil || got.Day() != 2 {
+		t.Fatalf("last attempted = %v", got)
+	}
+}

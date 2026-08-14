@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"slices"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -16,6 +17,17 @@ type playbackStub struct {
 	err     error
 	ids     []string
 	request backend.PlaybackRequest
+}
+
+type historyStub struct {
+	tracks []library.Track
+	err    error
+	calls  int
+}
+
+func (s *historyStub) Refresh(_ context.Context) ([]library.Track, error) {
+	s.calls++
+	return s.tracks, s.err
 }
 
 func (p *playbackStub) Launch(_ context.Context, request backend.PlaybackRequest) (backend.PlaybackResult, error) {
@@ -160,6 +172,40 @@ func TestFailedPlaybackKeepsQueue(t *testing.T) {
 	m = next.(Model)
 	if len(m.queueOrder) != 1 {
 		t.Fatal("failed playback cleared queue")
+	}
+}
+
+func TestManualHistoryRefreshPreservesUIStateAndQueue(t *testing.T) {
+	tracks := library.Generate(3, 6)
+	fresh := append([]library.Track(nil), tracks...)
+	for index := range fresh {
+		fresh[index].Variants = append([]library.Variant(nil), fresh[index].Variants...)
+		fresh[index].History.PlayedCount = 4
+		for variant := range fresh[index].Variants {
+			fresh[index].Variants[variant].History.CompletedCount = 2
+		}
+	}
+	source := &historyStub{tracks: fresh}
+	m := New(tracks).WithHistorySource(source)
+	m.query, m.sort, m.expanded[tracks[0].ID] = "", library.TitleAscending, true
+	m.refreshResults()
+	m = updateKey(t, m, "space")
+	queued := append([]string(nil), m.queueOrder...)
+	cursor := m.cursor
+	next, command := m.requestHistoryRefresh()
+	if command == nil || !next.(Model).historyRefreshing {
+		t.Fatal("R did not start async refresh")
+	}
+	next, _ = next.(Model).Update(command())
+	m = next.(Model)
+	if source.calls != 1 || m.all[0].History.PlayedCount != 4 || m.all[0].Variants[0].History.CompletedCount != 2 {
+		t.Fatal("history was not applied")
+	}
+	if m.sort != library.TitleAscending || m.cursor != cursor || !m.expanded[tracks[0].ID] || !slices.Equal(m.queueOrder, queued) {
+		t.Fatal("refresh changed UI state")
+	}
+	if m.queued[queued[0]].History.CompletedCount != 2 {
+		t.Fatal("queued history was not refreshed")
 	}
 }
 

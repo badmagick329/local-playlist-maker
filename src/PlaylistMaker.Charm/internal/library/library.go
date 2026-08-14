@@ -65,14 +65,15 @@ type Track struct {
 }
 
 type History struct {
-	PlayedCount     int
-	CompletedCount  int
-	StoppedCount    int
-	SkippedCount    int
-	NotStartedCount int
-	AbandonedCount  int
-	LastPlayedAtUTC *time.Time
-	Recent          []HistoryEvent
+	PlayedCount        int
+	CompletedCount     int
+	StoppedCount       int
+	SkippedCount       int
+	NotStartedCount    int
+	AbandonedCount     int
+	LastPlayedAtUTC    *time.Time
+	LastAttemptedAtUTC *time.Time
+	Recent             []HistoryEvent
 }
 
 type HistoryEvent struct {
