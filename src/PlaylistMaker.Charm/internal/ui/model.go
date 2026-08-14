@@ -68,6 +68,13 @@ type HistorySource interface {
 	Refresh(context.Context) ([]library.Track, error)
 }
 
+// HistoryWatcher emits debounced notifications for changes to the history file.
+// It is separate from HistorySource so tests and alternate backends can inject it.
+type HistoryWatcher interface {
+	Changes() <-chan struct{}
+	Close() error
+}
+
 type playbackResultMsg struct {
 	count      int
 	err        error
@@ -78,9 +85,11 @@ type playbackResultMsg struct {
 type historyRefreshMsg struct {
 	tracks []library.Track
 	err    error
+	manual bool
 }
 
-type historyRefreshTickMsg struct{}
+type historyWatchChangedMsg struct{}
+type historyWatchClosedMsg struct{}
 
 type Model struct {
 	all               []library.Track
@@ -105,7 +114,9 @@ type Model struct {
 	stats             *latencyStats
 	playback          PlaybackLauncher
 	historySource     HistorySource
+	historyWatcher    HistoryWatcher
 	historyRefreshing bool
+	historyPending    bool
 	playbackOptions   backend.PlaybackOptions
 	draftOptions      backend.PlaybackOptions
 	filterDraft       [2]string
@@ -147,11 +158,21 @@ func (m Model) Init() tea.Cmd {
 	if m.historySource == nil {
 		return nil
 	}
-	return m.startHistoryRefreshCmd()
+	commands := []tea.Cmd{m.startHistoryRefreshCmd(false)}
+	if m.historyWatcher != nil {
+		commands = append(commands, m.waitForHistoryChangeCmd())
+	}
+	return tea.Batch(commands...)
 }
 
-func (m Model) WithHistorySource(source HistorySource) Model {
+func (m Model) WithHistorySource(source HistorySource, watcher ...HistoryWatcher) Model {
 	m.historySource = source
+	// Init immediately starts the first asynchronous refresh. Mark it in flight
+	// now so a filesystem notification arriving during startup is coalesced.
+	m.historyRefreshing = source != nil
+	if len(watcher) > 0 {
+		m.historyWatcher = watcher[0]
+	}
 	return m
 }
 
@@ -166,18 +187,29 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			m.status = "History refresh failed: " + message.err.Error()
 		} else {
 			m.applyHistory(message.tracks)
-			m.status = "History refreshed"
+			if message.manual {
+				m.status = "History refreshed"
+			}
 		}
-		if m.historySource != nil {
-			return m, tea.Tick(5*time.Second, func(time.Time) tea.Msg { return historyRefreshTickMsg{} })
+		if m.historyPending {
+			m.historyPending = false
+			m.historyRefreshing = true
+			return m, m.startHistoryRefreshCmd(false)
 		}
 		return m, nil
-	case historyRefreshTickMsg:
-		if m.historyRefreshing || m.historySource == nil {
+	case historyWatchChangedMsg:
+		if m.historySource == nil {
 			return m, nil
 		}
+		wait := m.waitForHistoryChangeCmd()
+		if m.historyRefreshing {
+			m.historyPending = true
+			return m, wait
+		}
 		m.historyRefreshing = true
-		return m, m.startHistoryRefreshCmd()
+		return m, tea.Batch(wait, m.startHistoryRefreshCmd(false))
+	case historyWatchClosedMsg:
+		return m, nil
 	case playbackResultMsg:
 		m.launching = false
 		if message.err != nil {
@@ -194,10 +226,11 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = max(message.Width, 40)
 		m.height = max(message.Height, 12)
 		m.keepCursorVisible()
-		m.helpOffset = min(m.helpOffset, m.helpMaxOffset())
+		m.clampOverlayState()
 		return m, nil
 	case tea.KeyPressMsg:
 		if message.String() == "ctrl+q" {
+			m.closeHistoryWatcher()
 			return m, tea.Quit
 		}
 		return m.handleKey(message)
@@ -387,18 +420,39 @@ func (m Model) requestHistoryRefresh() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.status, m.historyRefreshing = "Refreshing history…", true
-	return m, m.startHistoryRefreshCmd()
+	return m, m.startHistoryRefreshCmd(true)
 }
 
-func (m Model) startHistoryRefreshCmd() tea.Cmd {
+func (m Model) startHistoryRefreshCmd(manual bool) tea.Cmd {
 	if m.historySource == nil {
 		return nil
 	}
 	source := m.historySource
 	return func() tea.Msg {
 		tracks, err := source.Refresh(context.Background())
-		return historyRefreshMsg{tracks: tracks, err: err}
+		return historyRefreshMsg{tracks: tracks, err: err, manual: manual}
 	}
+}
+
+func (m Model) waitForHistoryChangeCmd() tea.Cmd {
+	if m.historyWatcher == nil {
+		return nil
+	}
+	changes := m.historyWatcher.Changes()
+	return func() tea.Msg {
+		if _, ok := <-changes; !ok {
+			return historyWatchClosedMsg{}
+		}
+		return historyWatchChangedMsg{}
+	}
+}
+
+func (m *Model) closeHistoryWatcher() {
+	if m.historyWatcher == nil {
+		return
+	}
+	_ = m.historyWatcher.Close()
+	m.historyWatcher = nil
 }
 
 func (m *Model) applyHistory(updated []library.Track) {
@@ -479,6 +533,25 @@ func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {
 
 func (m Model) helpMaxOffset() int {
 	return max(len(helpLines())-overlayListCapacity(m.height), 0)
+}
+
+func (m *Model) clampOverlayState() {
+	m.helpOffset = min(max(m.helpOffset, 0), m.helpMaxOffset())
+	switch m.mode {
+	case modeCategories:
+		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Categories)-1)
+	case modeSort:
+		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Sorts)-1)
+	case modeQueue:
+		m.overlayCursor = min(max(m.overlayCursor, 0), max(len(m.queueOrder)-1, 0))
+	case modePlaybackOptions:
+		m.overlayCursor = min(max(m.overlayCursor, 0), 4)
+	case modeFilters:
+		m.overlayCursor = min(max(m.overlayCursor, 0), 3)
+	case modeDetails:
+		maxOffset := max(len(m.detailsLines())-overlayListCapacity(m.height), 0)
+		m.detailsOffset = min(max(m.detailsOffset, 0), maxOffset)
+	}
 }
 
 func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
@@ -788,19 +861,34 @@ func (m Model) handleQueueKey(key tea.KeyPressMsg) Model {
 
 func (m *Model) refreshResults() {
 	selectedTrackID := ""
+	selectedVariantID := ""
 	if current, ok := m.currentRow(); ok {
 		selectedTrackID = m.filtered[current.trackIndex].ID
+		if current.isVariant() {
+			selectedVariantID = m.filtered[current.trackIndex].Variants[current.variantIndex].ID
+		}
 	}
 	m.filtered = library.FilterAndSort(m.all, m.currentQuery())
 	m.rebuildRows()
+	if selectedVariantID != "" {
+		for index, current := range m.rows {
+			if current.isVariant() && m.filtered[current.trackIndex].Variants[current.variantIndex].ID == selectedVariantID {
+				m.cursor = index
+				m.clampOverlayState()
+				m.keepCursorVisible()
+				return
+			}
+		}
+	}
 	if selectedTrackID != "" {
 		for index, current := range m.rows {
-			if m.filtered[current.trackIndex].ID == selectedTrackID {
+			if !current.isVariant() && m.filtered[current.trackIndex].ID == selectedTrackID {
 				m.cursor = index
 				break
 			}
 		}
 	}
+	m.clampOverlayState()
 	m.keepCursorVisible()
 }
 

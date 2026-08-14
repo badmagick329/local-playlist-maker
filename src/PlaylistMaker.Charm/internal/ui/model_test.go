@@ -25,6 +25,22 @@ type historyStub struct {
 	calls  int
 }
 
+type historyWatcherStub struct {
+	changes chan struct{}
+	closes  int
+}
+
+func newHistoryWatcherStub() *historyWatcherStub {
+	return &historyWatcherStub{changes: make(chan struct{}, 4)}
+}
+
+func (w *historyWatcherStub) Changes() <-chan struct{} { return w.changes }
+func (w *historyWatcherStub) Close() error {
+	w.closes++
+	close(w.changes)
+	return nil
+}
+
 func (s *historyStub) Refresh(_ context.Context) ([]library.Track, error) {
 	s.calls++
 	return s.tracks, s.err
@@ -187,6 +203,7 @@ func TestManualHistoryRefreshPreservesUIStateAndQueue(t *testing.T) {
 	}
 	source := &historyStub{tracks: fresh}
 	m := New(tracks).WithHistorySource(source)
+	m.historyRefreshing = false // Simulate the startup refresh having completed.
 	m.query, m.sort, m.expanded[tracks[0].ID] = "", library.TitleAscending, true
 	m.refreshResults()
 	m = updateKey(t, m, "space")
@@ -207,6 +224,139 @@ func TestManualHistoryRefreshPreservesUIStateAndQueue(t *testing.T) {
 	if m.queued[queued[0]].History.CompletedCount != 2 {
 		t.Fatal("queued history was not refreshed")
 	}
+}
+
+func TestHistoryRefreshKeepsHighlightedChildVariant(t *testing.T) {
+	tracks := library.Generate(1, 3)
+	for index := range tracks[0].Variants {
+		tracks[0].Variants[index].Category = library.MusicVideo
+	}
+	m := New(tracks)
+	m.expanded[tracks[0].ID] = true
+	m.refreshResults()
+	m.cursor = 2
+	want := m.filtered[m.rows[m.cursor].trackIndex].Variants[m.rows[m.cursor].variantIndex].ID
+
+	fresh := cloneTracks(tracks)
+	fresh[0].Variants[1].History.PlayedCount = 3
+	m.applyHistory(fresh)
+	current, ok := m.currentRow()
+	if !ok || !current.isVariant() {
+		t.Fatal("highlighted child was not restored as a child row")
+	}
+	got := m.filtered[current.trackIndex].Variants[current.variantIndex].ID
+	if got != want {
+		t.Fatalf("highlighted variant = %q, want %q", got, want)
+	}
+}
+
+func TestHistoryRefreshKeepsHighlightedParent(t *testing.T) {
+	tracks := library.Generate(2, 4)
+	m := New(tracks)
+	m.cursor = 1
+	want := m.filtered[m.rows[m.cursor].trackIndex].ID
+	m.applyHistory(cloneTracks(tracks))
+	current, ok := m.currentRow()
+	if !ok || current.isVariant() || m.filtered[current.trackIndex].ID != want {
+		t.Fatal("highlighted parent was not preserved")
+	}
+}
+
+func TestHistoryRefreshFallsBackToParentWhenChildIsIneligible(t *testing.T) {
+	tracks := library.Generate(1, 3)
+	for index := range tracks[0].Variants {
+		tracks[0].Variants[index].Category = library.MusicVideo
+	}
+	tracks[0].Variants[1].Category = library.BandLive
+	m := New(tracks)
+	m.enabled[library.BandLive] = true
+	m.expanded[tracks[0].ID] = true
+	m.refreshResults()
+	m.cursor = 2
+	m.enabled[library.BandLive] = false
+	m.applyHistory(cloneTracks(m.all))
+	current, ok := m.currentRow()
+	if !ok || current.isVariant() || m.filtered[current.trackIndex].ID != tracks[0].ID {
+		t.Fatal("ineligible child did not fall back to its parent")
+	}
+}
+
+func TestAutomaticHistoryRefreshPreservesStateAndStatus(t *testing.T) {
+	tracks := library.Generate(3, 6)
+	m := New(tracks)
+	m.query = tracks[0].Artist
+	m.enabled[library.BandLive] = true
+	m.sort = library.TitleAscending
+	m.expanded[tracks[0].ID] = true
+	m.refreshResults()
+	m = updateKey(t, m, "space")
+	m.playbackOptions.Shuffle = true
+	m.mode, m.detailsOffset = modeDetails, 1
+	m.height = 12
+	m.status = "Queued a video"
+	queued := append([]string(nil), m.queueOrder...)
+
+	fresh := cloneTracks(m.all)
+	fresh[0].History.PlayedCount = 8
+	next, _ := m.Update(historyRefreshMsg{tracks: fresh})
+	m = next.(Model)
+	if m.status != "Queued a video" || m.query != tracks[0].Artist || !m.enabled[library.BandLive] || m.sort != library.TitleAscending || !m.expanded[tracks[0].ID] || !slices.Equal(m.queueOrder, queued) || !m.playbackOptions.Shuffle || m.mode != modeDetails || m.detailsOffset != 1 {
+		t.Fatal("automatic history refresh reset UI state or status")
+	}
+}
+
+func TestHistoryWatchNotificationsCoalesceWhileRefreshIsRunning(t *testing.T) {
+	tracks := library.Generate(1, 2)
+	source := &historyStub{tracks: cloneTracks(tracks)}
+	watcher := newHistoryWatcherStub()
+	m := New(tracks).WithHistorySource(source, watcher)
+	m.historyRefreshing = true
+	watcher.changes <- struct{}{}
+	message := m.waitForHistoryChangeCmd()()
+	next, command := m.Update(message)
+	m = next.(Model)
+	if command == nil || !m.historyPending {
+		t.Fatal("watch notification was not retained while a refresh was running")
+	}
+	next, command = m.Update(historyRefreshMsg{tracks: cloneTracks(tracks)})
+	m = next.(Model)
+	if command == nil || !m.historyRefreshing || m.historyPending {
+		t.Fatal("coalesced notification did not schedule exactly one follow-up refresh")
+	}
+	message = command()
+	next, _ = m.Update(message)
+	if source.calls != 1 {
+		t.Fatalf("follow-up refresh calls = %d, want 1", source.calls)
+	}
+}
+
+func TestManualHistoryRefreshReportsFailureAndWatcherCloses(t *testing.T) {
+	tracks := library.Generate(1, 2)
+	source := &historyStub{err: errors.New("history unavailable")}
+	watcher := newHistoryWatcherStub()
+	m := New(tracks).WithHistorySource(source, watcher)
+	m.historyRefreshing = false // Simulate the startup refresh having completed.
+	next, command := m.requestHistoryRefresh()
+	if command == nil {
+		t.Fatal("manual R did not start refresh")
+	}
+	next, _ = next.(Model).Update(command())
+	m = next.(Model)
+	if m.status != "History refresh failed: history unavailable" {
+		t.Fatalf("manual failure status = %q", m.status)
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
+	if next.(Model).historyWatcher != nil || watcher.closes != 1 {
+		t.Fatal("history watcher was not closed on TUI quit")
+	}
+}
+
+func cloneTracks(tracks []library.Track) []library.Track {
+	result := append([]library.Track(nil), tracks...)
+	for track := range result {
+		result[track].Variants = append([]library.Variant(nil), result[track].Variants...)
+	}
+	return result
 }
 
 func TestHelpOpensScrollsAndClosesWithoutTriggeringActions(t *testing.T) {

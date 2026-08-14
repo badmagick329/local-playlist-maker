@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -12,6 +13,7 @@ import (
 	"playlistmaker/charm/internal/bridge"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/history"
+	"playlistmaker/charm/internal/historywatch"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/native"
 	nativeplayback "playlistmaker/charm/internal/playback"
@@ -149,7 +151,14 @@ func main() {
 
 	model := ui.New(tracks, playback)
 	if *backendMode == "go" {
-		model = model.WithHistorySource(historySource{path: historyPath, tracks: tracks})
+		watcher, err := historywatch.New(historyPath, 250*time.Millisecond)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker history watch unavailable: %v\n", err)
+			model = model.WithHistorySource(historySource{path: historyPath, tracks: tracks})
+		} else {
+			defer watcher.Close()
+			model = model.WithHistorySource(historySource{path: historyPath, tracks: tracks}, watcher)
+		}
 	}
 	program := tea.NewProgram(model)
 	if _, err := program.Run(); err != nil {
