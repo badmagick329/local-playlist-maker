@@ -1,9 +1,9 @@
-[CmdletBinding()]
+[CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$DisableHistory,
 
     [ValidateSet('go', 'bridge', 'go-library', 'compare')]
-    [string]$Backend = 'bridge',
+    [string]$Backend = 'go',
 
     [Parameter(ValueFromRemainingArguments = $true)]
     [string[]]$ApplicationArguments

@@ -21,6 +21,7 @@ import (
 type Loader struct {
 	Config    config.Config
 	TagReader metadata.Reader
+	ReadOnly  bool
 }
 type cacheEntry struct {
 	FilePath    string `json:"filePath"`
@@ -49,13 +50,15 @@ func (l Loader) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
 	for _, entry := range mappings {
 		audioPaths = append(audioPaths, entry.audioPath)
 	}
-	reader := l.TagReader
-	if reader == nil {
-		reader = metadata.FLACReader{}
-	}
-	_, _, err = metadata.Ensure(ctx, l.Config.FlacCacheFile, audioPaths, reader)
-	if err != nil {
-		return backend.LibrarySnapshot{}, err
+	if !l.ReadOnly {
+		reader := l.TagReader
+		if reader == nil {
+			reader = metadata.FLACReader{}
+		}
+		_, _, err = metadata.Ensure(ctx, l.Config.FlacCacheFile, audioPaths, reader)
+		if err != nil {
+			return backend.LibrarySnapshot{}, err
+		}
 	}
 	cache, err := loadCache(l.Config.FlacCacheFile)
 	if err != nil {

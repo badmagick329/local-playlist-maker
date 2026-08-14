@@ -11,8 +11,10 @@ import (
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/bridge"
 	"playlistmaker/charm/internal/config"
+	"playlistmaker/charm/internal/history"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/native"
+	nativeplayback "playlistmaker/charm/internal/playback"
 	"playlistmaker/charm/internal/snapshotcmp"
 	"playlistmaker/charm/internal/ui"
 )
@@ -24,7 +26,7 @@ func main() {
 	configPath := flag.String("config", "config.yaml", "path to PlaylistMaker config")
 	disableHistory := flag.Bool("disable-history", false, "disable new playback-history sessions")
 	check := flag.Bool("check", false, "load the selected library and exit")
-	backendMode := flag.String("backend", "bridge", "backend mode: bridge, go-library, or compare")
+	backendMode := flag.String("backend", "go", "backend mode: go, bridge, go-library, or compare")
 	flag.Parse()
 
 	if *trackCount < 1 || *variantCount < *trackCount {
@@ -35,11 +37,36 @@ func main() {
 	tracks := library.Generate(*trackCount, *variantCount)
 	var playback backend.PlaybackService
 	var bridgeClient *bridge.Client
-	if *backendMode != "bridge" && *backendMode != "go-library" && *backendMode != "compare" {
+	if *backendMode != "go" && *backendMode != "bridge" && *backendMode != "go-library" && *backendMode != "compare" {
 		fmt.Fprintf(os.Stderr, "unsupported backend mode %q\n", *backendMode)
 		os.Exit(2)
 	}
-	if *bridgePath != "" {
+	if *backendMode == "go" {
+		goConfig, err := config.Load(*configPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker Go config failed: %v\n", err)
+			os.Exit(1)
+		}
+		loggingEnabled := goConfig.PlaybackHistoryEnabled && !*disableHistory
+		historyService := history.Service{DataDirectory: goConfig.DataDirectory, MinimumWatchedPercent: goConfig.PlaybackHistoryMinimumWatchedPercent}
+		if loggingEnabled && !*check {
+			if err := historyService.Recover(); err != nil {
+				fmt.Fprintf(os.Stderr, "PlaylistMaker history recovery failed: %v\n", err)
+			}
+		}
+		nativeSnapshot, err := (native.Loader{Config: goConfig, ReadOnly: *check}).Load(context.Background())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker Go library failed: %v\n", err)
+			os.Exit(1)
+		}
+		index, err := history.Read(historyService.HistoryPath())
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker history read failed: %v\n", err)
+			os.Exit(1)
+		}
+		tracks = history.Attach(nativeSnapshot.Tracks, index)
+		playback = nativeplayback.Service{Tracks: tracks, Config: goConfig, History: &historyService, HistoryEnabled: loggingEnabled}
+	} else if *bridgePath != "" {
 		var err error
 		bridgeClient, err = bridge.Start(*bridgePath, *configPath, *disableHistory)
 		if err != nil {
@@ -78,8 +105,8 @@ func main() {
 			}
 			tracks = snapshotcmp.OverlayHistory(nativeSnapshot, snapshot).Tracks
 		}
-	} else if *backendMode != "bridge" {
-		fmt.Fprintln(os.Stderr, "go-library and compare modes require --bridge for temporary playback/history support")
+	} else {
+		fmt.Fprintln(os.Stderr, "bridge, go-library, and compare modes require --bridge for temporary diagnostics")
 		os.Exit(2)
 	}
 	if *check {
@@ -92,7 +119,7 @@ func main() {
 			len(tracks),
 			variants,
 			playback != nil,
-			playback != nil && !*disableHistory,
+			*backendMode == "go" && !*disableHistory,
 		)
 		return
 	}

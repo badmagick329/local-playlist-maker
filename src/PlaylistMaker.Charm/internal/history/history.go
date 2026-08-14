@@ -235,7 +235,7 @@ func (s Service) Recover() error {
 		if readErr != nil || json.Unmarshal(contents, &session) != nil || session.SessionID == "" {
 			continue
 		}
-		if session.MpvProcessID != nil && s.IsAlive != nil && s.IsAlive(*session.MpvProcessID) {
+		if session.MpvProcessID != nil && (s.IsAlive == nil || s.IsAlive(*session.MpvProcessID)) {
 			continue
 		}
 		started, terminal := s.sessionEvents(session.SessionID)

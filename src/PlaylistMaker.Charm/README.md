@@ -31,3 +31,29 @@ Key flows:
 - `/` enters search mode; `Space` then inserts a space.
 - `c`, `s`, and `q` open categories, sorting, and queue overlays.
 - `Esc` closes a mode. Only `Ctrl+Q` quits.
+# PlaylistMaker Charm
+
+Charm now runs the native Go library, cache, history, and playback runtime by
+default. mpv and foobar2000 remain the configured external media players.
+
+```powershell
+.\scripts\run-charm.ps1
+```
+
+Normal launches honor `playbackHistoryEnabled` in the selected config. For a
+safe browsing or playback test that creates no history sessions or recovery
+events, use:
+
+```powershell
+.\scripts\run-charm.ps1 -DisableHistory
+```
+
+Temporary diagnostics remain available while the C# bridge is retained:
+
+```powershell
+.\scripts\run-charm.ps1 -Backend bridge -DisableHistory
+.\scripts\run-charm.ps1 -Backend compare -DisableHistory
+```
+
+`--check` loads and reports the selected backend without launching players,
+recovering sessions, or changing history.
