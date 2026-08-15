@@ -191,15 +191,15 @@ func dateLabel(value string) (time.Time, string, bool) {
 	return time.Time{}, "", false
 }
 func videoDate(path string) (time.Time, string, bool) {
-	name := filepath.Base(path)
-	if len(name) < 6 {
+	value := videoname.Parse(path).Date
+	switch len(value) {
+	case 6:
+		return dateLabel("20" + value[:2] + "-" + value[2:4] + "-" + value[4:])
+	case 8:
+		return dateLabel(value[:4] + "-" + value[4:6] + "-" + value[6:])
+	default:
 		return time.Time{}, "", false
 	}
-	value := name[:6]
-	if !regexp.MustCompile(`^\d{6}$`).MatchString(value) {
-		return time.Time{}, "", false
-	}
-	return dateLabel("20" + value[:2] + "-" + value[2:4] + "-" + value[4:])
 }
 
 func classify(path string) library.Category {

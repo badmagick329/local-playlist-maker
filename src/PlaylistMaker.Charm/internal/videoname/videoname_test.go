@@ -29,6 +29,12 @@ func TestParseRecognizesDatesAndEstablishedVariants(t *testing.T) {
 	if parsed := Parse("260724 Billlie - WDA (Whole Different Animal).webm"); parsed.Date != "260724" || parsed.Title != "WDA (Whole Different Animal)" || parsed.Variant != "" {
 		t.Fatalf("unrecognized parentheses were removed: %#v", parsed)
 	}
+	for _, filename := range []string{"241029 ITZY - Imaginary Friend (Areia Remix).webm", "20241029 ITZY - Imaginary Friend (Areia Remix).webm"} {
+		parsed := Parse(filename)
+		if parsed.Artist != "ITZY" || parsed.Title != "Imaginary Friend" || parsed.Variant != "Areia Remix" {
+			t.Fatalf("Parse(%q) = %#v", filename, parsed)
+		}
+	}
 }
 
 func TestNormalizeCollapsesPunctuationWhitespaceAndPreservesUnicode(t *testing.T) {

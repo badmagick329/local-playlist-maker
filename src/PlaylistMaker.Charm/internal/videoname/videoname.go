@@ -16,7 +16,7 @@ type Parsed struct {
 }
 
 var (
-	datePrefix   = regexp.MustCompile(`^(\d{6})\s+`)
+	datePrefix   = regexp.MustCompile(`^(\d{8}|\d{6})\s+`)
 	textVariant  = regexp.MustCompile(`(?i)\s+(Performance(?:\s+[1-9]\d*)?|Choreography|Relay|Be Original)$`)
 	parenVariant = regexp.MustCompile(`\s+\(([^()]*)\)$`)
 )

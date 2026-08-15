@@ -89,6 +89,27 @@ func TestClassifyUsesSharedRecognizedParenthesizedVariants(t *testing.T) {
 	}
 }
 
+func TestVideoDateAcceptsSixAndEightDigitPrefixes(t *testing.T) {
+	for _, path := range []string{"241029 ITZY - Imaginary Friend.webm", "20241029 ITZY - Imaginary Friend.webm"} {
+		date, label, ok := videoDate(path)
+		if !ok || label != "2024-10-29" || date.IsZero() {
+			t.Fatalf("videoDate(%q) = %v, %q, %t", path, date, label, ok)
+		}
+	}
+}
+
+func TestLoaderDoesNotScanConfiguredAudioDirectoriesAtStartup(t *testing.T) {
+	root := copyFixture(t)
+	loaded, err := config.Load(filepath.Join(root, "fixture.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded.AudioDirectories = []string{filepath.Join(root, "missing-audio-library")}
+	if _, err := (Loader{Config: loaded, ReadOnly: true}).Load(context.Background()); err != nil {
+		t.Fatalf("startup scanned configured audio directories: %v", err)
+	}
+}
+
 type fakeTagReader struct{}
 
 func (fakeTagReader) Read(_ context.Context, path string) (metadata.Entry, error) {
