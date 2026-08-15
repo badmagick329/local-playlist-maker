@@ -5,7 +5,8 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode"
+
+	"playlistmaker/charm/internal/videoname"
 )
 
 type Category string
@@ -369,12 +370,12 @@ func DefaultVariant(track Track, query Query) (Variant, bool) {
 }
 
 func normalize(value string) string {
-	return strings.ToLower(strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) || unicode.IsSpace(r) {
-			return r
-		}
-		return ' '
-	}, value))
+	return videoname.Normalize(value)
+}
+
+// FuzzyScore uses the same fzf-style matcher as library search.
+func FuzzyScore(candidate, query string) (int, bool) {
+	return fuzzyScore(normalize(candidate), strings.Fields(normalize(query)))
 }
 
 func fuzzyScore(candidate string, tokens []string) (int, bool) {

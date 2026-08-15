@@ -45,11 +45,88 @@ func TestScanOrdersUnmappedVideosAndSuggestsExactMatches(t *testing.T) {
 	for _, item := range items {
 		byFilename[item.Filename] = item
 	}
-	if item := byFilename[filepath.Base(used)]; !strings.Contains(item.Reason, "1 videos already linked") || item.AudioPath != "audio\\song.flac" {
+	if item := byFilename[filepath.Base(used)]; item.Reason != "Exact match" || item.AudioPath != "audio\\song.flac" {
 		t.Fatalf("used suggestion = %#v", item)
 	}
-	if item := byFilename[filepath.Base(cacheOnly)]; item.Reason != "Exact cache match" || item.AudioPath != "audio\\pop.flac" {
+	if item := byFilename[filepath.Base(cacheOnly)]; item.Reason != "Exact match" || item.AudioPath != "audio\\pop.flac" {
 		t.Fatalf("cache suggestion = %#v", item)
+	}
+}
+
+func TestScanSuggestionOrderAndFuzzyRules(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		filename   string
+		cache      map[string]metadata.Entry
+		mapped     []mapping.Entry
+		wantAudio  string
+		wantReason string
+	}{
+		{
+			name:       "normalization supports case punctuation and whitespace",
+			filename:   "260724 BILLlie - Work!!!.mkv",
+			cache:      map[string]metadata.Entry{"work": {FilePath: "audio/work.flac", Artist: "billlie", Title: "Work"}},
+			wantAudio:  "audio\\work.flac",
+			wantReason: "Exact match",
+		},
+		{
+			name:     "mapped evidence takes priority",
+			filename: "260724 Billlie - Work.mkv",
+			cache: map[string]metadata.Entry{
+				"evidence": {FilePath: "audio/evidence.flac", Artist: "Billlie", Title: "Work"},
+				"other":    {FilePath: "audio/other.flac", Artist: "Billlie", Title: "Work"},
+			},
+			mapped:     []mapping.Entry{{VideoPath: "mapped.mkv", AudioPath: "audio/evidence.flac"}},
+			wantAudio:  "audio\\evidence.flac",
+			wantReason: "Exact match",
+		},
+		{
+			name:       "unique same artist fuzzy match",
+			filename:   "260724 Billlie - Work Special Stage.mkv",
+			cache:      map[string]metadata.Entry{"work": {FilePath: "audio/work.flac", Artist: "Billlie", Title: "Work"}},
+			wantAudio:  "audio\\work.flac",
+			wantReason: "Possible match",
+		},
+		{
+			name:     "fuzzy ties are withheld",
+			filename: "260724 Billlie - Work Special Stage.mkv",
+			cache: map[string]metadata.Entry{
+				"one": {FilePath: "audio/one.flac", Artist: "Billlie", Title: "Work"},
+				"two": {FilePath: "audio/two.flac", Artist: "Billlie", Title: "Work!"},
+			},
+		},
+		{
+			name:     "different artists are not fuzzy matched",
+			filename: "260724 Billlie - Work Special Stage.mkv",
+			cache:    map[string]metadata.Entry{"work": {FilePath: "audio/work.flac", Artist: "Someone Else", Title: "Work"}},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := t.TempDir()
+			videos := filepath.Join(root, "videos")
+			video := filepath.Join(videos, test.filename)
+			if err := os.MkdirAll(videos, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(video, nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+			mapPath, cachePath := filepath.Join(root, "data", "map.json"), filepath.Join(root, "data", "cache.json")
+			if err := mapping.Write(mapPath, test.mapped); err != nil {
+				t.Fatal(err)
+			}
+			if err := metadata.WriteCache(cachePath, test.cache); err != nil {
+				t.Fatal(err)
+			}
+			items, err := (Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MappingFile: mapPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}).Scan(context.Background())
+			if err != nil || len(items) != 1 || items[0].AudioPath != test.wantAudio || items[0].Reason != test.wantReason {
+				t.Fatalf("suggestion = %#v, %v", items, err)
+			}
+			entries, err := mapping.Read(mapPath)
+			if err != nil || len(entries) != len(test.mapped) {
+				t.Fatalf("scan saved a suggestion: %#v, %v", entries, err)
+			}
+		})
 	}
 }
 

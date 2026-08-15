@@ -16,6 +16,7 @@ import (
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/metadata"
 	"playlistmaker/charm/internal/pathid"
+	"playlistmaker/charm/internal/videoname"
 )
 
 type Loader struct {
@@ -202,28 +203,27 @@ func videoDate(path string) (time.Time, string, bool) {
 }
 
 func classify(path string) library.Category {
-	name := strings.ToLower(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)))
-	match := func(pattern string) bool { return regexp.MustCompile(pattern).MatchString(name) }
+	variant := strings.ToLower(videoname.Parse(path).Variant)
 	switch {
-	case match(`.+\s+-\s+.+\(.*band live.*\)$`):
+	case strings.Contains(variant, "band live"):
 		return library.BandLive
-	case match(`.+\s+-\s+.+\sperformance(?:\s[1-9]\d*)?$`):
+	case regexp.MustCompile(`^performance(?:\s+[1-9]\d*)?$`).MatchString(variant):
 		return library.Performance
-	case match(`.+\s+-\s+.+\schoreography$`):
+	case variant == "choreography":
 		return library.Choreography
-	case match(`.+\s+-\s+.+\srelay$`):
+	case variant == "relay":
 		return library.Relay
-	case match(`.+\s+-\s+.+\sbe original$`):
+	case variant == "be original":
 		return library.BeOriginal
-	case match(`.+\s+-\s+.+\(.*fancam.*\)$`):
+	case strings.Contains(variant, "fancam"):
 		return library.Fancam
-	case match(`.+\s+-\s+.+\(.*concert.*\)$`):
+	case strings.Contains(variant, "concert"):
 		return library.Concert
 	case strings.Contains(strings.ReplaceAll(path, "/", `\`), `Music\uhdkpop`):
 		return library.MusicShow
-	case match(`.+\s+-\s+.+\((areia\s+)?remix\)$`):
+	case variant == "remix" || variant == "areia remix":
 		return library.Remix
-	case match(`.+\s+-\s+.+\(.*live audio.*\)$`):
+	case strings.Contains(variant, "live audio"):
 		return library.LiveAudio
 	default:
 		return library.MusicVideo

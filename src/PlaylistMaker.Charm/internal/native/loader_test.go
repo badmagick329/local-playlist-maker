@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"playlistmaker/charm/internal/config"
+	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/metadata"
 )
 
@@ -68,6 +69,23 @@ func TestClassifyRecognizesNumberedPerformances(t *testing.T) {
 				t.Fatalf("classify(%q) = %q, want %q", test.path, got, test.want)
 			}
 		})
+	}
+}
+
+func TestClassifyUsesSharedRecognizedParenthesizedVariants(t *testing.T) {
+	for _, test := range []struct {
+		path string
+		want library.Category
+	}{
+		{"Artist - Track (Band Live).mkv", library.BandLive},
+		{"Artist - Track (Jihyo Fancam).mkv", library.Fancam},
+		{"Artist - Track (Japan Concert).mkv", library.Concert},
+		{"Artist - Track (Live Audio).mkv", library.LiveAudio},
+		{"Artist - Track (Whole Different Animal).mkv", library.MusicVideo},
+	} {
+		if got := classify(test.path); got != test.want {
+			t.Fatalf("classify(%q) = %q, want %q", test.path, got, test.want)
+		}
 	}
 }
 

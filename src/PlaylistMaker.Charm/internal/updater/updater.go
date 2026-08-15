@@ -10,12 +10,13 @@ import (
 	"slices"
 	"sort"
 	"strings"
-	"unicode"
 
 	"playlistmaker/charm/internal/config"
+	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/mapping"
 	"playlistmaker/charm/internal/metadata"
 	"playlistmaker/charm/internal/pathid"
+	"playlistmaker/charm/internal/videoname"
 )
 
 type Item struct {
@@ -87,19 +88,26 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	items := make([]Item, 0, len(paths))
 	for _, path := range paths {
 		item := Item{VideoPath: path, Filename: filepath.Base(path)}
-		item.Artist, item.Title = parse(item.Filename)
+		parsed := videoname.Parse(item.Filename)
+		item.Artist, item.Title = parsed.Artist, parsed.Title
 		key := matchKey(item.Artist, item.Title)
 		if candidates := index.evidence[key]; len(candidates) == 1 {
-			for audio, count := range candidates {
-				item.AudioPath, item.Reason = audio, fmt.Sprintf("Exact match; %d videos already linked", count)
+			for audio := range candidates {
+				item.AudioPath, item.Reason = audio, "Exact match"
 				if metadata, ok := cache[pathid.ComparisonKey(audio)]; ok {
 					item.AudioArtist, item.AudioTitle = metadata.Artist, metadata.Title
 				}
 			}
-		} else if len(candidates) == 0 {
+		}
+		if item.AudioPath == "" {
 			matches := index.exact[key]
 			if len(matches) == 1 {
-				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = matches[0].FilePath, matches[0].Artist, matches[0].Title, "Exact cache match"
+				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = matches[0].FilePath, matches[0].Artist, matches[0].Title, "Exact match"
+			}
+		}
+		if item.AudioPath == "" {
+			if audio, ok := fuzzyMatch(item.Title, index.artist[normalize(item.Artist)]); ok {
+				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = audio.FilePath, audio.Artist, audio.Title, "Possible match"
 			}
 		}
 		items = append(items, item)
@@ -153,7 +161,8 @@ func (s Service) Ignored(ctx context.Context) ([]Item, error) {
 			return nil, err
 		}
 		item := Item{VideoPath: path, Filename: filepath.Base(path)}
-		item.Artist, item.Title = parse(item.Filename)
+		parsed := videoname.Parse(item.Filename)
+		item.Artist, item.Title = parsed.Artist, parsed.Title
 		items = append(items, item)
 	}
 	return items, nil
@@ -294,38 +303,25 @@ func supported(path string) bool {
 	return false
 }
 
-func parse(filename string) (string, string) {
-	name := strings.TrimSuffix(filename, filepath.Ext(filename))
-	if len(name) >= 7 && allDigits(name[:6]) && name[6] == ' ' {
-		name = name[7:]
-	}
-	artist, title, found := strings.Cut(name, " - ")
-	if !found {
-		return "", ""
-	}
-	for _, suffix := range []string{" Performance", " Choreography", " Relay", " Be Original"} {
-		if index := strings.Index(strings.ToLower(title), strings.ToLower(suffix)); index >= 0 {
-			title = title[:index]
-			break
-		}
-	}
-	return strings.TrimSpace(artist), strings.TrimSpace(title)
-}
-
-func allDigits(value string) bool {
-	for _, value := range value {
-		if value < '0' || value > '9' {
-			return false
-		}
-	}
-	return true
-}
 func matchKey(artist, title string) string { return normalize(artist) + "\x00" + normalize(title) }
-func normalize(value string) string {
-	return strings.ToLower(strings.Map(func(r rune) rune {
-		if unicode.IsLetter(r) || unicode.IsNumber(r) {
-			return r
+func normalize(value string) string        { return videoname.Normalize(value) }
+
+func fuzzyMatch(videoTitle string, candidates []metadata.Entry) (metadata.Entry, bool) {
+	if strings.TrimSpace(videoTitle) == "" {
+		return metadata.Entry{}, false
+	}
+	best := metadata.Entry{}
+	bestScore, tied := 0, false
+	for _, candidate := range candidates {
+		score, ok := library.FuzzyScore(videoTitle, candidate.Title)
+		if !ok || score <= 0 {
+			continue
 		}
-		return ' '
-	}, value))
+		if score > bestScore {
+			best, bestScore, tied = candidate, score, false
+		} else if score == bestScore {
+			tied = true
+		}
+	}
+	return best, bestScore > 0 && !tied
 }
