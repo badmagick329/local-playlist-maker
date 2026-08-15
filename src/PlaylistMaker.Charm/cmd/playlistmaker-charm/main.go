@@ -46,7 +46,7 @@ func main() {
 	trackCount := flag.Int("tracks", 1337, "number of synthetic tracks")
 	variantCount := flag.Int("variants", 6420, "number of synthetic video variants")
 	bridgePath := flag.String("bridge", "", "path to PlaylistMaker.Bridge executable")
-	configPath := flag.String("config", "config.yaml", "path to PlaylistMaker config")
+	configPath := flag.String("config", "", "path to PlaylistMaker config")
 	disableHistory := flag.Bool("disable-history", false, "disable new playback-history sessions")
 	check := flag.Bool("check", false, "load the selected library and exit")
 	backendMode := flag.String("backend", "go", "backend mode: go, bridge, go-library, or compare")
@@ -66,7 +66,17 @@ func main() {
 		os.Exit(2)
 	}
 	if *backendMode == "go" {
-		goConfig, err := config.Load(*configPath)
+		executablePath, err := os.Executable()
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker config discovery failed: %v\n", err)
+			os.Exit(1)
+		}
+		resolvedConfigPath, err := config.Discover(*configPath, executablePath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "PlaylistMaker config discovery failed: %v\n", err)
+			os.Exit(1)
+		}
+		goConfig, err := config.Load(resolvedConfigPath)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "PlaylistMaker Go config failed: %v\n", err)
 			os.Exit(1)

@@ -72,6 +72,7 @@ func TestLoadKeepsExplicitZeroAndDefaultsOmittedHistoryThreshold(t *testing.T) {
 func TestDiscoverUsesExplicitPathThenExecutableDirectory(t *testing.T) {
 	root := t.TempDir()
 	explicit := filepath.Join(root, "requested.yml")
+	writeConfig(t, explicit, "fixture")
 	got, err := Discover(explicit, filepath.Join(root, "bin", "playlistmaker.exe"))
 	if err != nil || got != explicit {
 		t.Fatalf("explicit discovery = %q, %v", got, err)
@@ -87,6 +88,9 @@ func TestDiscoverUsesExplicitPathThenExecutableDirectory(t *testing.T) {
 	}
 	if _, err := Discover("", filepath.Join(root, "missing", "playlistmaker.exe")); err == nil || !strings.Contains(err.Error(), "--config") {
 		t.Fatalf("missing discovery error = %v", err)
+	}
+	if _, err := Discover(filepath.Join(root, "missing.yml"), executable); err == nil || !strings.Contains(err.Error(), "explicit config") {
+		t.Fatalf("missing explicit discovery error = %v", err)
 	}
 }
 

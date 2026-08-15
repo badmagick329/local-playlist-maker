@@ -121,6 +121,9 @@ func Discover(explicitPath, executablePath string) (string, error) {
 		if err != nil {
 			return "", fmt.Errorf("resolve explicit config path %q: %w", explicitPath, err)
 		}
+		if _, err := os.Stat(path); err != nil {
+			return "", fmt.Errorf("read explicit config %q: %w", path, err)
+		}
 		return path, nil
 	}
 	if strings.TrimSpace(executablePath) == "" {
