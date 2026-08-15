@@ -71,6 +71,55 @@ func TestSearchModeOwnsPrintableKeysAndSpace(t *testing.T) {
 	}
 }
 
+func TestSearchEditsMoveFocusToFirstResult(t *testing.T) {
+	m := New(library.Generate(50, 200))
+	m = updateKey(t, m, "/")
+	for _, key := range []string{"a", "space", "backspace", "ctrl+u"} {
+		m.cursor = min(3, max(len(m.rows)-1, 0))
+		m = updateKey(t, m, key)
+		if m.cursor != 0 {
+			t.Fatalf("%s left cursor at %d", key, m.cursor)
+		}
+	}
+	m = updateKey(t, m, "/")
+	if m.mode != modeNavigate || m.query != "" {
+		t.Fatal("slash did not close search while retaining its query")
+	}
+}
+
+func TestOpeningKeysCloseEveryModeAndDiscardDrafts(t *testing.T) {
+	for _, test := range []struct {
+		open string
+		mode mode
+	}{
+		{"/", modeSearch}, {"c", modeCategories}, {"s", modeSort}, {"f", modeFilters}, {"p", modePlaybackOptions}, {"q", modeQueue}, {"?", modeHelp}, {"d", modeDetails},
+	} {
+		t.Run(test.open, func(t *testing.T) {
+			m := New(library.Generate(4, 8))
+			m = updateKey(t, m, test.open)
+			if m.mode != test.mode {
+				t.Fatalf("%s mode = %s", test.open, m.mode)
+			}
+			if test.mode == modeFilters {
+				m.filterDraft[0] = "2025"
+			}
+			if test.mode == modePlaybackOptions {
+				m.draftOptions.Shuffle = true
+			}
+			m = updateKey(t, m, test.open)
+			if m.mode != modeNavigate {
+				t.Fatalf("%s did not close mode", test.open)
+			}
+			if test.mode == modeFilters && m.trackDate != nil {
+				t.Fatal("filter close applied draft")
+			}
+			if test.mode == modePlaybackOptions && m.playbackOptions.Shuffle {
+				t.Fatal("options close applied draft")
+			}
+		})
+	}
+}
+
 func TestEscapeNeverQuits(t *testing.T) {
 	m := New(library.Generate(20, 50))
 	next, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})

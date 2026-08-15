@@ -559,6 +559,9 @@ func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 	case "esc":
 		m.mode = modeNavigate
 		return m
+	case "p":
+		m.mode = modeNavigate
+		return m
 	case "j", "down", "ctrl+j":
 		if !m.commitOptionEdit() {
 			return m
@@ -690,7 +693,7 @@ func (m *Model) commitOptionEdit() bool {
 
 func (m Model) handleFiltersKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
-	case "esc":
+	case "esc", "f":
 		m.mode = modeNavigate
 		return m
 	case "j", "down", "ctrl+j":
@@ -720,7 +723,7 @@ func (m Model) handleFiltersKey(key tea.KeyPressMsg) Model {
 		}
 		track, err := library.ParseDateRange(m.filterDraft[0])
 		if err != nil {
-			m.status = "Track date: " + err.Error()
+			m.status = "Track release: " + err.Error()
 			return m
 		}
 		video, err := library.ParseDateRange(m.filterDraft[1])
@@ -779,7 +782,7 @@ func (m *Model) queueAll(allVariants bool) {
 
 func (m Model) handleSearchKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
-	case "esc", "enter":
+	case "esc", "enter", "/":
 		m.mode = modeNavigate
 		m.status = "Search retained"
 	case "ctrl+j", "down":
@@ -789,19 +792,23 @@ func (m Model) handleSearchKey(key tea.KeyPressMsg) Model {
 	case "ctrl+u":
 		m.query = ""
 		m.refreshResults()
+		m.cursor = 0
 	case "backspace":
 		if m.query != "" {
 			_, size := utf8.DecodeLastRuneInString(m.query)
 			m.query = m.query[:len(m.query)-size]
 			m.refreshResults()
+			m.cursor = 0
 		}
 	case "space":
 		m.query += " "
 		m.refreshResults()
+		m.cursor = 0
 	default:
 		if key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) {
 			m.query += key.Text
 			m.refreshResults()
+			m.cursor = 0
 		}
 	}
 	return m
@@ -1080,10 +1087,10 @@ func (m Model) renderHeader(width int) string {
 func (m Model) activeFilterLabel() string {
 	labels := make([]string, 0, 2)
 	if m.trackDate != nil {
-		labels = append(labels, "track "+m.trackDate.Label)
+		labels = append(labels, "track release "+m.trackDate.Label)
 	}
 	if m.videoDate != nil {
-		labels = append(labels, "video "+m.videoDate.Label)
+		labels = append(labels, "video date "+m.videoDate.Label)
 	}
 	if len(labels) == 0 {
 		return ""
@@ -1229,10 +1236,10 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		if m.optionError != "" {
 			lines = append(lines, m.theme.warning.Render(m.optionError))
 		}
-		lines = append(lines, "", "j/k move • digits edit • h/l adjust • r reset • enter save • esc cancel")
+		lines = append(lines, "", "j/k move • digits edit • h/l adjust • r reset • enter save • p/esc cancel")
 	case modeFilters:
 		title = "Filters"
-		lines = []string{fmt.Sprintf("%s Track: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • esc cancel"}
+		lines = []string{fmt.Sprintf("%s Track release: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video date: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • f/esc cancel"}
 	case modeHelp:
 		title = "Keyboard shortcuts"
 		all := helpLines()
@@ -1425,13 +1432,11 @@ func placeOverlay(base, overlay string, width, height int) string {
 		if row >= len(baseLines) {
 			break
 		}
-		plain := []rune(stripStyles(baseLines[row]))
-		for len(plain) < width {
-			plain = append(plain, ' ')
-		}
-		left := string(plain[:min(x, len(plain))])
-		rightStart := min(x+overlayWidth, len(plain))
-		right := string(plain[rightStart:])
+		background := ansi.Truncate(stripStyles(baseLines[row]), width, "")
+		background += strings.Repeat(" ", max(width-ansi.StringWidth(background), 0))
+		left := ansi.Cut(background, 0, x)
+		left += strings.Repeat(" ", max(x-ansi.StringWidth(left), 0))
+		right := ansi.Cut(background, x+overlayWidth, width)
 		baseLines[row] = left + overlayLine + right
 	}
 	return strings.Join(baseLines[:height], "\n")

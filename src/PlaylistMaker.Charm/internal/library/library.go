@@ -95,6 +95,7 @@ const (
 	ReleaseOldest
 	VideoNewest
 	VideoOldest
+	Relevance
 )
 
 func (s Sort) String() string {
@@ -117,12 +118,14 @@ func (s Sort) String() string {
 		return "Video date newest"
 	case VideoOldest:
 		return "Video date oldest"
+	case Relevance:
+		return "Relevance"
 	default:
 		return "Modified newest"
 	}
 }
 
-var Sorts = []Sort{ModifiedNewest, ModifiedOldest, ArtistAscending, ArtistDescending, TitleAscending, TitleDescending, ReleaseNewest, ReleaseOldest, VideoNewest, VideoOldest}
+var Sorts = []Sort{ModifiedNewest, ModifiedOldest, ArtistAscending, ArtistDescending, TitleAscending, TitleDescending, ReleaseNewest, ReleaseOldest, VideoNewest, VideoOldest, Relevance}
 
 type DateRange struct {
 	Label string
@@ -292,7 +295,7 @@ func FilterAndSort(all []Track, query Query) []Track {
 
 	sort.SliceStable(matches, func(i, j int) bool {
 		left, right := matches[i], matches[j]
-		if normalizedQuery != "" && left.score != right.score {
+		if query.Sort == Relevance && normalizedQuery != "" && left.score != right.score {
 			return left.score > right.score
 		}
 		switch query.Sort {
@@ -308,11 +311,11 @@ func FilterAndSort(all []Track, query Query) []Track {
 			if !left.track.ReleaseDate.Equal(right.track.ReleaseDate) {
 				return left.track.ReleaseDate.After(right.track.ReleaseDate) == (query.Sort == ReleaseNewest)
 			}
-		case VideoNewest, VideoOldest, ModifiedNewest, ModifiedOldest:
+		case VideoNewest, VideoOldest, ModifiedNewest, ModifiedOldest, Relevance:
 			leftDefault, _ := DefaultVariant(left.track, query)
 			rightDefault, _ := DefaultVariant(right.track, query)
 			leftValue, rightValue := leftDefault.ModifiedAt, rightDefault.ModifiedAt
-			newest := query.Sort == ModifiedNewest
+			newest := query.Sort != ModifiedOldest
 			if query.Sort == VideoNewest || query.Sort == VideoOldest {
 				leftValue, rightValue = leftDefault.Date, rightDefault.Date
 				newest = query.Sort == VideoNewest
@@ -320,6 +323,9 @@ func FilterAndSort(all []Track, query Query) []Track {
 			if !leftValue.Equal(rightValue) {
 				return leftValue.After(rightValue) == newest
 			}
+		}
+		if query.Sort != Relevance && normalizedQuery != "" && left.score != right.score {
+			return left.score > right.score
 		}
 		return left.track.ID < right.track.ID
 	})

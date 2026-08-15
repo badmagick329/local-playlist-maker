@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
@@ -208,7 +209,7 @@ func TestFiltersResetAndBulkQueueRespectCurrentResults(t *testing.T) {
 		m = updateKey(t, m, key)
 	}
 	m = updateKey(t, m, "enter")
-	if m.trackDate == nil || !strings.Contains(stripStyles(m.render()), "track 2026") {
+	if m.trackDate == nil || !strings.Contains(stripStyles(m.render()), "track release 2026") {
 		t.Fatal("accepted track-date filter was not applied or rendered")
 	}
 	m = updateKey(t, m, "f")
@@ -217,7 +218,7 @@ func TestFiltersResetAndBulkQueueRespectCurrentResults(t *testing.T) {
 		m = updateKey(t, m, key)
 	}
 	m = updateKey(t, m, "enter")
-	if m.mode != modeFilters || !strings.Contains(m.status, "Track date") {
+	if m.mode != modeFilters || !strings.Contains(m.status, "Track release") {
 		t.Fatal("invalid filter did not remain open with an error")
 	}
 	m = updateKey(t, m, "esc")
@@ -240,6 +241,28 @@ func TestFiltersResetAndBulkQueueRespectCurrentResults(t *testing.T) {
 	m = updateKey(t, m, "A")
 	if len(m.queueOrder) != count || !strings.Contains(m.status, "already queued") {
 		t.Fatal("repeat bulk queue did not deterministically skip duplicates")
+	}
+}
+
+func TestOverlaysPreserveTerminalCellAlignmentOverKoreanRows(t *testing.T) {
+	base := "가나다라마바사라마바사"
+	overlay := "┌────┐\n│ help │\n└────┘"
+	rendered := placeOverlay(base, overlay, 20, 3)
+	for _, line := range strings.Split(rendered, "\n") {
+		if got := ansi.StringWidth(line); got > 20 {
+			t.Fatalf("line width = %d, want <= 20: %q", got, line)
+		}
+	}
+	for _, current := range []mode{modeCategories, modeHelp} {
+		m := New(library.Generate(4, 8))
+		m.all[0].Artist = "가나다라마바사"
+		m.refreshResults()
+		m.mode = current
+		for _, line := range strings.Split(stripStyles(m.render()), "\n") {
+			if got := ansi.StringWidth(line); got > m.width {
+				t.Fatalf("%s overlay line width = %d", current, got)
+			}
+		}
 	}
 }
 
