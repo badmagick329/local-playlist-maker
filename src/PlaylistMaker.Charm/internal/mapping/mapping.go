@@ -28,13 +28,9 @@ func Read(path string) ([]Entry, error) {
 	}
 	entries := make([]Entry, 0, len(values))
 	for video, audio := range values {
-		if strings.TrimSpace(video) == "" || strings.TrimSpace(audio) == "" {
-			return nil, fmt.Errorf("mapping paths must not be empty")
-		}
-		entries = Upsert(entries, video, audio)
+		entries = append(entries, Entry{VideoPath: video, AudioPath: audio})
 	}
-	sortEntries(entries)
-	return entries, nil
+	return deduplicate(entries)
 }
 
 func Upsert(entries []Entry, videoPath, audioPath string) []Entry {
@@ -49,14 +45,10 @@ func Upsert(entries []Entry, videoPath, audioPath string) []Entry {
 }
 
 func Write(path string, entries []Entry) error {
-	ordered := make([]Entry, 0, len(entries))
-	for _, entry := range entries {
-		if strings.TrimSpace(entry.VideoPath) == "" || strings.TrimSpace(entry.AudioPath) == "" {
-			return fmt.Errorf("mapping paths must not be empty")
-		}
-		ordered = Upsert(ordered, entry.VideoPath, entry.AudioPath)
+	ordered, err := deduplicate(entries)
+	if err != nil {
+		return err
 	}
-	sortEntries(ordered)
 	contents := []byte("{\n")
 	for index, entry := range ordered {
 		video, _ := json.Marshal(entry.VideoPath)
@@ -90,6 +82,24 @@ func Write(path string, entries []Entry) error {
 		return err
 	}
 	return os.Rename(temporaryName, path)
+}
+
+func deduplicate(entries []Entry) ([]Entry, error) {
+	unique := make(map[string]Entry, len(entries))
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.VideoPath) == "" || strings.TrimSpace(entry.AudioPath) == "" {
+			return nil, fmt.Errorf("mapping paths must not be empty")
+		}
+		entry.VideoPath = pathid.Normalize(entry.VideoPath)
+		entry.AudioPath = pathid.Normalize(entry.AudioPath)
+		unique[pathid.ComparisonKey(entry.VideoPath)] = entry
+	}
+	result := make([]Entry, 0, len(unique))
+	for _, entry := range unique {
+		result = append(result, entry)
+	}
+	sortEntries(result)
+	return result, nil
 }
 
 func sortEntries(entries []Entry) {

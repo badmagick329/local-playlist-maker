@@ -37,12 +37,18 @@ type Audio struct {
 
 type Service struct{ Config config.Config }
 
+type scanIndex struct {
+	mapped   map[string]bool
+	evidence map[string]map[string]int
+	exact    map[string][]metadata.Entry
+	artist   map[string][]metadata.Entry
+}
+
 func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	mapped, err := mapping.Read(s.Config.MappingFile)
 	if err != nil {
 		return nil, err
 	}
-	mappedPaths := map[string]bool{}
 	ignoredPaths, err := ReadIgnored(s.IgnoredPath())
 	if err != nil {
 		return nil, err
@@ -51,21 +57,11 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	for _, path := range ignoredPaths {
 		ignored[pathid.ComparisonKey(path)] = true
 	}
-	used := map[string]map[string]int{}
 	cache, err := metadata.ReadCache(s.Config.FlacCacheFile)
 	if err != nil {
 		return nil, err
 	}
-	for _, entry := range mapped {
-		mappedPaths[pathid.ComparisonKey(entry.VideoPath)] = true
-		if audio, ok := cache[pathid.ComparisonKey(entry.AudioPath)]; ok {
-			key := matchKey(audio.Artist, audio.Title)
-			if used[key] == nil {
-				used[key] = map[string]int{}
-			}
-			used[key][audio.FilePath]++
-		}
-	}
+	index := buildScanIndex(mapped, cache)
 	paths := []string{}
 	for _, root := range s.Config.VideoDirectories {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -78,7 +74,7 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 			if entry.IsDir() && excluded(path, s.Config.IgnoredVideoDirectories) {
 				return filepath.SkipDir
 			}
-			if !entry.IsDir() && supported(path) && !excluded(path, s.Config.IgnoredVideoDirectories) && !ignored[pathid.ComparisonKey(path)] && !mappedPaths[pathid.ComparisonKey(path)] {
+			if !entry.IsDir() && supported(path) && !excluded(path, s.Config.IgnoredVideoDirectories) && !ignored[pathid.ComparisonKey(path)] && !index.mapped[pathid.ComparisonKey(path)] {
 				paths = append(paths, pathid.Normalize(path))
 			}
 			return nil
@@ -93,7 +89,7 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 		item := Item{VideoPath: path, Filename: filepath.Base(path)}
 		item.Artist, item.Title = parse(item.Filename)
 		key := matchKey(item.Artist, item.Title)
-		if candidates := used[key]; len(candidates) == 1 {
+		if candidates := index.evidence[key]; len(candidates) == 1 {
 			for audio, count := range candidates {
 				item.AudioPath, item.Reason = audio, fmt.Sprintf("Exact match; %d videos already linked", count)
 				if metadata, ok := cache[pathid.ComparisonKey(audio)]; ok {
@@ -101,12 +97,7 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 				}
 			}
 		} else if len(candidates) == 0 {
-			matches := []metadata.Entry{}
-			for _, audio := range cache {
-				if matchKey(audio.Artist, audio.Title) == key {
-					matches = append(matches, audio)
-				}
-			}
+			matches := index.exact[key]
 			if len(matches) == 1 {
 				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = matches[0].FilePath, matches[0].Artist, matches[0].Title, "Exact cache match"
 			}
@@ -114,6 +105,41 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func buildScanIndex(mapped []mapping.Entry, cache map[string]metadata.Entry) scanIndex {
+	index := scanIndex{
+		mapped:   make(map[string]bool, len(mapped)),
+		evidence: make(map[string]map[string]int),
+		exact:    make(map[string][]metadata.Entry),
+		artist:   make(map[string][]metadata.Entry),
+	}
+	for _, audio := range cache {
+		key := matchKey(audio.Artist, audio.Title)
+		index.exact[key] = append(index.exact[key], audio)
+		index.artist[normalize(audio.Artist)] = append(index.artist[normalize(audio.Artist)], audio)
+	}
+	for _, entries := range index.exact {
+		sort.Slice(entries, func(i, j int) bool {
+			return pathid.ComparisonKey(entries[i].FilePath) < pathid.ComparisonKey(entries[j].FilePath)
+		})
+	}
+	for _, entries := range index.artist {
+		sort.Slice(entries, func(i, j int) bool {
+			return pathid.ComparisonKey(entries[i].FilePath) < pathid.ComparisonKey(entries[j].FilePath)
+		})
+	}
+	for _, entry := range mapped {
+		index.mapped[pathid.ComparisonKey(entry.VideoPath)] = true
+		if audio, ok := cache[pathid.ComparisonKey(entry.AudioPath)]; ok {
+			key := matchKey(audio.Artist, audio.Title)
+			if index.evidence[key] == nil {
+				index.evidence[key] = map[string]int{}
+			}
+			index.evidence[key][audio.FilePath]++
+		}
+	}
+	return index
 }
 
 func (s Service) Ignored(ctx context.Context) ([]Item, error) {
