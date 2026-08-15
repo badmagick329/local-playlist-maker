@@ -16,6 +16,7 @@ import (
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/pathid"
+	"playlistmaker/charm/internal/updater"
 )
 
 type mode int
@@ -30,6 +31,8 @@ const (
 	modeFilters
 	modeHelp
 	modeDetails
+	modeMappingUpdate
+	modeMappingPicker
 )
 
 func (m mode) String() string {
@@ -50,6 +53,10 @@ func (m mode) String() string {
 		return "HELP"
 	case modeDetails:
 		return "DETAILS"
+	case modeMappingUpdate:
+		return "UPDATE MAPPINGS"
+	case modeMappingPicker:
+		return "CHOOSE AUDIO"
 	default:
 		return "NAV"
 	}
@@ -75,6 +82,13 @@ type HistoryWatcher interface {
 	Close() error
 }
 
+type MappingUpdater interface {
+	Scan(context.Context) ([]updater.Item, error)
+	Search(context.Context, string) ([]updater.Audio, error)
+	Confirm(string, string) error
+	Reload(context.Context) ([]library.Track, PlaybackLauncher, error)
+}
+
 type playbackResultMsg struct {
 	count      int
 	err        error
@@ -90,6 +104,20 @@ type historyRefreshMsg struct {
 
 type historyWatchChangedMsg struct{}
 type historyWatchClosedMsg struct{}
+type mappingScanMsg struct {
+	items []updater.Item
+	err   error
+}
+type mappingSearchMsg struct {
+	items []updater.Audio
+	err   error
+}
+type mappingConfirmMsg struct{ err error }
+type mappingReloadMsg struct {
+	tracks   []library.Track
+	playback PlaybackLauncher
+	err      error
+}
 
 type Model struct {
 	all               []library.Track
@@ -126,6 +154,14 @@ type Model struct {
 	helpOffset        int
 	detailsOffset     int
 	launching         bool
+	mappingUpdater    MappingUpdater
+	mappingItems      []updater.Item
+	mappingIndex      int
+	mappingScanning   bool
+	mappingQuery      string
+	mappingCandidates []updater.Audio
+	mappingCursor     int
+	mappingDirty      bool
 }
 
 func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
@@ -176,11 +212,56 @@ func (m Model) WithHistorySource(source HistorySource, watcher ...HistoryWatcher
 	return m
 }
 
+func (m Model) WithMappingUpdater(updater MappingUpdater) Model {
+	m.mappingUpdater = updater
+	return m
+}
+
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	started := time.Now()
 	defer func() { m.stats.recordUpdate(time.Since(started)) }()
 
 	switch message := message.(type) {
+	case mappingScanMsg:
+		m.mappingScanning = false
+		if message.err != nil {
+			m.status = "Mapping scan failed: " + message.err.Error()
+		} else {
+			m.mappingItems, m.mappingIndex = message.items, 0
+			m.status = "Mapping scan complete"
+		}
+		return m, nil
+	case mappingSearchMsg:
+		if message.err != nil {
+			m.status = "Audio search failed: " + message.err.Error()
+		} else {
+			m.mappingCandidates, m.mappingCursor = message.items, 0
+		}
+		return m, nil
+	case mappingConfirmMsg:
+		if message.err != nil {
+			m.status = "Mapping save failed: " + message.err.Error()
+			return m, nil
+		}
+		m.mappingDirty, m.mappingIndex = true, min(m.mappingIndex+1, len(m.mappingItems))
+		m.status = "Mapping saved"
+		return m, nil
+	case mappingReloadMsg:
+		if message.err != nil {
+			m.status = "Library reload failed: " + message.err.Error()
+			return m, nil
+		}
+		m.all, m.playback = message.tracks, message.playback
+		valid := m.variantIndex()
+		m.queueOrder = slices.DeleteFunc(m.queueOrder, func(id string) bool { _, ok := valid[id]; return !ok })
+		for id := range m.queued {
+			if _, ok := valid[id]; !ok {
+				delete(m.queued, id)
+			}
+		}
+		m.refreshResults()
+		m.status = "Library reloaded"
+		return m, nil
 	case historyRefreshMsg:
 		m.historyRefreshing = false
 		if message.err != nil {
@@ -256,6 +337,10 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleHelpKey(key), nil
 	case modeDetails:
 		return m.handleDetailsKey(key), nil
+	case modeMappingUpdate:
+		return m.handleMappingUpdateKey(key)
+	case modeMappingPicker:
+		return m.handleMappingPickerKey(key)
 	default:
 		return m.handleNavigationKey(key)
 	}
@@ -405,6 +490,14 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.mode, m.helpOffset = modeHelp, 0
 	case "d":
 		m.mode, m.detailsOffset = modeDetails, 0
+	case "u":
+		if m.mappingUpdater == nil {
+			m.status = "Mapping updates are unavailable"
+			return m, nil
+		}
+		m.mode, m.mappingScanning, m.mappingItems, m.mappingIndex = modeMappingUpdate, true, nil, 0
+		m.status = "Scanning video folders…"
+		return m, m.mappingScanCmd()
 	case "esc":
 		m.status = "Esc closes modes; Ctrl+Q quits"
 	}
@@ -509,6 +602,107 @@ func (m Model) handleDetailsKey(key tea.KeyPressMsg) Model {
 		m.detailsOffset = maxOffset
 	}
 	return m
+}
+
+func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.mappingScanning {
+		return m, nil
+	}
+	switch key.String() {
+	case "u", "esc":
+		m.mode = modeNavigate
+		if m.mappingDirty {
+			return m, m.mappingReloadCmd()
+		}
+		return m, nil
+	case "r":
+		m.mappingScanning, m.mappingItems, m.mappingIndex = true, nil, 0
+		m.status = "Scanning video folders…"
+		return m, m.mappingScanCmd()
+	case "s":
+		m.mappingIndex = min(m.mappingIndex+1, len(m.mappingItems))
+		m.status = "Mapping skipped"
+		return m, nil
+	case "/":
+		m.mode, m.mappingQuery, m.mappingCandidates, m.mappingCursor = modeMappingPicker, "", nil, 0
+		return m, nil
+	case "enter":
+		item, ok := m.currentMappingItem()
+		if !ok || item.AudioPath == "" {
+			m.status = "Choose an audio track first"
+			return m, nil
+		}
+		return m, m.mappingConfirmCmd(item.VideoPath, item.AudioPath)
+	}
+	return m, nil
+}
+
+func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc", "/":
+		m.mode = modeMappingUpdate
+		return m, nil
+	case "j", "down":
+		m.mappingCursor = min(m.mappingCursor+1, max(len(m.mappingCandidates)-1, 0))
+	case "k", "up":
+		m.mappingCursor = max(m.mappingCursor-1, 0)
+	case "enter":
+		item, ok := m.currentMappingItem()
+		if !ok || m.mappingCursor >= len(m.mappingCandidates) {
+			return m, nil
+		}
+		item.AudioPath = m.mappingCandidates[m.mappingCursor].Path
+		item.AudioArtist = m.mappingCandidates[m.mappingCursor].Artist
+		item.AudioTitle = m.mappingCandidates[m.mappingCursor].Title
+		item.Reason = "Selected manually"
+		m.mappingItems[m.mappingIndex] = item
+		m.mode = modeMappingUpdate
+	case "backspace":
+		if m.mappingQuery != "" {
+			_, size := utf8.DecodeLastRuneInString(m.mappingQuery)
+			m.mappingQuery = m.mappingQuery[:len(m.mappingQuery)-size]
+			return m, m.mappingSearchCmd()
+		}
+	default:
+		if key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) {
+			m.mappingQuery += key.Text
+			return m, m.mappingSearchCmd()
+		}
+	}
+	return m, nil
+}
+
+func (m Model) currentMappingItem() (updater.Item, bool) {
+	if m.mappingIndex < 0 || m.mappingIndex >= len(m.mappingItems) {
+		return updater.Item{}, false
+	}
+	return m.mappingItems[m.mappingIndex], true
+}
+
+func (m Model) mappingScanCmd() tea.Cmd {
+	service := m.mappingUpdater
+	return func() tea.Msg {
+		items, err := service.Scan(context.Background())
+		return mappingScanMsg{items: items, err: err}
+	}
+}
+func (m Model) mappingSearchCmd() tea.Cmd {
+	service, query := m.mappingUpdater, m.mappingQuery
+	return func() tea.Msg {
+		items, err := service.Search(context.Background(), query)
+		return mappingSearchMsg{items: items, err: err}
+	}
+}
+func (m Model) mappingConfirmCmd(video, audio string) tea.Cmd {
+	service := m.mappingUpdater
+	return func() tea.Msg { return mappingConfirmMsg{err: service.Confirm(video, audio)} }
+}
+func (m Model) mappingReloadCmd() tea.Cmd {
+	service := m.mappingUpdater
+	return func() tea.Msg {
+		tracks, playback, err := service.Reload(context.Background())
+		return mappingReloadMsg{tracks: tracks, playback: playback, err: err}
+	}
 }
 
 func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {
@@ -1092,7 +1286,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -1282,6 +1476,42 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		end := min(m.detailsOffset+overlayListCapacity(height), len(all))
 		lines = append(lines, all[m.detailsOffset:end]...)
 		lines = append(lines, "", "j/k scroll • ctrl+u/d page • gg/G ends • d/esc close")
+	case modeMappingUpdate:
+		title = "Update mappings"
+		if m.mappingScanning {
+			lines = []string{"Scanning video folders…", "", "u/esc close"}
+			break
+		}
+		item, ok := m.currentMappingItem()
+		if !ok {
+			lines = []string{"No unmapped videos", "", "r rescan • u/esc close"}
+			break
+		}
+		lines = []string{fmt.Sprintf("%d of %d", m.mappingIndex+1, len(m.mappingItems)), "Video: " + item.Filename, "Artist: " + emptyAny(item.Artist), "Title: " + emptyAny(item.Title)}
+		if item.AudioPath == "" {
+			lines = append(lines, "No automatic suggestion")
+		} else {
+			audio := item.AudioArtist + " — " + item.AudioTitle
+			if item.AudioArtist == "" && item.AudioTitle == "" {
+				audio = "Selected audio track"
+			}
+			lines = append(lines, "Audio: "+audio, item.Reason)
+		}
+		lines = append(lines, "", "enter confirm • / choose audio • s skip • r rescan • u/esc close")
+	case modeMappingPicker:
+		title = "Choose audio"
+		lines = append(lines, "Search: "+m.mappingQuery)
+		for index, candidate := range m.mappingCandidates {
+			prefix := "  "
+			if index == m.mappingCursor {
+				prefix = "› "
+			}
+			lines = append(lines, prefix+candidate.Artist+" — "+candidate.Title)
+		}
+		if len(m.mappingCandidates) == 0 {
+			lines = append(lines, "No matching audio")
+		}
+		lines = append(lines, "", "type search • j/k move • enter choose • / or esc cancel")
 	}
 
 	overlayWidth := min(max(width*2/3, 28), min(88, width))

@@ -10,6 +10,7 @@ import (
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
+	"playlistmaker/charm/internal/updater"
 )
 
 type playbackStub struct {
@@ -28,6 +29,26 @@ type historyStub struct {
 type historyWatcherStub struct {
 	changes chan struct{}
 	closes  int
+}
+
+type mappingUpdaterStub struct {
+	items      []updater.Item
+	candidates []updater.Audio
+	tracks     []library.Track
+	scanCalls  int
+	confirms   int
+}
+
+func (s *mappingUpdaterStub) Scan(context.Context) ([]updater.Item, error) {
+	s.scanCalls++
+	return s.items, nil
+}
+func (s *mappingUpdaterStub) Search(context.Context, string) ([]updater.Audio, error) {
+	return s.candidates, nil
+}
+func (s *mappingUpdaterStub) Confirm(string, string) error { s.confirms++; return nil }
+func (s *mappingUpdaterStub) Reload(context.Context) ([]library.Track, PlaybackLauncher, error) {
+	return s.tracks, nil, nil
 }
 
 func newHistoryWatcherStub() *historyWatcherStub {
@@ -117,6 +138,38 @@ func TestOpeningKeysCloseEveryModeAndDiscardDrafts(t *testing.T) {
 				t.Fatal("options close applied draft")
 			}
 		})
+	}
+}
+
+func TestMappingUpdateModeScansOnDemandAndReloadsAfterSave(t *testing.T) {
+	stub := &mappingUpdaterStub{items: []updater.Item{{VideoPath: "video", Filename: "video.mkv", Artist: "Artist", Title: "Title", AudioPath: "audio", Reason: "Exact cache match"}}, candidates: []updater.Audio{{Path: "manual", Artist: "Manual", Title: "Track"}}, tracks: library.Generate(2, 4)}
+	m := New(library.Generate(1, 2)).WithMappingUpdater(stub)
+	if stub.scanCalls != 0 {
+		t.Fatal("mapping scan ran at startup")
+	}
+	next, command := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	m = next.(Model)
+	if command == nil || m.mode != modeMappingUpdate || !m.mappingScanning {
+		t.Fatal("u did not open an async scan")
+	}
+	next, _ = m.Update(command())
+	m = next.(Model)
+	if stub.scanCalls != 1 || m.mappingScanning || len(m.mappingItems) != 1 {
+		t.Fatal("scan result was not applied")
+	}
+	next, command = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	next, _ = next.(Model).Update(command())
+	m = next.(Model)
+	if stub.confirms != 1 || !m.mappingDirty || m.mappingIndex != 1 {
+		t.Fatal("confirmation did not save and advance")
+	}
+	next, command = m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	if command == nil || next.(Model).mode != modeNavigate {
+		t.Fatal("u did not close and reload")
+	}
+	next, _ = next.(Model).Update(command())
+	if len(next.(Model).all) != 2 {
+		t.Fatal("reload did not replace the catalogue")
 	}
 }
 

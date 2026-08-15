@@ -19,11 +19,39 @@ import (
 	nativeplayback "playlistmaker/charm/internal/playback"
 	"playlistmaker/charm/internal/snapshotcmp"
 	"playlistmaker/charm/internal/ui"
+	"playlistmaker/charm/internal/updater"
 )
 
 type historySource struct {
 	path   string
 	tracks []library.Track
+}
+
+type mappingUpdater struct {
+	service        updater.Service
+	config         config.Config
+	historyService history.Service
+	historyEnabled bool
+}
+
+func (u mappingUpdater) Scan(ctx context.Context) ([]updater.Item, error) { return u.service.Scan(ctx) }
+func (u mappingUpdater) Search(ctx context.Context, query string) ([]updater.Audio, error) {
+	return u.service.Search(ctx, query)
+}
+func (u mappingUpdater) Confirm(videoPath, audioPath string) error {
+	return u.service.Confirm(videoPath, audioPath)
+}
+func (u mappingUpdater) Reload(ctx context.Context) ([]library.Track, ui.PlaybackLauncher, error) {
+	snapshot, err := (native.Loader{Config: u.config}).Load(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	index, err := history.Read(u.historyService.HistoryPath())
+	if err != nil {
+		return nil, nil, err
+	}
+	tracks := history.Attach(snapshot.Tracks, index)
+	return tracks, nativeplayback.Service{Tracks: tracks, Config: u.config, History: &u.historyService, HistoryEnabled: u.historyEnabled}, nil
 }
 
 func (s historySource) Refresh(ctx context.Context) ([]library.Track, error) {
@@ -59,6 +87,7 @@ func main() {
 
 	tracks := library.Generate(*trackCount, *variantCount)
 	var playback backend.PlaybackService
+	var updates ui.MappingUpdater
 	historyPath := ""
 	var bridgeClient *bridge.Client
 	if *backendMode != "go" && *backendMode != "bridge" && *backendMode != "go-library" && *backendMode != "compare" {
@@ -101,6 +130,7 @@ func main() {
 		}
 		tracks = history.Attach(nativeSnapshot.Tracks, index)
 		playback = nativeplayback.Service{Tracks: tracks, Config: goConfig, History: &historyService, HistoryEnabled: loggingEnabled}
+		updates = mappingUpdater{service: updater.Service{Config: goConfig}, config: goConfig, historyService: historyService, historyEnabled: loggingEnabled}
 	} else if *bridgePath != "" {
 		var err error
 		bridgeClient, err = bridge.Start(*bridgePath, *configPath, *disableHistory)
@@ -161,6 +191,7 @@ func main() {
 
 	model := ui.New(tracks, playback)
 	if *backendMode == "go" {
+		model = model.WithMappingUpdater(updates)
 		watcher, err := historywatch.New(historyPath, 250*time.Millisecond)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "PlaylistMaker history watch unavailable: %v\n", err)
