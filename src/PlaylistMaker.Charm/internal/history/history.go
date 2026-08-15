@@ -276,6 +276,7 @@ func (s Service) sessionEvents(id string) (map[string]bool, map[string]bool) {
 		if json.Unmarshal(scanner.Bytes(), &event) == nil && event.SessionID == id {
 			if event.Event == "started" {
 				started[event.EntryID] = true
+				terminal[event.EntryID] = false
 			}
 			if isTerminal(event.Event) {
 				terminal[event.EntryID] = true

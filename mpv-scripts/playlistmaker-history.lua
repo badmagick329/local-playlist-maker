@@ -147,9 +147,11 @@ end
 mp.register_event("file-loaded", function()
     local playlist_position = mp.get_property_number("playlist-pos", -1)
     local entry = manifest.entries[playlist_position + 1]
-    if not entry or terminal_entries[entry.entryId] then
+    if not entry then
         return
     end
+
+    terminal_entries[entry.entryId] = nil
 
     local duration_seconds, raw_duration_seconds, demuxer_start_seconds = playback_duration()
     active = {
