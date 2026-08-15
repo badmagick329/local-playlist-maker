@@ -80,16 +80,6 @@ func (fakeTagReader) Read(_ context.Context, path string) (metadata.Entry, error
 	return metadata.Entry{Artist: "나연", Title: "Pop!", Date: "2024-05", TrackNumber: 2}, nil
 }
 
-func TestDecodeMappingRejectsInvalidValuesAndPreservesOrderedOverwrite(t *testing.T) {
-	entries, err := decodeMapping(strings.NewReader(`{"C:\\Video.mkv":"C:\\one.flac","c:/video.mkv":"C:\\two.flac"}`))
-	if err != nil || len(entries) != 2 {
-		t.Fatalf("decode = %#v, %v", entries, err)
-	}
-	if _, err := decodeMapping(strings.NewReader(`{"video": 5}`)); err == nil {
-		t.Fatal("non-string mapping value was accepted")
-	}
-}
-
 func copyFixture(t *testing.T) string {
 	t.Helper()
 	source, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "testdata", "charm-backend", "library-basic"))

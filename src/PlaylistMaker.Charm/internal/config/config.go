@@ -16,7 +16,8 @@ import (
 type Config struct {
 	ConfigPath                           string
 	DataDirectory                        string   `yaml:"dataDirectory"`
-	MusicVideoToAudioMap                 []string `yaml:"musicVideoToAudioMap"`
+	MappingFile                          string   `yaml:"mappingFile"`
+	VideoDirectories                     []string `yaml:"videoDirectories"`
 	FlacsMegaPlaylist                    string   `yaml:"flacsMegaPlaylist"`
 	FlacCacheFile                        string   `yaml:"flacCacheFile"`
 	PlaylistTemplate                     string   `yaml:"playlistTemplate"`
@@ -58,14 +59,18 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 	}
 	c.DataDirectory = pathid.Resolve(configDirectory, c.DataDirectory)
 
-	if len(c.MusicVideoToAudioMap) == 0 {
-		return fmt.Errorf("musicVideoToAudioMap must contain at least one mapping file")
+	if err := required("mappingFile", c.MappingFile); err != nil {
+		return err
 	}
-	for index, value := range c.MusicVideoToAudioMap {
-		if err := required(fmt.Sprintf("musicVideoToAudioMap[%d]", index), value); err != nil {
+	c.MappingFile = pathid.Resolve(configDirectory, c.MappingFile)
+	if len(c.VideoDirectories) == 0 {
+		return fmt.Errorf("videoDirectories must contain at least one directory")
+	}
+	for index, value := range c.VideoDirectories {
+		if err := required(fmt.Sprintf("videoDirectories[%d]", index), value); err != nil {
 			return err
 		}
-		c.MusicVideoToAudioMap[index] = pathid.Resolve(configDirectory, value)
+		c.VideoDirectories[index] = pathid.Resolve(configDirectory, value)
 	}
 
 	for _, field := range []struct {

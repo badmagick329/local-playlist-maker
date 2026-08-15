@@ -1,7 +1,6 @@
 dataDirectory: data
-musicVideoToAudioMap:
-  - mappings/first.json
-  - mappings/second.json
+mappingFile: data/video-audio-map.json
+videoDirectories: [videos]
 flacsMegaPlaylist: data/library.txt
 flacCacheFile: flac_cache.json
 playlistTemplate: "{playlistPath}"

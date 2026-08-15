@@ -17,7 +17,8 @@ func TestLoadResolvesEveryConfiguredFileAgainstTheConfigDirectory(t *testing.T) 
 	path := filepath.Join(configDirectory, "config.yaml")
 	writeConfig(t, path, `
 dataDirectory: state
-musicVideoToAudioMap: [maps/one.json, maps/two.json]
+mappingFile: maps/video-audio-map.json
+videoDirectories: [videos, other-videos]
 flacsMegaPlaylist: media/all.m3u8
 flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"
@@ -40,8 +41,8 @@ playbackHistoryMinimumWatchedPercent: 50
 	if loaded.DataDirectory != want("state") || loaded.FlacsMegaPlaylist != want("media/all.m3u8") || loaded.FlacCacheFile != filepath.Join(want("state"), "cache/flac_cache.json") || loaded.PlaylistTxtFilePath != want("imports/queue.txt") {
 		t.Fatalf("relative paths were not resolved from the config directory: %#v", loaded)
 	}
-	if got, expected := loaded.MusicVideoToAudioMap, []string{want("maps/one.json"), want("maps/two.json")}; len(got) != len(expected) || got[0] != expected[0] || got[1] != expected[1] {
-		t.Fatalf("mapping files = %#v, want %#v", got, expected)
+	if loaded.MappingFile != want("maps/video-audio-map.json") || len(loaded.VideoDirectories) != 2 || loaded.VideoDirectories[0] != want("videos") || loaded.VideoDirectories[1] != want("other-videos") {
+		t.Fatalf("mapping/update paths = %#v", loaded)
 	}
 	if loaded.VideoPlaylistCommand[0] != "mpv.exe" || loaded.VideoPlaylistCommand[1] != "--playlist={playlistPath}" {
 		t.Fatalf("command arguments were incorrectly treated as paths: %#v", loaded.VideoPlaylistCommand)
@@ -99,7 +100,7 @@ func TestLoadReportsTheMissingFieldAndResolvedConfigPath(t *testing.T) {
 	writeConfig(t, path, "dataDirectory: state\n")
 
 	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "musicVideoToAudioMap") || !strings.Contains(err.Error(), "invalid config") || !strings.Contains(err.Error(), filepath.Base(path)) {
+	if err == nil || !strings.Contains(err.Error(), "mappingFile") || !strings.Contains(err.Error(), "invalid config") || !strings.Contains(err.Error(), filepath.Base(path)) {
 		t.Fatalf("error = %v, want the missing field and resolved config path", err)
 	}
 }
@@ -113,7 +114,8 @@ func writeConfig(t *testing.T, path, contents string) {
 
 func validConfig(extra string) string {
 	return `dataDirectory: state
-musicVideoToAudioMap: [maps/one.json]
+mappingFile: maps/video-audio-map.json
+videoDirectories: [videos]
 flacsMegaPlaylist: media/all.txt
 flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"

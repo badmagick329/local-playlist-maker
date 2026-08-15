@@ -39,7 +39,7 @@ func (l Loader) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
-	mappings, err := loadMappings(l.Config.MusicVideoToAudioMap)
+	mappings, err := loadMappings(l.Config.MappingFile)
 	if err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
