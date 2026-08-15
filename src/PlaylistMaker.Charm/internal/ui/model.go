@@ -368,10 +368,11 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.toggleExpanded()
 	case "space":
 		m.toggleQueue()
+		m.moveCursor(1)
 	case "a":
-		m.queueAll(false)
+		m.queueCurrentTrack()
 	case "A":
-		m.queueAll(true)
+		m.queueFilteredTracks()
 	case "/":
 		m.mode = modeSearch
 		m.status = "Search mode: type freely; Enter or Esc returns to navigation"
@@ -752,31 +753,51 @@ func (m *Model) resetFilters() {
 	m.refreshResults()
 }
 
-func (m *Model) queueAll(allVariants bool) {
+func (m *Model) queueCurrentTrack() {
+	current, ok := m.currentRow()
+	if !ok {
+		m.status = "No selected media"
+		return
+	}
+	track := m.filtered[current.trackIndex]
+	added, skipped := 0, 0
+	for _, variant := range library.EligibleVariants(track, m.currentQuery()) {
+		if m.queuedID(variant.ID) != "" {
+			skipped++
+			continue
+		}
+		m.queued[variant.ID] = variant
+		m.queueOrder = append(m.queueOrder, variant.ID)
+		added++
+	}
+	if skipped > 0 {
+		m.status = fmt.Sprintf("Queued %d videos from this track; %d already queued", added, skipped)
+	} else {
+		m.status = fmt.Sprintf("Queued %d videos from this track", added)
+	}
+}
+
+func (m *Model) queueFilteredTracks() {
 	added, skipped := 0, 0
 	for _, track := range m.filtered {
-		variants := library.EligibleVariants(track, m.currentQuery())
-		if !allVariants {
-			if selected, ok := m.selectVariant(library.EligibleVariants(track, m.currentQuery())); ok {
-				variants = []library.Variant{selected}
-			}
+		variant, ok := m.selectVariant(library.EligibleVariants(track, m.currentQuery()))
+		if !ok {
+			continue
 		}
-		for _, variant := range variants {
-			if m.queuedID(variant.ID) != "" {
-				skipped++
-				continue
-			}
-			m.queued[variant.ID] = variant
-			m.queueOrder = append(m.queueOrder, variant.ID)
-			added++
+		if m.queuedID(variant.ID) != "" {
+			skipped++
+			continue
 		}
+		m.queued[variant.ID] = variant
+		m.queueOrder = append(m.queueOrder, variant.ID)
+		added++
 	}
 	if len(m.filtered) == 0 {
 		m.status = "No matching tracks"
 	} else if skipped > 0 {
-		m.status = fmt.Sprintf("Queued %d; %d already queued", added, skipped)
+		m.status = fmt.Sprintf("Queued %d tracks; %d already queued", added, skipped)
 	} else {
-		m.status = fmt.Sprintf("Queued %d video(s)", added)
+		m.status = fmt.Sprintf("Queued %d tracks", added)
 	}
 }
 
@@ -849,6 +870,13 @@ func (m Model) handleSortKey(key tea.KeyPressMsg) Model {
 }
 
 func (m Model) handleQueueKey(key tea.KeyPressMsg) Model {
+	if key.Text == "C" {
+		m.queued = make(map[string]library.Variant)
+		m.queueOrder = nil
+		m.overlayCursor = 0
+		m.status = "Queue cleared"
+		return m
+	}
 	switch key.String() {
 	case "j", "down", "ctrl+j":
 		m.overlayCursor = min(m.overlayCursor+1, max(len(m.queueOrder)-1, 0))
@@ -1217,7 +1245,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 				}
 				lines = append(lines, fmt.Sprintf("%s%d. %s", prefix, index+1, m.queued[m.queueOrder[index]].Filename))
 			}
-			lines = append(lines, "", "j/k move  •  shift+j/k reorder  •  delete remove  •  q/esc close")
+			lines = append(lines, "", "j/k move  •  shift+j/k reorder  •  delete remove  •  C clear  •  q/esc close")
 		}
 	case modePlaybackOptions:
 		title = "Playback options"

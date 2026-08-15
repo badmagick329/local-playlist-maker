@@ -54,7 +54,7 @@ func TestPlannedCountAppliesQueueRulesInOrder(t *testing.T) {
 
 func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	m := New(library.Generate(4, 8))
-	m = updateKey(t, m, "a")
+	m = updateKey(t, m, "A")
 	m = updateKey(t, m, "p")
 	if m.mode != modePlaybackOptions || m.draftOptions != m.playbackOptions {
 		t.Fatal("options did not open from saved values")
@@ -131,7 +131,7 @@ func TestPlaybackOptionsCyclesVersionChoice(t *testing.T) {
 func TestPlaybackLaunchUsesSavedOptionSnapshotAndKeepsQueueOnFailure(t *testing.T) {
 	launcher := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 4}}
 	m := New(library.Generate(4, 8), launcher)
-	m = updateKey(t, m, "a")
+	m = updateKey(t, m, "A")
 	m.playbackOptions = backend.PlaybackOptions{Shuffle: true, MaximumItems: 7, RepeatEach: 2, OneVideoPerTrack: true}
 	next, command := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
 	m = next.(Model)
@@ -244,6 +244,69 @@ func TestFiltersResetAndBulkQueueRespectCurrentResults(t *testing.T) {
 	}
 }
 
+func TestQueueShortcutsToggleAdvanceBulkAndClear(t *testing.T) {
+	m := New(library.Generate(3, 6))
+	for track := range m.all {
+		for variant := range m.all[track].Variants {
+			m.all[track].Variants[variant].Category = library.MusicVideo
+		}
+	}
+	m.refreshResults()
+	m = updateKey(t, m, "space")
+	if len(m.queueOrder) != 1 || m.cursor != 1 {
+		t.Fatalf("space add = queue %d, cursor %d", len(m.queueOrder), m.cursor)
+	}
+	m.cursor = 0
+	m = updateKey(t, m, "space")
+	if len(m.queueOrder) != 0 || m.cursor != 1 {
+		t.Fatalf("space remove = queue %d, cursor %d", len(m.queueOrder), m.cursor)
+	}
+	m.cursor = len(m.rows) - 1
+	m = updateKey(t, m, "space")
+	if m.cursor != len(m.rows)-1 {
+		t.Fatal("space moved past the final row")
+	}
+
+	m = New(library.Generate(3, 6))
+	for track := range m.all {
+		for variant := range m.all[track].Variants {
+			m.all[track].Variants[variant].Category = library.MusicVideo
+		}
+	}
+	m.all[0].Variants[1].Category = library.BandLive
+	m.refreshResults()
+	m = updateKey(t, m, "a")
+	if len(m.queueOrder) != 1 || !strings.Contains(m.status, "from this track") {
+		t.Fatalf("a queue = %d, status %q", len(m.queueOrder), m.status)
+	}
+	m = updateKey(t, m, "a")
+	if len(m.queueOrder) != 1 || !strings.Contains(m.status, "already queued") {
+		t.Fatal("repeated a did not skip duplicates")
+	}
+
+	m = New(library.Generate(3, 6))
+	for track := range m.all {
+		for variant := range m.all[track].Variants {
+			m.all[track].Variants[variant].Category = library.MusicVideo
+		}
+	}
+	m.refreshResults()
+	m = updateKey(t, m, "A")
+	if len(m.queueOrder) != len(m.filtered) || !strings.Contains(m.status, "Queued 3 tracks") {
+		t.Fatalf("A queue = %d, status %q", len(m.queueOrder), m.status)
+	}
+	m = updateKey(t, m, "A")
+	if len(m.queueOrder) != len(m.filtered) || !strings.Contains(m.status, "already queued") {
+		t.Fatal("repeated A did not skip duplicates")
+	}
+	m = updateKey(t, m, "q")
+	m.overlayCursor = 2
+	m = updateKey(t, m, "C")
+	if m.mode != modeQueue || len(m.queueOrder) != 0 || len(m.queued) != 0 || m.overlayCursor != 0 || m.status != "Queue cleared" {
+		t.Fatalf("C clear = %#v", m)
+	}
+}
+
 func TestOverlaysPreserveTerminalCellAlignmentOverKoreanRows(t *testing.T) {
 	base := "가나다라마바사라마바사"
 	overlay := "┌────┐\n│ help │\n└────┘"
@@ -300,7 +363,7 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 			m.overlayCursor = 9
 			m.helpOffset = 99
 			if current == modeQueue {
-				m.queueAll(false)
+				m.queueFilteredTracks()
 			}
 			next, _ := m.Update(tea.WindowSizeMsg{Width: size.width, Height: size.height})
 			m = next.(Model)
@@ -317,7 +380,7 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 		}
 	}
 	m := New(library.Generate(20, 80))
-	m.queueAll(false)
+	m.queueFilteredTracks()
 	m.mode, m.overlayCursor = modeQueue, len(m.queueOrder)-1
 	next, _ := m.Update(tea.WindowSizeMsg{Width: 40, Height: 12})
 	if view := stripStyles(next.(Model).render()); !strings.Contains(view, "20.") {

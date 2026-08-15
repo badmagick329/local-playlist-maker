@@ -7,7 +7,7 @@ var shortcuts = []shortcut{
 	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Views", "?", "shortcut help"},
 	{"Views", "d", "selected media details"},
 	{"Views", "R", "refresh history"},
-	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a / A", "all current-track videos / one per filtered track"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace", "remove"},
+	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a / A", "all current-track videos / one per filtered track"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
 	{"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
 	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / f / Esc", "apply / cancel"},
 	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
@@ -49,7 +49,7 @@ func footerHint(current mode, width int) string {
 	case modeSort:
 		hint = "j/k move  •  enter/space apply  •  s/esc close"
 	case modeQueue:
-		hint = "j/k move  •  shift+j/k reorder  •  delete/backspace/space remove  •  q/esc close"
+		hint = "j/k move  •  shift+j/k reorder  •  delete/backspace/space remove  •  C clear  •  q/esc close"
 	case modePlaybackOptions:
 		hint = "j/k move  •  space toggle  •  h/l adjust  •  digits edit  •  r reset  •  enter save  •  p/esc cancel"
 	case modeFilters:
