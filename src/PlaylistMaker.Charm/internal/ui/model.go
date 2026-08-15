@@ -84,8 +84,11 @@ type HistoryWatcher interface {
 
 type MappingUpdater interface {
 	Scan(context.Context) ([]updater.Item, error)
+	Ignored(context.Context) ([]updater.Item, error)
 	Search(context.Context, string) ([]updater.Audio, error)
 	Confirm(string, string) error
+	Ignore(string) error
+	Restore(string) error
 	Reload(context.Context) ([]library.Track, PlaybackLauncher, error)
 }
 
@@ -108,11 +111,19 @@ type mappingScanMsg struct {
 	items []updater.Item
 	err   error
 }
+type mappingIgnoredMsg struct {
+	items []updater.Item
+	err   error
+}
 type mappingSearchMsg struct {
 	items []updater.Audio
 	err   error
 }
 type mappingConfirmMsg struct{ err error }
+type mappingIgnoreMsg struct {
+	restored bool
+	err      error
+}
 type mappingReloadMsg struct {
 	tracks   []library.Track
 	playback PlaybackLauncher
@@ -158,6 +169,7 @@ type Model struct {
 	mappingItems      []updater.Item
 	mappingIndex      int
 	mappingScanning   bool
+	mappingIgnored    bool
 	mappingQuery      string
 	mappingCandidates []updater.Audio
 	mappingCursor     int
@@ -227,8 +239,17 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.err != nil {
 			m.status = "Mapping scan failed: " + message.err.Error()
 		} else {
-			m.mappingItems, m.mappingIndex = message.items, 0
-			m.status = "Mapping scan complete"
+			m.mappingItems, m.mappingIndex, m.mappingIgnored = message.items, 0, false
+			m.status = mappingSummary(message.items)
+		}
+		return m, nil
+	case mappingIgnoredMsg:
+		m.mappingScanning = false
+		if message.err != nil {
+			m.status = "Ignored videos failed: " + message.err.Error()
+		} else {
+			m.mappingItems, m.mappingIndex, m.mappingIgnored = message.items, 0, true
+			m.status = fmt.Sprintf("%d ignored videos", len(message.items))
 		}
 		return m, nil
 	case mappingSearchMsg:
@@ -245,6 +266,19 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.mappingDirty, m.mappingIndex = true, min(m.mappingIndex+1, len(m.mappingItems))
 		m.status = "Mapping saved"
+		return m, nil
+	case mappingIgnoreMsg:
+		if message.err != nil {
+			m.status = "Ignored video save failed: " + message.err.Error()
+			return m, nil
+		}
+		m.mappingDirty = true
+		m.removeCurrentMappingItem()
+		if message.restored {
+			m.status = "Video restored"
+		} else {
+			m.status = "Video ignored"
+		}
 		return m, nil
 	case mappingReloadMsg:
 		if message.err != nil {
@@ -495,7 +529,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "Mapping updates are unavailable"
 			return m, nil
 		}
-		m.mode, m.mappingScanning, m.mappingItems, m.mappingIndex = modeMappingUpdate, true, nil, 0
+		m.mode, m.mappingScanning, m.mappingItems, m.mappingIndex, m.mappingIgnored = modeMappingUpdate, true, nil, 0, false
 		m.status = "Scanning video folders…"
 		return m, m.mappingScanCmd()
 	case "esc":
@@ -616,17 +650,45 @@ func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		return m, nil
 	case "r":
+		m.mappingIgnored = false
 		m.mappingScanning, m.mappingItems, m.mappingIndex = true, nil, 0
 		m.status = "Scanning video folders…"
 		return m, m.mappingScanCmd()
 	case "s":
+		if m.mappingIgnored {
+			return m, nil
+		}
 		m.mappingIndex = min(m.mappingIndex+1, len(m.mappingItems))
 		m.status = "Mapping skipped"
 		return m, nil
 	case "/":
+		if m.mappingIgnored {
+			return m, nil
+		}
 		m.mode, m.mappingQuery, m.mappingCandidates, m.mappingCursor = modeMappingPicker, "", nil, 0
 		return m, nil
+	case "i":
+		item, ok := m.currentMappingItem()
+		if !ok {
+			return m, nil
+		}
+		if m.mappingIgnored {
+			return m, m.mappingIgnoreCmd(item.VideoPath, true)
+		}
+		return m, m.mappingIgnoreCmd(item.VideoPath, false)
+	case "I":
+		m.mappingItems, m.mappingIndex, m.mappingScanning = nil, 0, true
+		if m.mappingIgnored {
+			m.mappingIgnored = false
+			m.status = "Scanning video folders…"
+			return m, m.mappingScanCmd()
+		}
+		m.status = "Loading ignored videos…"
+		return m, m.mappingIgnoredCmd()
 	case "enter":
+		if m.mappingIgnored {
+			return m, nil
+		}
 		item, ok := m.currentMappingItem()
 		if !ok || item.AudioPath == "" {
 			m.status = "Choose an audio track first"
@@ -686,6 +748,13 @@ func (m Model) mappingScanCmd() tea.Cmd {
 		return mappingScanMsg{items: items, err: err}
 	}
 }
+func (m Model) mappingIgnoredCmd() tea.Cmd {
+	service := m.mappingUpdater
+	return func() tea.Msg {
+		items, err := service.Ignored(context.Background())
+		return mappingIgnoredMsg{items: items, err: err}
+	}
+}
 func (m Model) mappingSearchCmd() tea.Cmd {
 	service, query := m.mappingUpdater, m.mappingQuery
 	return func() tea.Msg {
@@ -697,12 +766,39 @@ func (m Model) mappingConfirmCmd(video, audio string) tea.Cmd {
 	service := m.mappingUpdater
 	return func() tea.Msg { return mappingConfirmMsg{err: service.Confirm(video, audio)} }
 }
+func (m Model) mappingIgnoreCmd(video string, restored bool) tea.Cmd {
+	service := m.mappingUpdater
+	return func() tea.Msg {
+		if restored {
+			return mappingIgnoreMsg{restored: true, err: service.Restore(video)}
+		}
+		return mappingIgnoreMsg{err: service.Ignore(video)}
+	}
+}
 func (m Model) mappingReloadCmd() tea.Cmd {
 	service := m.mappingUpdater
 	return func() tea.Msg {
 		tracks, playback, err := service.Reload(context.Background())
 		return mappingReloadMsg{tracks: tracks, playback: playback, err: err}
 	}
+}
+
+func (m *Model) removeCurrentMappingItem() {
+	if m.mappingIndex < 0 || m.mappingIndex >= len(m.mappingItems) {
+		return
+	}
+	m.mappingItems = slices.Delete(m.mappingItems, m.mappingIndex, m.mappingIndex+1)
+	m.mappingIndex = min(m.mappingIndex, max(len(m.mappingItems)-1, 0))
+}
+
+func mappingSummary(items []updater.Item) string {
+	suggestions := 0
+	for _, item := range items {
+		if item.AudioPath != "" {
+			suggestions++
+		}
+	}
+	return fmt.Sprintf("%d unmapped videos • %d suggestions", len(items), suggestions)
 }
 
 func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {
@@ -1478,16 +1574,27 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		lines = append(lines, "", "j/k scroll • ctrl+u/d page • gg/G ends • d/esc close")
 	case modeMappingUpdate:
 		title = "Update mappings"
+		if m.mappingIgnored {
+			title = "Ignored videos"
+		}
 		if m.mappingScanning {
 			lines = []string{"Scanning video folders…", "", "u/esc close"}
 			break
 		}
 		item, ok := m.currentMappingItem()
 		if !ok {
-			lines = []string{"No unmapped videos", "", "r rescan • u/esc close"}
+			if m.mappingIgnored {
+				lines = []string{"No ignored videos", "", "I unmapped list • u/esc close"}
+			} else {
+				lines = []string{"0 unmapped videos • 0 suggestions", "", "r rescan • I ignored list • u/esc close"}
+			}
 			break
 		}
-		lines = []string{fmt.Sprintf("%d of %d", m.mappingIndex+1, len(m.mappingItems)), "Video: " + item.Filename, "Artist: " + emptyAny(item.Artist), "Title: " + emptyAny(item.Title)}
+		if m.mappingIgnored {
+			lines = []string{fmt.Sprintf("%d ignored videos • %d of %d", len(m.mappingItems), m.mappingIndex+1, len(m.mappingItems)), "Video: " + item.Filename, "Artist: " + emptyAny(item.Artist), "Title: " + emptyAny(item.Title), "", "i restore • I unmapped list • u/esc close"}
+			break
+		}
+		lines = []string{mappingSummary(m.mappingItems), fmt.Sprintf("%d of %d", m.mappingIndex+1, len(m.mappingItems)), "Video: " + item.Filename, "Artist: " + emptyAny(item.Artist), "Title: " + emptyAny(item.Title)}
 		if item.AudioPath == "" {
 			lines = append(lines, "No automatic suggestion")
 		} else {
@@ -1497,7 +1604,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			}
 			lines = append(lines, "Audio: "+audio, item.Reason)
 		}
-		lines = append(lines, "", "enter confirm • / choose audio • s skip • r rescan • u/esc close")
+		lines = append(lines, "", "enter confirm • / choose audio • s skip • i ignore • I ignored list • r rescan • u/esc close")
 	case modeMappingPicker:
 		title = "Choose audio"
 		lines = append(lines, "Search: "+m.mappingQuery)

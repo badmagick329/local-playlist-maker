@@ -11,6 +11,7 @@ import (
 func TestLoadResolvesEveryConfiguredFileAgainstTheConfigDirectory(t *testing.T) {
 	root := t.TempDir()
 	configDirectory := filepath.Join(root, "settings")
+	absoluteIgnored := filepath.Join(root, "absolute-ignored")
 	if err := os.MkdirAll(configDirectory, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -19,6 +20,7 @@ func TestLoadResolvesEveryConfiguredFileAgainstTheConfigDirectory(t *testing.T) 
 dataDirectory: state
 mappingFile: maps/video-audio-map.json
 videoDirectories: [videos, other-videos]
+ignoredVideoDirectories: [ignored, "`+filepath.ToSlash(absoluteIgnored)+`"]
 flacsMegaPlaylist: media/all.m3u8
 flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"
@@ -43,6 +45,9 @@ playbackHistoryMinimumWatchedPercent: 50
 	}
 	if loaded.MappingFile != want("maps/video-audio-map.json") || len(loaded.VideoDirectories) != 2 || loaded.VideoDirectories[0] != want("videos") || loaded.VideoDirectories[1] != want("other-videos") {
 		t.Fatalf("mapping/update paths = %#v", loaded)
+	}
+	if len(loaded.IgnoredVideoDirectories) != 2 || loaded.IgnoredVideoDirectories[0] != want("ignored") || loaded.IgnoredVideoDirectories[1] != absoluteIgnored {
+		t.Fatalf("ignored video directories = %#v", loaded.IgnoredVideoDirectories)
 	}
 	if loaded.VideoPlaylistCommand[0] != "mpv.exe" || loaded.VideoPlaylistCommand[1] != "--playlist={playlistPath}" {
 		t.Fatalf("command arguments were incorrectly treated as paths: %#v", loaded.VideoPlaylistCommand)

@@ -18,6 +18,7 @@ type Config struct {
 	DataDirectory                        string   `yaml:"dataDirectory"`
 	MappingFile                          string   `yaml:"mappingFile"`
 	VideoDirectories                     []string `yaml:"videoDirectories"`
+	IgnoredVideoDirectories              []string `yaml:"ignoredVideoDirectories"`
 	FlacsMegaPlaylist                    string   `yaml:"flacsMegaPlaylist"`
 	FlacCacheFile                        string   `yaml:"flacCacheFile"`
 	PlaylistTemplate                     string   `yaml:"playlistTemplate"`
@@ -71,6 +72,12 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 			return err
 		}
 		c.VideoDirectories[index] = pathid.Resolve(configDirectory, value)
+	}
+	for index, value := range c.IgnoredVideoDirectories {
+		if err := required(fmt.Sprintf("ignoredVideoDirectories[%d]", index), value); err != nil {
+			return err
+		}
+		c.IgnoredVideoDirectories[index] = pathid.Resolve(configDirectory, value)
 	}
 
 	for _, field := range []struct {

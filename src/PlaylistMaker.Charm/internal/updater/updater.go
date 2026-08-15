@@ -3,9 +3,11 @@ package updater
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"unicode"
@@ -41,6 +43,14 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 		return nil, err
 	}
 	mappedPaths := map[string]bool{}
+	ignoredPaths, err := ReadIgnored(s.IgnoredPath())
+	if err != nil {
+		return nil, err
+	}
+	ignored := make(map[string]bool, len(ignoredPaths))
+	for _, path := range ignoredPaths {
+		ignored[pathid.ComparisonKey(path)] = true
+	}
 	used := map[string]map[string]int{}
 	cache, err := metadata.ReadCache(s.Config.FlacCacheFile)
 	if err != nil {
@@ -65,7 +75,10 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			if !entry.IsDir() && supported(path) && !mappedPaths[pathid.ComparisonKey(path)] {
+			if entry.IsDir() && excluded(path, s.Config.IgnoredVideoDirectories) {
+				return filepath.SkipDir
+			}
+			if !entry.IsDir() && supported(path) && !excluded(path, s.Config.IgnoredVideoDirectories) && !ignored[pathid.ComparisonKey(path)] && !mappedPaths[pathid.ComparisonKey(path)] {
 				paths = append(paths, pathid.Normalize(path))
 			}
 			return nil
@@ -101,6 +114,124 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 		items = append(items, item)
 	}
 	return items, nil
+}
+
+func (s Service) Ignored(ctx context.Context) ([]Item, error) {
+	paths, err := ReadIgnored(s.IgnoredPath())
+	if err != nil {
+		return nil, err
+	}
+	items := make([]Item, 0, len(paths))
+	for _, path := range paths {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		item := Item{VideoPath: path, Filename: filepath.Base(path)}
+		item.Artist, item.Title = parse(item.Filename)
+		items = append(items, item)
+	}
+	return items, nil
+}
+
+func (s Service) Ignore(videoPath string) error {
+	paths, err := ReadIgnored(s.IgnoredPath())
+	if err != nil {
+		return err
+	}
+	return WriteIgnored(s.IgnoredPath(), append(paths, videoPath))
+}
+
+func (s Service) Restore(videoPath string) error {
+	paths, err := ReadIgnored(s.IgnoredPath())
+	if err != nil {
+		return err
+	}
+	key := pathid.ComparisonKey(videoPath)
+	return WriteIgnored(s.IgnoredPath(), removePath(paths, key))
+}
+
+func (s Service) IgnoredPath() string {
+	return filepath.Join(s.Config.DataDirectory, "ignored-videos.json")
+}
+
+func ReadIgnored(path string) ([]string, error) {
+	contents, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read ignored videos: %w", err)
+	}
+	if len(strings.TrimSpace(string(contents))) == 0 {
+		return nil, nil
+	}
+	var paths []string
+	if err := json.Unmarshal(contents, &paths); err != nil {
+		return nil, fmt.Errorf("parse ignored videos: %w", err)
+	}
+	return normalizePaths(paths), nil
+}
+
+func WriteIgnored(path string, paths []string) error {
+	contents, err := json.MarshalIndent(normalizePaths(paths), "", "  ")
+	if err != nil {
+		return err
+	}
+	contents = append(contents, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	temporary, err := os.CreateTemp(filepath.Dir(path), ".ignored-videos-*.tmp")
+	if err != nil {
+		return err
+	}
+	temporaryName := temporary.Name()
+	defer os.Remove(temporaryName)
+	if _, err = temporary.Write(contents); err == nil {
+		err = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	return os.Rename(temporaryName, path)
+}
+
+func excluded(path string, directories []string) bool {
+	pathKey := strings.TrimRight(pathid.ComparisonKey(path), `\\/`)
+	for _, directory := range directories {
+		directoryKey := strings.TrimRight(pathid.ComparisonKey(directory), `\\/`)
+		if pathKey == directoryKey || strings.HasPrefix(pathKey, directoryKey+`\\`) || strings.HasPrefix(pathKey, directoryKey+`/`) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizePaths(paths []string) []string {
+	unique := map[string]string{}
+	for _, path := range paths {
+		if strings.TrimSpace(path) == "" {
+			continue
+		}
+		path = pathid.Normalize(path)
+		key := pathid.ComparisonKey(path)
+		if existing, ok := unique[key]; !ok || path < existing {
+			unique[key] = path
+		}
+	}
+	result := make([]string, 0, len(unique))
+	for _, path := range unique {
+		result = append(result, path)
+	}
+	sort.Slice(result, func(i, j int) bool { return pathid.ComparisonKey(result[i]) < pathid.ComparisonKey(result[j]) })
+	return result
+}
+
+func removePath(paths []string, key string) []string {
+	return slices.DeleteFunc(paths, func(path string) bool { return pathid.ComparisonKey(path) == key })
 }
 
 func (s Service) Search(ctx context.Context, query string) ([]Audio, error) {

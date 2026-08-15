@@ -35,12 +35,17 @@ type mappingUpdater struct {
 }
 
 func (u mappingUpdater) Scan(ctx context.Context) ([]updater.Item, error) { return u.service.Scan(ctx) }
+func (u mappingUpdater) Ignored(ctx context.Context) ([]updater.Item, error) {
+	return u.service.Ignored(ctx)
+}
 func (u mappingUpdater) Search(ctx context.Context, query string) ([]updater.Audio, error) {
 	return u.service.Search(ctx, query)
 }
 func (u mappingUpdater) Confirm(videoPath, audioPath string) error {
 	return u.service.Confirm(videoPath, audioPath)
 }
+func (u mappingUpdater) Ignore(videoPath string) error  { return u.service.Ignore(videoPath) }
+func (u mappingUpdater) Restore(videoPath string) error { return u.service.Restore(videoPath) }
 func (u mappingUpdater) Reload(ctx context.Context) ([]library.Track, ui.PlaybackLauncher, error) {
 	snapshot, err := (native.Loader{Config: u.config}).Load(ctx)
 	if err != nil {

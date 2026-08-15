@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -33,20 +34,26 @@ type historyWatcherStub struct {
 
 type mappingUpdaterStub struct {
 	items      []updater.Item
+	ignored    []updater.Item
 	candidates []updater.Audio
 	tracks     []library.Track
 	scanCalls  int
 	confirms   int
+	ignores    int
+	restores   int
 }
 
 func (s *mappingUpdaterStub) Scan(context.Context) ([]updater.Item, error) {
 	s.scanCalls++
 	return s.items, nil
 }
+func (s *mappingUpdaterStub) Ignored(context.Context) ([]updater.Item, error) { return s.ignored, nil }
 func (s *mappingUpdaterStub) Search(context.Context, string) ([]updater.Audio, error) {
 	return s.candidates, nil
 }
 func (s *mappingUpdaterStub) Confirm(string, string) error { s.confirms++; return nil }
+func (s *mappingUpdaterStub) Ignore(string) error          { s.ignores++; return nil }
+func (s *mappingUpdaterStub) Restore(string) error         { s.restores++; return nil }
 func (s *mappingUpdaterStub) Reload(context.Context) ([]library.Track, PlaybackLauncher, error) {
 	return s.tracks, nil, nil
 }
@@ -171,6 +178,59 @@ func TestMappingUpdateModeScansOnDemandAndReloadsAfterSave(t *testing.T) {
 	if len(next.(Model).all) != 2 {
 		t.Fatal("reload did not replace the catalogue")
 	}
+}
+
+func TestMappingUpdatePersistentIgnoreRestoreAndCursorSafety(t *testing.T) {
+	items := []updater.Item{{VideoPath: "one", Filename: "one.mkv"}, {VideoPath: "two", Filename: "two.mkv"}}
+	stub := &mappingUpdaterStub{items: items, ignored: []updater.Item{{VideoPath: "ignored", Filename: "ignored.mkv"}}, tracks: library.Generate(1, 2)}
+	m := New(library.Generate(1, 2)).WithMappingUpdater(stub)
+	m = finishMappingScan(t, m)
+	m.mappingIndex = 1
+	m = runMappingCommand(t, m, "i")
+	if stub.ignores != 1 || len(m.mappingItems) != 1 || m.mappingIndex != 0 || m.status != "Video ignored" {
+		t.Fatalf("ignore final item = %#v", m)
+	}
+	m = runMappingCommand(t, m, "I")
+	if !m.mappingIgnored || len(m.mappingItems) != 1 {
+		t.Fatalf("ignored list = %#v", m)
+	}
+	m = runMappingCommand(t, m, "i")
+	if stub.restores != 1 || len(m.mappingItems) != 0 || m.mappingIndex != 0 || m.status != "Video restored" {
+		t.Fatalf("restore final item = %#v", m)
+	}
+}
+
+func TestMappingUpdateSummaryCountsOnlySuggestionsAndSkipIsTemporary(t *testing.T) {
+	items := []updater.Item{{VideoPath: "one", Filename: "one.mkv", AudioPath: "audio"}, {VideoPath: "two", Filename: "two.mkv"}}
+	stub := &mappingUpdaterStub{items: items}
+	m := finishMappingScan(t, New(library.Generate(1, 2)).WithMappingUpdater(stub))
+	if m.status != "2 unmapped videos • 1 suggestions" || !strings.Contains(stripStyles(m.View().Content), "2 unmapped videos • 1 suggestions") {
+		t.Fatalf("mapping summary = %q", m.status)
+	}
+	m = updateKey(t, m, "s")
+	if stub.ignores != 0 || len(m.mappingItems) != 2 || m.mappingIndex != 1 {
+		t.Fatalf("temporary skip = %#v", m)
+	}
+}
+
+func finishMappingScan(t *testing.T, m Model) Model {
+	t.Helper()
+	next, command := m.Update(tea.KeyPressMsg{Code: 'u', Text: "u"})
+	if command == nil {
+		t.Fatal("mapping scan command was nil")
+	}
+	next, _ = next.(Model).Update(command())
+	return next.(Model)
+}
+
+func runMappingCommand(t *testing.T, m Model, key string) Model {
+	t.Helper()
+	next, command := m.Update(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
+	if command == nil {
+		t.Fatalf("%q did not return a command", key)
+	}
+	next, _ = next.(Model).Update(command())
+	return next.(Model)
 }
 
 func TestEscapeNeverQuits(t *testing.T) {

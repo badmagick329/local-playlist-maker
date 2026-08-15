@@ -6,7 +6,7 @@ var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
 	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Views", "?", "shortcut help"},
 	{"Views", "d", "selected media details"},
-	{"Views", "u", "update mappings"},
+	{"Views", "u", "update mappings"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
 	{"Views", "R", "refresh history"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a / A", "all current-track videos / one per filtered track"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
 	{"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
@@ -60,7 +60,11 @@ func footerHint(current mode, width int) string {
 	case modeDetails:
 		hint = "j/k scroll  •  ctrl+u/d or pgup/dn page  •  gg/G first/last  •  d/esc close"
 	case modeMappingUpdate:
-		hint = "enter confirm  •  / choose audio  •  s skip  •  r rescan  •  u/esc close"
+		if width < 70 {
+			hint = "i ignore  •  I ignored  •  u/esc close"
+		} else {
+			hint = "enter confirm  •  / choose audio  •  s skip  •  i ignore  •  I ignored  •  r rescan  •  u/esc close"
+		}
 	case modeMappingPicker:
 		hint = "type search  •  j/k move  •  enter choose  •  / or esc cancel"
 	}
