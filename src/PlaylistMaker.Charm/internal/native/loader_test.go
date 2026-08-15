@@ -51,6 +51,26 @@ func TestLoaderCompletesMappedAudioMissingFromCache(t *testing.T) {
 	}
 }
 
+func TestClassifyRecognizesNumberedPerformances(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		path string
+		want string
+	}{
+		{"exact", "Artist - Track Performance.mkv", "Performance"},
+		{"numbered", "Artist - Track Performance 2.mkv", "Performance"},
+		{"case insensitive", "Artist - Track pErFoRmAnCe 3.mkv", "Performance"},
+		{"zero is not numbered", "Artist - Track Performance 0.mkv", "Music Video"},
+		{"trailing words do not match", "Artist - Track Performance 2 final.mkv", "Music Video"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := string(classify(test.path)); got != test.want {
+				t.Fatalf("classify(%q) = %q, want %q", test.path, got, test.want)
+			}
+		})
+	}
+}
+
 type fakeTagReader struct{}
 
 func (fakeTagReader) Read(_ context.Context, path string) (metadata.Entry, error) {

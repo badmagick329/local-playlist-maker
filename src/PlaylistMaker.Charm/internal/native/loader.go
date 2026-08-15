@@ -207,7 +207,7 @@ func classify(path string) library.Category {
 	switch {
 	case match(`.+\s+-\s+.+\(.*band live.*\)$`):
 		return library.BandLive
-	case match(`.+\s+-\s+.+\sperformance$`):
+	case match(`.+\s+-\s+.+\sperformance(?:\s[1-9]\d*)?$`):
 		return library.Performance
 	case match(`.+\s+-\s+.+\schoreography$`):
 		return library.Choreography
