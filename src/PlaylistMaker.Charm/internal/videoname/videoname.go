@@ -16,7 +16,6 @@ type Parsed struct {
 }
 
 var (
-	datePrefix   = regexp.MustCompile(`^(\d{8}|\d{6})\s+`)
 	textVariant  = regexp.MustCompile(`(?i)\s+(Performance(?:\s+[1-9]\d*)?|Choreography|Relay|Be Original)$`)
 	parenVariant = regexp.MustCompile(`\s+\(([^()]*)\)$`)
 )
@@ -24,9 +23,9 @@ var (
 func Parse(value string) Parsed {
 	name := strings.TrimSuffix(filepath.Base(value), filepath.Ext(value))
 	result := Parsed{}
-	if match := datePrefix.FindStringSubmatch(name); match != nil {
-		result.Date = match[1]
-		name = strings.TrimSpace(strings.TrimPrefix(name, match[0]))
+	if date, remainder, ok := datePrefix(name); ok {
+		result.Date = date
+		name = remainder
 	}
 	artist, title, found := strings.Cut(name, " - ")
 	if !found {
@@ -35,6 +34,28 @@ func Parse(value string) Parsed {
 	result.Artist = strings.TrimSpace(artist)
 	result.Title, result.Variant = splitVariant(strings.TrimSpace(title))
 	return result
+}
+
+func datePrefix(name string) (string, string, bool) {
+	for _, length := range []int{8, 6} {
+		if len(name) <= length || !digits(name[:length]) {
+			continue
+		}
+		remainder := strings.TrimSpace(name[length:])
+		if len(remainder) < len(name[length:]) {
+			return name[:length], remainder, true
+		}
+	}
+	return "", name, false
+}
+
+func digits(value string) bool {
+	for _, value := range value {
+		if value < '0' || value > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func splitVariant(title string) (string, string) {

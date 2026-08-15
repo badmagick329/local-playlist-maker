@@ -29,10 +29,16 @@ func TestParseRecognizesDatesAndEstablishedVariants(t *testing.T) {
 	if parsed := Parse("260724 Billlie - WDA (Whole Different Animal).webm"); parsed.Date != "260724" || parsed.Title != "WDA (Whole Different Animal)" || parsed.Variant != "" {
 		t.Fatalf("unrecognized parentheses were removed: %#v", parsed)
 	}
-	for _, filename := range []string{"241029 ITZY - Imaginary Friend (Areia Remix).webm", "20241029 ITZY - Imaginary Friend (Areia Remix).webm"} {
-		parsed := Parse(filename)
-		if parsed.Artist != "ITZY" || parsed.Title != "Imaginary Friend" || parsed.Variant != "Areia Remix" {
-			t.Fatalf("Parse(%q) = %#v", filename, parsed)
+	for _, test := range []struct {
+		filename, artist, title, variant string
+	}{
+		{"241029 ITZY - Imaginary Friend (Areia Remix).webm", "ITZY", "Imaginary Friend", "Areia Remix"},
+		{"20241029 ITZY - Imaginary Friend (Areia Remix).webm", "ITZY", "Imaginary Friend", "Areia Remix"},
+		{"221012 EUNBI - Underwater Performance.mkv", "EUNBI", "Underwater", "Performance"},
+	} {
+		parsed := Parse(test.filename)
+		if parsed.Artist != test.artist || parsed.Title != test.title || parsed.Variant != test.variant {
+			t.Fatalf("Parse(%q) = %#v", test.filename, parsed)
 		}
 	}
 }
