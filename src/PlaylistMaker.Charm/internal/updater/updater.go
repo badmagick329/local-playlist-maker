@@ -177,6 +177,9 @@ func (s Service) refreshAudioCache(ctx context.Context) (map[string]metadata.Ent
 		reader = metadata.FLACReader{}
 	}
 	entries, _, err := metadata.Ensure(ctx, s.Config.FlacCacheFile, paths, reader)
+	if err != nil && entries != nil {
+		return entries, nil
+	}
 	return entries, err
 }
 

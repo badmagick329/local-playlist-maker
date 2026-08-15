@@ -2,6 +2,7 @@ package updater
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"slices"
@@ -149,10 +150,14 @@ func TestScanSuggestionOrderAndFuzzyRules(t *testing.T) {
 type audioReader struct {
 	entries map[string]metadata.Entry
 	reads   []string
+	err     error
 }
 
 func (r *audioReader) Read(_ context.Context, path string) (metadata.Entry, error) {
 	r.reads = append(r.reads, path)
+	if r.err != nil {
+		return metadata.Entry{}, r.err
+	}
 	return r.entries[pathid.ComparisonKey(path)], nil
 }
 
@@ -182,6 +187,33 @@ func TestScanDiscoversRecursiveAudioAndRefreshesManualSearch(t *testing.T) {
 	}
 	if _, err := service.Scan(context.Background()); err != nil || len(reader.reads) != 1 {
 		t.Fatalf("cached audio was reread: %v, reads=%#v", err, reader.reads)
+	}
+}
+
+func TestScanKeepsAvailableAudioWhenOneDiscoveredFileCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	videos, audio := filepath.Join(root, "videos"), filepath.Join(root, "audio")
+	video := filepath.Join(videos, "260724 Artist - Song.mkv")
+	for _, path := range []string{video, filepath.Join(audio, "good.flac")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mapPath, cachePath := writeScanData(t, root)
+	reader := &audioReader{entries: map[string]metadata.Entry{pathid.ComparisonKey(filepath.Join(audio, "good.flac")): {Artist: "Artist", Title: "Song"}}}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MappingFile: mapPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}, AudioDirectories: []string{audio}}, Reader: reader}
+	if _, err := service.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(audio, "bad.flac"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	reader.err = errors.New("unreadable")
+	if items, err := service.Scan(context.Background()); err != nil || len(items) != 1 || items[0].AudioPath == "" {
+		t.Fatalf("partial cache refresh = %#v, %v", items, err)
 	}
 }
 
