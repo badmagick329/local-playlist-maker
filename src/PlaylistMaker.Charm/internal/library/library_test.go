@@ -52,42 +52,54 @@ func TestParseDateRangeIncludesRequestedPrecision(t *testing.T) {
 	}
 }
 
-func TestExplicitSortsRemainPrimaryDuringSearch(t *testing.T) {
+func TestSearchRelevanceIsPrimaryForEverySort(t *testing.T) {
 	enabled := map[Category]bool{MusicVideo: true}
 	tracks := []Track{
-		{ID: "later", Artist: "match", Title: "match", ReleaseDate: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "later-video", Category: MusicVideo, Date: time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "match", SearchTextByCategory: map[Category]string{}},
-		{ID: "earlier", Artist: "match match", Title: "match", ReleaseDate: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "earlier-video", Category: MusicVideo, Date: time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "match match", SearchTextByCategory: map[Category]string{}},
+		{ID: "delulu", Artist: "older", Title: "Delulu", ReleaseDate: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "delulu-video", Category: MusicVideo, Date: time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "delulu", SearchTextByCategory: map[Category]string{}},
+		{ID: "newer", Artist: "newer", Title: "Loose match", ReleaseDate: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "newer-video", Category: MusicVideo, Date: time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2026, 2, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "distant elephant lunar umbrella", SearchTextByCategory: map[Category]string{}},
 	}
-	for _, test := range []struct {
-		sort Sort
-		want []string
-	}{
-		{ReleaseOldest, []string{"earlier", "later"}},
-		{ReleaseNewest, []string{"later", "earlier"}},
-		{VideoOldest, []string{"earlier", "later"}},
-		{ModifiedNewest, []string{"later", "earlier"}},
-	} {
-		result := FilterAndSort(tracks, Query{SearchText: "match", Enabled: enabled, Sort: test.sort})
-		if len(result) != 2 || result[0].ID != test.want[0] || result[1].ID != test.want[1] {
-			t.Fatalf("%s with search = %#v, want %v", test.sort, result, test.want)
+	for _, selected := range Sorts {
+		result := FilterAndSort(tracks, Query{SearchText: "delu", Enabled: enabled, Sort: selected})
+		if len(result) != 2 || result[0].ID != "delulu" {
+			t.Fatalf("%s with search = %#v", selected, result)
 		}
 	}
 }
 
-func TestRelevanceSortRequiresExplicitSelection(t *testing.T) {
+func TestSelectedSortOrdersEqualScoreSearchMatches(t *testing.T) {
 	enabled := map[Category]bool{MusicVideo: true}
 	tracks := []Track{
-		{ID: "newer", Title: "match", Variants: []Variant{{ID: "newer-video", Category: MusicVideo, ModifiedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "prefix match", SearchTextByCategory: map[Category]string{}},
-		{ID: "stronger", Title: "match", Variants: []Variant{{ID: "stronger-video", Category: MusicVideo, ModifiedAt: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "match", SearchTextByCategory: map[Category]string{}},
+		{ID: "later", ReleaseDate: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "later-video", Category: MusicVideo, ModifiedAt: time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "delu", SearchTextByCategory: map[Category]string{}},
+		{ID: "earlier", ReleaseDate: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "earlier-video", Category: MusicVideo, ModifiedAt: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "delu", SearchTextByCategory: map[Category]string{}},
 	}
-	if got := FilterAndSort(tracks, Query{SearchText: "match", Enabled: enabled, Sort: ModifiedNewest}); got[0].ID != "newer" {
-		t.Fatalf("modified order = %q", got[0].ID)
+	if got := FilterAndSort(tracks, Query{SearchText: "delu", Enabled: enabled, Sort: ReleaseOldest}); got[0].ID != "earlier" {
+		t.Fatalf("equal-score release order = %q", got[0].ID)
 	}
-	if got := FilterAndSort(tracks, Query{SearchText: "match", Enabled: enabled, Sort: Relevance}); got[0].ID != "stronger" {
-		t.Fatalf("relevance order = %q", got[0].ID)
+	if got := FilterAndSort(tracks, Query{Enabled: enabled, Sort: ReleaseNewest}); got[0].ID != "later" {
+		t.Fatalf("empty-search release order = %q", got[0].ID)
 	}
-	if got := FilterAndSort(tracks, Query{Enabled: enabled, Sort: Relevance}); got[0].ID != "newer" {
+	if got := FilterAndSort(tracks, Query{Enabled: enabled, Sort: Relevance}); got[0].ID != "later" {
 		t.Fatalf("empty relevance order = %q", got[0].ID)
+	}
+	ties := []Track{
+		{ID: "z", Variants: []Variant{{ID: "z-video", Category: MusicVideo}}, BaseSearchText: "delu", SearchTextByCategory: map[Category]string{}},
+		{ID: "a", Variants: []Variant{{ID: "a-video", Category: MusicVideo}}, BaseSearchText: "delu", SearchTextByCategory: map[Category]string{}},
+	}
+	if got := FilterAndSort(ties, Query{SearchText: "delu", Enabled: enabled, Sort: ModifiedNewest}); got[0].ID != "a" {
+		t.Fatalf("stable tie order = %q", got[0].ID)
+	}
+}
+
+func TestSearchRespectsCategoryAndVideoDateEligibility(t *testing.T) {
+	enabled := map[Category]bool{MusicVideo: true}
+	date, _ := ParseDateRange("2025")
+	tracks := []Track{
+		{ID: "eligible", BaseSearchText: "delulu", Variants: []Variant{{ID: "eligible-video", Category: MusicVideo, Date: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}}, SearchTextByCategory: map[Category]string{}},
+		{ID: "wrong-category", BaseSearchText: "delulu", Variants: []Variant{{ID: "wrong-category-video", Category: Performance, Date: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)}}, SearchTextByCategory: map[Category]string{}},
+		{ID: "wrong-date", BaseSearchText: "delulu", Variants: []Variant{{ID: "wrong-date-video", Category: MusicVideo, Date: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}}, SearchTextByCategory: map[Category]string{}},
+	}
+	if got := FilterAndSort(tracks, Query{SearchText: "delu", Enabled: enabled, VideoDate: date, Sort: ModifiedNewest}); len(got) != 1 || got[0].ID != "eligible" {
+		t.Fatalf("eligible search results = %#v", got)
 	}
 }
 

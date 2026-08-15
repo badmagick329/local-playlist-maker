@@ -295,7 +295,7 @@ func FilterAndSort(all []Track, query Query) []Track {
 
 	sort.SliceStable(matches, func(i, j int) bool {
 		left, right := matches[i], matches[j]
-		if query.Sort == Relevance && normalizedQuery != "" && left.score != right.score {
+		if normalizedQuery != "" && left.score != right.score {
 			return left.score > right.score
 		}
 		switch query.Sort {
@@ -323,9 +323,6 @@ func FilterAndSort(all []Track, query Query) []Track {
 			if !leftValue.Equal(rightValue) {
 				return leftValue.After(rightValue) == newest
 			}
-		}
-		if query.Sort != Relevance && normalizedQuery != "" && left.score != right.score {
-			return left.score > right.score
 		}
 		return left.track.ID < right.track.ID
 	})
