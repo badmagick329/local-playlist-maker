@@ -19,7 +19,7 @@ type Config struct {
 	MappingFile                          string   `yaml:"mappingFile"`
 	VideoDirectories                     []string `yaml:"videoDirectories"`
 	IgnoredVideoDirectories              []string `yaml:"ignoredVideoDirectories"`
-	FlacsMegaPlaylist                    string   `yaml:"flacsMegaPlaylist"`
+	AudioDirectories                     []string `yaml:"audioDirectories"`
 	FlacCacheFile                        string   `yaml:"flacCacheFile"`
 	PlaylistTemplate                     string   `yaml:"playlistTemplate"`
 	VideoPlaylistCommand                 []string `yaml:"videoPlaylistCommand"`
@@ -79,12 +79,20 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 		}
 		c.IgnoredVideoDirectories[index] = pathid.Resolve(configDirectory, value)
 	}
+	if len(c.AudioDirectories) == 0 {
+		return fmt.Errorf("audioDirectories must contain at least one directory")
+	}
+	for index, value := range c.AudioDirectories {
+		if err := required(fmt.Sprintf("audioDirectories[%d]", index), value); err != nil {
+			return err
+		}
+		c.AudioDirectories[index] = pathid.Resolve(configDirectory, value)
+	}
 
 	for _, field := range []struct {
 		name  string
 		value *string
 	}{
-		{"flacsMegaPlaylist", &c.FlacsMegaPlaylist},
 		{"playlistTxtFilePath", &c.PlaylistTxtFilePath},
 	} {
 		if err := required(field.name, *field.value); err != nil {

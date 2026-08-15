@@ -12,6 +12,7 @@ func TestLoadResolvesEveryConfiguredFileAgainstTheConfigDirectory(t *testing.T) 
 	root := t.TempDir()
 	configDirectory := filepath.Join(root, "settings")
 	absoluteIgnored := filepath.Join(root, "absolute-ignored")
+	absoluteAudio := filepath.Join(root, "absolute-audio")
 	if err := os.MkdirAll(configDirectory, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -21,7 +22,7 @@ dataDirectory: state
 mappingFile: maps/video-audio-map.json
 videoDirectories: [videos, other-videos]
 ignoredVideoDirectories: [ignored, "`+filepath.ToSlash(absoluteIgnored)+`"]
-flacsMegaPlaylist: media/all.m3u8
+audioDirectories: [audio, "`+filepath.ToSlash(absoluteAudio)+`"]
 flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"
 videoPlaylistCommand: [mpv.exe, "--playlist={playlistPath}"]
@@ -40,7 +41,7 @@ playbackHistoryMinimumWatchedPercent: 50
 		t.Fatal(err)
 	}
 	want := func(relative string) string { return filepath.Join(configDirectory, relative) }
-	if loaded.DataDirectory != want("state") || loaded.FlacsMegaPlaylist != want("media/all.m3u8") || loaded.FlacCacheFile != filepath.Join(want("state"), "cache/flac_cache.json") || loaded.PlaylistTxtFilePath != want("imports/queue.txt") {
+	if loaded.DataDirectory != want("state") || loaded.FlacCacheFile != filepath.Join(want("state"), "cache/flac_cache.json") || loaded.PlaylistTxtFilePath != want("imports/queue.txt") {
 		t.Fatalf("relative paths were not resolved from the config directory: %#v", loaded)
 	}
 	if loaded.MappingFile != want("maps/video-audio-map.json") || len(loaded.VideoDirectories) != 2 || loaded.VideoDirectories[0] != want("videos") || loaded.VideoDirectories[1] != want("other-videos") {
@@ -48,6 +49,9 @@ playbackHistoryMinimumWatchedPercent: 50
 	}
 	if len(loaded.IgnoredVideoDirectories) != 2 || loaded.IgnoredVideoDirectories[0] != want("ignored") || loaded.IgnoredVideoDirectories[1] != absoluteIgnored {
 		t.Fatalf("ignored video directories = %#v", loaded.IgnoredVideoDirectories)
+	}
+	if len(loaded.AudioDirectories) != 2 || loaded.AudioDirectories[0] != want("audio") || loaded.AudioDirectories[1] != absoluteAudio {
+		t.Fatalf("audio directories = %#v", loaded.AudioDirectories)
 	}
 	if loaded.VideoPlaylistCommand[0] != "mpv.exe" || loaded.VideoPlaylistCommand[1] != "--playlist={playlistPath}" {
 		t.Fatalf("command arguments were incorrectly treated as paths: %#v", loaded.VideoPlaylistCommand)
@@ -121,7 +125,7 @@ func validConfig(extra string) string {
 	return `dataDirectory: state
 mappingFile: maps/video-audio-map.json
 videoDirectories: [videos]
-flacsMegaPlaylist: media/all.txt
+audioDirectories: [audio]
 flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"
 videoPlaylistCommand: [mpv.exe]

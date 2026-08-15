@@ -36,12 +36,16 @@ type Audio struct {
 	Title  string
 }
 
-type Service struct{ Config config.Config }
+type Service struct {
+	Config config.Config
+	Reader metadata.Reader
+}
 
 type scanIndex struct {
 	mapped   map[string]bool
 	evidence map[string]map[string]int
 	exact    map[string][]metadata.Entry
+	title    map[string][]metadata.Entry
 	artist   map[string][]metadata.Entry
 }
 
@@ -58,7 +62,7 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	for _, path := range ignoredPaths {
 		ignored[pathid.ComparisonKey(path)] = true
 	}
-	cache, err := metadata.ReadCache(s.Config.FlacCacheFile)
+	cache, err := s.refreshAudioCache(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -106,6 +110,12 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 			}
 		}
 		if item.AudioPath == "" {
+			matches := index.title[normalize(item.Title)]
+			if len(matches) == 1 {
+				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = matches[0].FilePath, matches[0].Artist, matches[0].Title, "Possible match"
+			}
+		}
+		if item.AudioPath == "" {
 			if audio, ok := fuzzyMatch(item.Title, index.artist[normalize(item.Artist)]); ok {
 				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = audio.FilePath, audio.Artist, audio.Title, "Possible match"
 			}
@@ -120,11 +130,13 @@ func buildScanIndex(mapped []mapping.Entry, cache map[string]metadata.Entry) sca
 		mapped:   make(map[string]bool, len(mapped)),
 		evidence: make(map[string]map[string]int),
 		exact:    make(map[string][]metadata.Entry),
+		title:    make(map[string][]metadata.Entry),
 		artist:   make(map[string][]metadata.Entry),
 	}
 	for _, audio := range cache {
 		key := matchKey(audio.Artist, audio.Title)
 		index.exact[key] = append(index.exact[key], audio)
+		index.title[normalize(audio.Title)] = append(index.title[normalize(audio.Title)], audio)
 		index.artist[normalize(audio.Artist)] = append(index.artist[normalize(audio.Artist)], audio)
 	}
 	for _, entries := range index.exact {
@@ -133,6 +145,11 @@ func buildScanIndex(mapped []mapping.Entry, cache map[string]metadata.Entry) sca
 		})
 	}
 	for _, entries := range index.artist {
+		sort.Slice(entries, func(i, j int) bool {
+			return pathid.ComparisonKey(entries[i].FilePath) < pathid.ComparisonKey(entries[j].FilePath)
+		})
+	}
+	for _, entries := range index.title {
 		sort.Slice(entries, func(i, j int) bool {
 			return pathid.ComparisonKey(entries[i].FilePath) < pathid.ComparisonKey(entries[j].FilePath)
 		})
@@ -148,6 +165,49 @@ func buildScanIndex(mapped []mapping.Entry, cache map[string]metadata.Entry) sca
 		}
 	}
 	return index
+}
+
+func (s Service) refreshAudioCache(ctx context.Context) (map[string]metadata.Entry, error) {
+	paths, err := s.discoverAudio(ctx)
+	if err != nil {
+		return nil, err
+	}
+	reader := s.Reader
+	if reader == nil {
+		reader = metadata.FLACReader{}
+	}
+	entries, _, err := metadata.Ensure(ctx, s.Config.FlacCacheFile, paths, reader)
+	return entries, err
+}
+
+func (s Service) discoverAudio(ctx context.Context) ([]string, error) {
+	paths := []string{}
+	seen := map[string]bool{}
+	for _, root := range s.Config.AudioDirectories {
+		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if entry.IsDir() || !strings.EqualFold(filepath.Ext(path), ".flac") {
+				return nil
+			}
+			path = pathid.Normalize(path)
+			key := pathid.ComparisonKey(path)
+			if !seen[key] {
+				seen[key] = true
+				paths = append(paths, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+	}
+	sort.Slice(paths, func(i, j int) bool { return pathid.ComparisonKey(paths[i]) < pathid.ComparisonKey(paths[j]) })
+	return paths, nil
 }
 
 func (s Service) Ignored(ctx context.Context) ([]Item, error) {

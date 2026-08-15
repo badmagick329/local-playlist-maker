@@ -1,7 +1,7 @@
 dataDirectory: data
 mappingFile: data/video-audio-map.json
 videoDirectories: [videos]
-flacsMegaPlaylist: data/library.txt
+audioDirectories: [audio]
 flacCacheFile: flac_cache.json
 playlistTemplate: "{playlistPath}"
 videoPlaylistCommand: ["mpv.exe", "--playlist={playlistPath}"]

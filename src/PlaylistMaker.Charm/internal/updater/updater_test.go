@@ -11,6 +11,7 @@ import (
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/mapping"
 	"playlistmaker/charm/internal/metadata"
+	"playlistmaker/charm/internal/pathid"
 )
 
 func TestScanOrdersUnmappedVideosAndSuggestsExactMatches(t *testing.T) {
@@ -81,6 +82,21 @@ func TestScanSuggestionOrderAndFuzzyRules(t *testing.T) {
 			wantReason: "Exact match",
 		},
 		{
+			name:       "unique cross artist exact title is possible",
+			filename:   "260724 Brave Girls - Body Wave.mkv",
+			cache:      map[string]metadata.Entry{"body": {FilePath: "audio/body.flac", Artist: "BBGIRLS", Title: "BODY WAVE"}},
+			wantAudio:  "audio\\body.flac",
+			wantReason: "Possible match",
+		},
+		{
+			name:     "ambiguous cross artist exact title is withheld",
+			filename: "260724 Brave Girls - Body Wave.mkv",
+			cache: map[string]metadata.Entry{
+				"one": {FilePath: "audio/one.flac", Artist: "BBGIRLS", Title: "Body Wave"},
+				"two": {FilePath: "audio/two.flac", Artist: "Other", Title: "Body Wave"},
+			},
+		},
+		{
 			name:       "unique same artist fuzzy match",
 			filename:   "260724 Billlie - Work Special Stage.mkv",
 			cache:      map[string]metadata.Entry{"work": {FilePath: "audio/work.flac", Artist: "Billlie", Title: "Work"}},
@@ -127,6 +143,45 @@ func TestScanSuggestionOrderAndFuzzyRules(t *testing.T) {
 				t.Fatalf("scan saved a suggestion: %#v, %v", entries, err)
 			}
 		})
+	}
+}
+
+type audioReader struct {
+	entries map[string]metadata.Entry
+	reads   []string
+}
+
+func (r *audioReader) Read(_ context.Context, path string) (metadata.Entry, error) {
+	r.reads = append(r.reads, path)
+	return r.entries[pathid.ComparisonKey(path)], nil
+}
+
+func TestScanDiscoversRecursiveAudioAndRefreshesManualSearch(t *testing.T) {
+	root := t.TempDir()
+	videos, audio := filepath.Join(root, "videos"), filepath.Join(root, "audio")
+	video := filepath.Join(videos, "260724 Brave Girls - Body Wave.mkv")
+	newAudio := filepath.Join(audio, "artists", "BBGIRLS", "body-wave.flac")
+	for _, path := range []string{video, newAudio, filepath.Join(audio, "artists", "BBGIRLS", "ignore.mp3")} {
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	mapPath, cachePath := writeScanData(t, root)
+	reader := &audioReader{entries: map[string]metadata.Entry{pathid.ComparisonKey(newAudio): {Artist: "BBGIRLS", Title: "BODY WAVE"}}}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MappingFile: mapPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}, AudioDirectories: []string{audio, strings.ToLower(audio)}}, Reader: reader}
+	items, err := service.Scan(context.Background())
+	if err != nil || len(items) != 1 || items[0].AudioPath != pathid.Normalize(newAudio) || items[0].Reason != "Possible match" || len(reader.reads) != 1 {
+		t.Fatalf("audio discovery = %#v, %v, reads=%#v", items, err, reader.reads)
+	}
+	results, err := service.Search(context.Background(), "body wave")
+	if err != nil || len(results) != 1 || results[0].Artist != "BBGIRLS" || results[0].Title != "BODY WAVE" {
+		t.Fatalf("refreshed search = %#v, %v", results, err)
+	}
+	if _, err := service.Scan(context.Background()); err != nil || len(reader.reads) != 1 {
+		t.Fatalf("cached audio was reread: %v, reads=%#v", err, reader.reads)
 	}
 }
 

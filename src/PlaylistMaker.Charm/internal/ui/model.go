@@ -530,7 +530,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode, m.mappingScanning, m.mappingItems, m.mappingIndex, m.mappingIgnored = modeMappingUpdate, true, nil, 0, false
-		m.status = "Scanning video folders…"
+		m.status = "Scanning video and audio folders…"
 		return m, m.mappingScanCmd()
 	case "esc":
 		m.status = "Esc closes modes; Ctrl+Q quits"
@@ -652,7 +652,7 @@ func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "r":
 		m.mappingIgnored = false
 		m.mappingScanning, m.mappingItems, m.mappingIndex = true, nil, 0
-		m.status = "Scanning video folders…"
+		m.status = "Scanning video and audio folders…"
 		return m, m.mappingScanCmd()
 	case "s":
 		if m.mappingIgnored {
@@ -680,7 +680,7 @@ func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.mappingItems, m.mappingIndex, m.mappingScanning = nil, 0, true
 		if m.mappingIgnored {
 			m.mappingIgnored = false
-			m.status = "Scanning video folders…"
+			m.status = "Scanning video and audio folders…"
 			return m, m.mappingScanCmd()
 		}
 		m.status = "Loading ignored videos…"
@@ -1578,7 +1578,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			title = "Ignored videos"
 		}
 		if m.mappingScanning {
-			lines = []string{"Scanning video folders…", "", "u/esc close"}
+			lines = []string{"Scanning video and audio folders…", "", "u/esc close"}
 			break
 		}
 		item, ok := m.currentMappingItem()
