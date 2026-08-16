@@ -38,3 +38,43 @@ func TestSelectionNeverEscapesCandidateSetAndUsesStableTieBreak(t *testing.T) {
 		t.Fatalf("candidate set escaped: %s", got.ID)
 	}
 }
+
+func TestDefaultSelectionPrefersOriginalLanguageBeforeRecency(t *testing.T) {
+	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := old.AddDate(1, 0, 0)
+	for _, title := range []string{"Lovey Dovey", "Roly-Poly"} {
+		variants := []Variant{
+			{ID: "original", Filename: "Artist - " + title + ".mkv", Category: MusicVideo, Date: old, ModifiedAt: old},
+			{ID: "japanese", Filename: "Artist - " + title + " Japanese version.mkv", Category: MusicVideo, Date: newer, ModifiedAt: newer},
+		}
+		if got, _ := SelectVariant(variants, DefaultSelection); got.ID != "original" {
+			t.Fatalf("%s default = %s", title, got.ID)
+		}
+	}
+}
+
+func TestDefaultSelectionLanguageCategoryAndDateRanking(t *testing.T) {
+	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := old.AddDate(1, 0, 0)
+	if got, _ := SelectVariant([]Variant{{ID: "korean", Filename: "Artist - Song Korean.mkv", Category: MusicVideo, Date: old}, {ID: "japanese", Filename: "Artist - Song (Japanese ver.).mkv", Category: MusicVideo, Date: newer}}, DefaultSelection); got.ID != "korean" {
+		t.Fatalf("Korean should beat Japanese, got %s", got.ID)
+	}
+	if got, _ := SelectVariant([]Variant{{ID: "only", Filename: "Artist - Song Japanese.mkv", Category: MusicVideo, Date: newer}}, DefaultSelection); got.ID != "only" {
+		t.Fatalf("only Japanese = %s", got.ID)
+	}
+	if got, _ := SelectVariant([]Variant{{ID: "old", Filename: "Artist - Song.mkv", Category: MusicVideo, Date: old}, {ID: "new", Filename: "Artist - Song Korean version.mkv", Category: MusicVideo, Date: newer}}, DefaultSelection); got.ID != "new" {
+		t.Fatalf("newest preferred = %s", got.ID)
+	}
+	if got, _ := SelectVariant([]Variant{{ID: "mv", Filename: "Artist - Song Japanese.mkv", Category: MusicVideo, Date: old}, {ID: "performance", Filename: "Artist - Song.mkv", Category: Performance, Date: newer}}, DefaultSelection); got.ID != "mv" {
+		t.Fatalf("music video priority = %s", got.ID)
+	}
+}
+
+func TestQueryAwareDefaultSelectionUsesTheSameRanking(t *testing.T) {
+	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	track := Track{Variants: []Variant{{ID: "original", Filename: "Artist - Song.mkv", Category: MusicVideo, Date: old}, {ID: "japanese", Filename: "Artist - Song Japanese.mkv", Category: MusicVideo, Date: old.AddDate(1, 0, 0)}}}
+	query := Query{Enabled: map[Category]bool{MusicVideo: true}}
+	if got, _ := DefaultVariant(track, query); got.ID != "original" {
+		t.Fatalf("query default = %s", got.ID)
+	}
+}

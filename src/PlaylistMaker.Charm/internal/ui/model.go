@@ -1232,7 +1232,22 @@ func (m *Model) rebuildRows() {
 		if !m.expanded[track.ID] {
 			continue
 		}
+		variantOrder := make([]int, 0, len(track.Variants))
+		if selected, ok := m.selectVariant(library.EligibleVariants(track, m.currentQuery())); ok {
+			for variantIndex, variant := range track.Variants {
+				if variant.ID == selected.ID {
+					variantOrder = append(variantOrder, variantIndex)
+					break
+				}
+			}
+		}
 		for variantIndex, variant := range track.Variants {
+			if len(variantOrder) == 0 || variant.ID != track.Variants[variantOrder[0]].ID {
+				variantOrder = append(variantOrder, variantIndex)
+			}
+		}
+		for _, variantIndex := range variantOrder {
+			variant := track.Variants[variantIndex]
 			if m.isEligible(variant) {
 				rows = append(rows, row{trackIndex: trackIndex, variantIndex: variantIndex})
 			}

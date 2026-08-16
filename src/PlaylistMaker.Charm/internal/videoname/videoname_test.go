@@ -48,3 +48,24 @@ func TestNormalizeCollapsesPunctuationWhitespaceAndPreservesUnicode(t *testing.T
 		t.Fatalf("Normalize = %q", got)
 	}
 }
+
+func TestParseRecognizesOnlyTrailingLanguageMarkers(t *testing.T) {
+	for _, test := range []struct {
+		filename string
+		title    string
+		language Language
+	}{
+		{"Artist - Song Japanese.mkv", "Song", Japanese},
+		{"Artist - Song Japanese ver..mkv", "Song", Japanese},
+		{"Artist - Song (Japanese version).mkv", "Song", Japanese},
+		{"Artist - Song Korean.mkv", "Song", Korean},
+		{"Artist - Song (Korean ver.).mkv", "Song", Korean},
+		{"Artist - Japanese Breakfast.mkv", "Japanese Breakfast", Unmarked},
+		{"Artist - Japanese Song Title.mkv", "Japanese Song Title", Unmarked},
+	} {
+		parsed := Parse(test.filename)
+		if parsed.Title != test.title || parsed.Language != test.language {
+			t.Fatalf("Parse(%q) = %#v", test.filename, parsed)
+		}
+	}
+}

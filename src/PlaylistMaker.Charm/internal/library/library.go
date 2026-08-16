@@ -346,27 +346,7 @@ func EligibleVariants(track Track, query Query) []Variant {
 }
 
 func DefaultVariant(track Track, query Query) (Variant, bool) {
-	eligible := EligibleVariants(track, query)
-	if len(eligible) == 0 {
-		return Variant{}, false
-	}
-	best := eligible[0]
-	for _, candidate := range eligible[1:] {
-		candidateOfficial := candidate.Category == MusicVideo
-		bestOfficial := best.Category == MusicVideo
-		if candidateOfficial != bestOfficial {
-			if candidateOfficial {
-				best = candidate
-			}
-			continue
-		}
-		if candidate.Date.After(best.Date) ||
-			(candidate.Date.Equal(best.Date) && candidate.ModifiedAt.After(best.ModifiedAt)) ||
-			(candidate.Date.Equal(best.Date) && candidate.ModifiedAt.Equal(best.ModifiedAt) && candidate.ID < best.ID) {
-			best = candidate
-		}
-	}
-	return best, true
+	return SelectVariant(EligibleVariants(track, query), DefaultSelection)
 }
 
 func normalize(value string) string {

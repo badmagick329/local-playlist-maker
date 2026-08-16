@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -177,6 +178,33 @@ func TestMappingUpdateModeScansOnDemandAndReloadsAfterSave(t *testing.T) {
 	next, _ = next.(Model).Update(command())
 	if len(next.(Model).all) != 2 {
 		t.Fatal("reload did not replace the catalogue")
+	}
+}
+
+func TestExpansionAndPlaybackUseTheSameLanguageAwareDefault(t *testing.T) {
+	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	track := library.Track{ID: "track", Artist: "Artist", Title: "Song", Variants: []library.Variant{
+		{ID: "original", Filename: "Artist - Song.mkv", Category: library.MusicVideo, Date: old, ModifiedAt: old},
+		{ID: "japanese", Filename: "Artist - Song Japanese.mkv", Category: library.MusicVideo, Date: old.AddDate(1, 0, 0), ModifiedAt: old.AddDate(1, 0, 0)},
+	}, SearchTextByCategory: map[library.Category]string{}}
+	playback := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 1}}
+	m := New([]library.Track{track}, playback)
+	m = updateKey(t, m, "l")
+	if len(m.rows) < 2 {
+		t.Fatal("track did not expand")
+	}
+	firstChild := m.filtered[m.rows[1].trackIndex].Variants[m.rows[1].variantIndex]
+	if firstChild.ID != "original" {
+		t.Fatalf("expanded default = %s", firstChild.ID)
+	}
+	m.cursor = 0
+	_, command := m.launchHighlighted()
+	if command == nil {
+		t.Fatal("highlighted playback did not start")
+	}
+	_ = command()
+	if len(playback.ids) != 1 || playback.ids[0] != firstChild.ID {
+		t.Fatalf("playback default = %#v, want %s", playback.ids, firstChild.ID)
 	}
 }
 
@@ -434,7 +462,12 @@ func TestHistoryRefreshFallsBackToParentWhenChildIsIneligible(t *testing.T) {
 	m.enabled[library.BandLive] = true
 	m.expanded[tracks[0].ID] = true
 	m.refreshResults()
-	m.cursor = 2
+	for index, row := range m.rows {
+		if row.isVariant() && m.filtered[row.trackIndex].Variants[row.variantIndex].ID == tracks[0].Variants[1].ID {
+			m.cursor = index
+			break
+		}
+	}
 	m.enabled[library.BandLive] = false
 	m.applyHistory(cloneTracks(m.all))
 	current, ok := m.currentRow()

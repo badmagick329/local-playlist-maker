@@ -1,6 +1,10 @@
 package library
 
-import "time"
+import (
+	"time"
+
+	"playlistmaker/charm/internal/videoname"
+)
 
 type SelectionStrategy int
 
@@ -115,6 +119,11 @@ func later(left, right *time.Time) bool { return left != nil && (right == nil ||
 func betterDefault(left, right Variant) bool {
 	if (left.Category == MusicVideo) != (right.Category == MusicVideo) {
 		return left.Category == MusicVideo
+	}
+	leftAlternate := videoname.Parse(left.Filename).Language == videoname.Japanese
+	rightAlternate := videoname.Parse(right.Filename).Language == videoname.Japanese
+	if leftAlternate != rightAlternate {
+		return !leftAlternate
 	}
 	if !left.Date.Equal(right.Date) {
 		return left.Date.After(right.Date)

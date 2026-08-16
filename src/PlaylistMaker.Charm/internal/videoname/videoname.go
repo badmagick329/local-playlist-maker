@@ -9,15 +9,26 @@ import (
 )
 
 type Parsed struct {
-	Date    string
-	Artist  string
-	Title   string
-	Variant string
+	Date     string
+	Artist   string
+	Title    string
+	Variant  string
+	Language Language
 }
 
+type Language int
+
+const (
+	Unmarked Language = iota
+	Korean
+	Japanese
+)
+
 var (
-	textVariant  = regexp.MustCompile(`(?i)\s+(Performance(?:\s+[1-9]\d*)?|Choreography|Relay|Be Original)$`)
-	parenVariant = regexp.MustCompile(`\s+\(([^()]*)\)$`)
+	textVariant   = regexp.MustCompile(`(?i)\s+(Performance(?:\s+[1-9]\d*)?|Choreography|Relay|Be Original)$`)
+	parenVariant  = regexp.MustCompile(`\s+\(([^()]*)\)$`)
+	textLanguage  = regexp.MustCompile(`(?i)\s+(Japanese|Korean)(?:\s+(?:ver\.?|version))?$`)
+	parenLanguage = regexp.MustCompile(`(?i)\s+\((Japanese|Korean)(?:\s+(?:ver\.?|version))?\)$`)
 )
 
 func Parse(value string) Parsed {
@@ -32,7 +43,7 @@ func Parse(value string) Parsed {
 		return result
 	}
 	result.Artist = strings.TrimSpace(artist)
-	result.Title, result.Variant = splitVariant(strings.TrimSpace(title))
+	result.Title, result.Variant, result.Language = splitSuffixes(strings.TrimSpace(title))
 	return result
 }
 
@@ -56,6 +67,43 @@ func digits(value string) bool {
 		}
 	}
 	return true
+}
+
+func splitSuffixes(title string) (string, string, Language) {
+	variant, language := "", Unmarked
+	for {
+		before := title
+		if language == Unmarked {
+			if trimmed, found := splitLanguage(title); found != Unmarked {
+				title, language = trimmed, found
+			}
+		}
+		if variant == "" {
+			if trimmed, found := splitVariant(title); found != "" {
+				title, variant = trimmed, found
+			}
+		}
+		if title == before {
+			return title, variant, language
+		}
+	}
+}
+
+func splitLanguage(title string) (string, Language) {
+	if match := textLanguage.FindStringSubmatch(title); match != nil {
+		return strings.TrimSpace(strings.TrimSuffix(title, match[0])), languageFrom(match[1])
+	}
+	if match := parenLanguage.FindStringSubmatch(title); match != nil {
+		return strings.TrimSpace(strings.TrimSuffix(title, match[0])), languageFrom(match[1])
+	}
+	return title, Unmarked
+}
+
+func languageFrom(value string) Language {
+	if strings.EqualFold(value, "Japanese") {
+		return Japanese
+	}
+	return Korean
 }
 
 func splitVariant(title string) (string, string) {

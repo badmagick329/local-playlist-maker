@@ -72,6 +72,13 @@ func TestScanSuggestionOrderAndFuzzyRules(t *testing.T) {
 			wantReason: "Exact match",
 		},
 		{
+			name:       "language suffix is removed before exact matching",
+			filename:   "260724 Artist - Song Japanese ver..mkv",
+			cache:      map[string]metadata.Entry{"song": {FilePath: "audio/song.flac", Artist: "Artist", Title: "Song"}},
+			wantAudio:  "audio\\song.flac",
+			wantReason: "Exact match",
+		},
+		{
 			name:     "mapped evidence takes priority",
 			filename: "260724 Billlie - Work.mkv",
 			cache: map[string]metadata.Entry{
