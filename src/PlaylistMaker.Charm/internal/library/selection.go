@@ -1,6 +1,7 @@
 package library
 
 import (
+	"sort"
 	"time"
 
 	"playlistmaker/charm/internal/videoname"
@@ -64,6 +65,16 @@ func SelectVariant(candidates []Variant, strategy SelectionStrategy) (Variant, b
 		}
 	}
 	return best, true
+}
+
+// RankVariants returns a stable, best-to-worst copy of candidates according to
+// the same comparison used by SelectVariant.
+func RankVariants(candidates []Variant, strategy SelectionStrategy) []Variant {
+	ranked := append([]Variant(nil), candidates...)
+	sort.SliceStable(ranked, func(i, j int) bool {
+		return better(ranked[i], ranked[j], strategy)
+	})
+	return ranked
 }
 
 func better(left, right Variant, strategy SelectionStrategy) bool {

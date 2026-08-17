@@ -144,7 +144,7 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 		queued = queued[:0]
 		for _, key := range order {
 			values := groups[key]
-			if options.SelectionStrategy == library.DefaultSelection {
+			if options.Shuffle {
 				random := s.Random
 				if random == nil {
 					random = rand.New(rand.NewSource(time.Now().UnixNano()))
@@ -154,6 +154,9 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 				queued = append(queued, selected)
 			}
 		}
+	}
+	if !options.Shuffle {
+		queued = library.RankVariants(queued, options.SelectionStrategy)
 	}
 	planned := make([]Item, 0, len(queued)*options.RepeatEach)
 	for _, variant := range queued {

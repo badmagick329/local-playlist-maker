@@ -2,6 +2,7 @@ package playback
 
 import (
 	"context"
+	"fmt"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -104,6 +105,195 @@ func TestOnePerTrackUsesLatestSelectionWithinQueuedCandidates(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].VideoPath != tracks[0].Variants[1].VideoPath {
 		t.Fatalf("latest selection = %#v, %v", items, err)
 	}
+}
+
+func TestPlanRanksLatestBeforeMaximum(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tracks := testVariantTracks(t, 5)
+	for index := range tracks[0].Variants {
+		tracks[0].Variants[index].ModifiedAt = base.Add(time.Duration(index) * time.Hour)
+	}
+	service := Service{Tracks: tracks}
+	items, err := service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{MaximumItems: 3, RepeatEach: 1, SelectionStrategy: library.LatestSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := itemIDs(items), []string{"variant-5", "variant-4", "variant-3"}; !sameStrings(got, want) {
+		t.Fatalf("latest ranking = %v, want %v", got, want)
+	}
+}
+
+func TestPlanRanksFreshBeforeMaximum(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tracks := testVariantTracks(t, 5)
+	for index := range tracks[0].Variants {
+		attempted := base.Add(time.Duration(index) * time.Hour)
+		tracks[0].Variants[index].History.LastAttemptedAtUTC = &attempted
+	}
+	service := Service{Tracks: tracks}
+	items, err := service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{MaximumItems: 3, RepeatEach: 1, SelectionStrategy: library.FreshSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := itemIDs(items), []string{"variant-1", "variant-2", "variant-3"}; !sameStrings(got, want) {
+		t.Fatalf("fresh ranking = %v, want %v", got, want)
+	}
+}
+
+func TestPlanRanksOtherStrategiesBeforeMaximum(t *testing.T) {
+	tests := []struct {
+		name     string
+		strategy library.SelectionStrategy
+		prepare  func([]library.Variant)
+		want     []string
+	}{
+		{
+			name:     "favourite",
+			strategy: library.FavouriteSelection,
+			prepare: func(values []library.Variant) {
+				values[0].History = library.History{PlayedCount: 1, CompletedCount: 1}
+				values[1].History = library.History{PlayedCount: 4, CompletedCount: 4}
+				values[2].History = library.History{PlayedCount: 1, SkippedCount: 1}
+				values[3].History = library.History{}
+				values[4].History = library.History{SkippedCount: 3}
+			},
+			want: []string{"variant-2", "variant-1", "variant-3"},
+		},
+		{
+			name:     "unseen",
+			strategy: library.UnseenSelection,
+			prepare: func(values []library.Variant) {
+				values[0].History = library.History{}
+				values[1].History = library.History{SkippedCount: 1}
+				values[2].History = library.History{StoppedCount: 1}
+				values[3].History = library.History{AbandonedCount: 1}
+				values[4].History = library.History{PlayedCount: 1}
+			},
+			want: []string{"variant-1", "variant-4", "variant-3"},
+		},
+		{
+			name:     "default",
+			strategy: library.DefaultSelection,
+			prepare: func(values []library.Variant) {
+				for index := range values {
+					values[index].Date = time.Date(2026, 1, 1+index, 0, 0, 0, 0, time.UTC)
+				}
+			},
+			want: []string{"variant-5", "variant-4", "variant-3"},
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			tracks := testVariantTracks(t, 5)
+			test.prepare(tracks[0].Variants)
+			service := Service{Tracks: tracks}
+			items, err := service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{MaximumItems: 3, RepeatEach: 1, SelectionStrategy: test.strategy})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := itemIDs(items); !sameStrings(got, test.want) {
+				t.Fatalf("%s ranking = %v, want %v", test.name, got, test.want)
+			}
+		})
+	}
+}
+
+func TestPlanShuffleCapsAfterShufflingInsteadOfRanking(t *testing.T) {
+	tracks := testVariantTracks(t, 5)
+	service := Service{Tracks: tracks, Random: rand.New(rand.NewSource(7))}
+	items, err := service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{Shuffle: true, MaximumItems: 3, RepeatEach: 1, SelectionStrategy: library.LatestSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := itemIDs(items), []string{"variant-3", "variant-2", "variant-4"}; !sameStrings(got, want) {
+		t.Fatalf("shuffled ranking = %v, want %v", got, want)
+	}
+}
+
+func TestOnePerTrackUsesStrategyWithoutShuffleAndRandomRepresentativeWithShuffle(t *testing.T) {
+	tracks := testVariantTracks(t, 5)
+	for index := range tracks[0].Variants {
+		tracks[0].Variants[index].AudioPath = tracks[0].Variants[0].AudioPath
+		tracks[0].Variants[index].ModifiedAt = time.Date(2026, 1, 1+index, 0, 0, 0, 0, time.UTC)
+	}
+	service := Service{Tracks: tracks, Random: rand.New(rand.NewSource(7))}
+	items, err := service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{OneVideoPerTrack: true, RepeatEach: 1, SelectionStrategy: library.LatestSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := itemIDs(items), []string{"variant-5"}; !sameStrings(got, want) {
+		t.Fatalf("deterministic representative = %v, want %v", got, want)
+	}
+	service.Random = rand.New(rand.NewSource(7))
+	items, err = service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{OneVideoPerTrack: true, Shuffle: true, MaximumItems: 1, RepeatEach: 1, SelectionStrategy: library.LatestSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := itemIDs(items), []string{"variant-2"}; !sameStrings(got, want) {
+		t.Fatalf("random representative = %v, want %v", got, want)
+	}
+}
+
+func TestPlanRepeatEachAndMaximumPreserveRankedOrdering(t *testing.T) {
+	tracks := testVariantTracks(t, 3)
+	for index := range tracks[0].Variants {
+		tracks[0].Variants[index].ModifiedAt = time.Date(2026, 1, 1+index, 0, 0, 0, 0, time.UTC)
+	}
+	service := Service{Tracks: tracks}
+	items, err := service.Plan(variantIDs(tracks[0]), backend.PlaybackOptions{MaximumItems: 4, RepeatEach: 2, SelectionStrategy: library.LatestSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := itemIDs(items), []string{"variant-3", "variant-3", "variant-2", "variant-2"}; !sameStrings(got, want) {
+		t.Fatalf("repeat and cap = %v, want %v", got, want)
+	}
+}
+
+func testVariantTracks(t *testing.T, count int) []library.Track {
+	t.Helper()
+	directory := t.TempDir()
+	values := make([]library.Variant, count)
+	for index := range values {
+		id := fmt.Sprintf("variant-%d", index+1)
+		video := filepath.Join(directory, id+".mkv")
+		audio := video + ".flac"
+		if err := os.WriteFile(video, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(audio, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		values[index] = library.Variant{ID: id, VideoPath: video, AudioPath: audio}
+	}
+	return []library.Track{{ID: "track", Variants: values}}
+}
+
+func variantIDs(track library.Track) []string {
+	ids := make([]string, len(track.Variants))
+	for index, variant := range track.Variants {
+		ids[index] = variant.ID
+	}
+	return ids
+}
+
+func itemIDs(items []Item) []string {
+	ids := make([]string, len(items))
+	for index, item := range items {
+		ids[index] = strings.TrimSuffix(filepath.Base(item.VideoPath), filepath.Ext(item.VideoPath))
+	}
+	return ids
+}
+
+func sameStrings(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for index := range left {
+		if left[index] != right[index] {
+			return false
+		}
+	}
+	return true
 }
 
 func testTracks(t *testing.T) []library.Track {

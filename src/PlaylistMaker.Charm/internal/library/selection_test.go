@@ -39,6 +39,15 @@ func TestSelectionNeverEscapesCandidateSetAndUsesStableTieBreak(t *testing.T) {
 	}
 }
 
+func TestRankVariantsPreservesQueueOrderForEqualCandidates(t *testing.T) {
+	first := Variant{ID: "same", VideoPath: "first.mkv", Category: Performance}
+	second := Variant{ID: "same", VideoPath: "second.mkv", Category: Performance}
+	ranked := RankVariants([]Variant{first, second}, DefaultSelection)
+	if len(ranked) != 2 || ranked[0].VideoPath != first.VideoPath || ranked[1].VideoPath != second.VideoPath {
+		t.Fatalf("stable ranking = %#v", ranked)
+	}
+}
+
 func TestDefaultSelectionPrefersOriginalLanguageBeforeRecency(t *testing.T) {
 	old := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	newer := old.AddDate(1, 0, 0)
