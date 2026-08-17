@@ -70,9 +70,21 @@ func SelectVariant(candidates []Variant, strategy SelectionStrategy) (Variant, b
 // RankVariants returns a stable, best-to-worst copy of candidates according to
 // the same comparison used by SelectVariant.
 func RankVariants(candidates []Variant, strategy SelectionStrategy) []Variant {
-	ranked := append([]Variant(nil), candidates...)
+	ranked := make([]Variant, len(candidates))
+	for rankedIndex, candidateIndex := range RankVariantIndexes(candidates, strategy) {
+		ranked[rankedIndex] = candidates[candidateIndex]
+	}
+	return ranked
+}
+
+// RankVariantIndexes returns candidate indexes in stable best-to-worst order.
+func RankVariantIndexes(candidates []Variant, strategy SelectionStrategy) []int {
+	ranked := make([]int, len(candidates))
+	for index := range ranked {
+		ranked[index] = index
+	}
 	sort.SliceStable(ranked, func(i, j int) bool {
-		return better(ranked[i], ranked[j], strategy)
+		return better(candidates[ranked[i]], candidates[ranked[j]], strategy)
 	})
 	return ranked
 }

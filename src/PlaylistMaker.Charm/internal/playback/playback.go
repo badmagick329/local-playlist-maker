@@ -155,13 +155,10 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 			}
 		}
 	}
-	if !options.Shuffle {
-		queued = library.RankVariants(queued, options.SelectionStrategy)
-	}
-	planned := make([]Item, 0, len(queued)*options.RepeatEach)
+	expanded := make([]library.Variant, 0, len(queued)*options.RepeatEach)
 	for _, variant := range queued {
 		for range options.RepeatEach {
-			planned = append(planned, Item{VideoPath: variant.VideoPath, AudioPath: variant.AudioPath, Artist: "", Title: ""})
+			expanded = append(expanded, variant)
 		}
 	}
 	if options.Shuffle {
@@ -169,10 +166,28 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 		if random == nil {
 			random = rand.New(rand.NewSource(time.Now().UnixNano()))
 		}
-		random.Shuffle(len(planned), func(i, j int) { planned[i], planned[j] = planned[j], planned[i] })
+		random.Shuffle(len(expanded), func(i, j int) { expanded[i], expanded[j] = expanded[j], expanded[i] })
 	}
-	if options.MaximumItems > 0 && len(planned) > options.MaximumItems {
-		planned = planned[:options.MaximumItems]
+	if options.MaximumItems > 0 && len(expanded) > options.MaximumItems {
+		if options.Shuffle {
+			expanded = expanded[:options.MaximumItems]
+		} else {
+			keep := make([]bool, len(expanded))
+			for _, index := range library.RankVariantIndexes(expanded, options.SelectionStrategy)[:options.MaximumItems] {
+				keep[index] = true
+			}
+			retained := make([]library.Variant, 0, options.MaximumItems)
+			for index, variant := range expanded {
+				if keep[index] {
+					retained = append(retained, variant)
+				}
+			}
+			expanded = retained
+		}
+	}
+	planned := make([]Item, len(expanded))
+	for index, variant := range expanded {
+		planned[index] = Item{VideoPath: variant.VideoPath, AudioPath: variant.AudioPath, Artist: "", Title: ""}
 	}
 	return planned, nil
 }
