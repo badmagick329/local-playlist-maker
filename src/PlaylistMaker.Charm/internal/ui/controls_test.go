@@ -118,12 +118,22 @@ func TestPlaybackOptionsCyclesVersionChoice(t *testing.T) {
 	for range 4 {
 		m = updateKey(t, m, "j")
 	}
-	m = updateKey(t, m, "space")
-	if m.draftOptions.SelectionStrategy != library.FavouriteSelection {
-		t.Fatalf("strategy = %s", m.draftOptions.SelectionStrategy)
+	for _, strategy := range []library.SelectionStrategy{library.FavouriteSelection, library.FreshSelection, library.UnseenSelection, library.LatestSelection, library.DefaultSelection} {
+		m = updateKey(t, m, "space")
+		if m.draftOptions.SelectionStrategy != strategy {
+			t.Fatalf("forward strategy = %s, want %s", m.draftOptions.SelectionStrategy, strategy)
+		}
+	}
+	m = updateKey(t, m, "left")
+	if m.draftOptions.SelectionStrategy != library.LatestSelection {
+		t.Fatalf("backward strategy = %s", m.draftOptions.SelectionStrategy)
+	}
+	m = updateKey(t, m, "right")
+	if m.draftOptions.SelectionStrategy != library.DefaultSelection {
+		t.Fatalf("forward right strategy = %s", m.draftOptions.SelectionStrategy)
 	}
 	m = updateKey(t, m, "enter")
-	if m.playbackOptions.SelectionStrategy != library.FavouriteSelection {
+	if m.playbackOptions.SelectionStrategy != library.DefaultSelection {
 		t.Fatal("strategy did not save")
 	}
 }

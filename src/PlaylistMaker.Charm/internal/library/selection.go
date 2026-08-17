@@ -13,7 +13,16 @@ const (
 	FavouriteSelection
 	FreshSelection
 	UnseenSelection
+	LatestSelection
 )
+
+var selectionStrategies = []SelectionStrategy{
+	DefaultSelection,
+	FavouriteSelection,
+	FreshSelection,
+	UnseenSelection,
+	LatestSelection,
+}
 
 func (s SelectionStrategy) String() string {
 	switch s {
@@ -23,12 +32,25 @@ func (s SelectionStrategy) String() string {
 		return "Fresh"
 	case UnseenSelection:
 		return "Unseen"
+	case LatestSelection:
+		return "Latest"
 	default:
 		return "Default"
 	}
 }
 func (s SelectionStrategy) Next(delta int) SelectionStrategy {
-	return SelectionStrategy((int(s) + delta + 4) % 4)
+	index := 0
+	for candidateIndex, candidate := range selectionStrategies {
+		if candidate == s {
+			index = candidateIndex
+			break
+		}
+	}
+	index = (index + delta) % len(selectionStrategies)
+	if index < 0 {
+		index += len(selectionStrategies)
+	}
+	return selectionStrategies[index]
 }
 
 func SelectVariant(candidates []Variant, strategy SelectionStrategy) (Variant, bool) {
@@ -68,9 +90,21 @@ func better(left, right Variant, strategy SelectionStrategy) bool {
 			return betterDefault(left, right)
 		}
 		return betterFresh(left, right)
+	case LatestSelection:
+		return betterLatest(left, right)
 	default:
 		return betterDefault(left, right)
 	}
+}
+
+func betterLatest(left, right Variant) bool {
+	if !left.ModifiedAt.Equal(right.ModifiedAt) {
+		return left.ModifiedAt.After(right.ModifiedAt)
+	}
+	if !left.Date.Equal(right.Date) {
+		return left.Date.After(right.Date)
+	}
+	return betterDefault(left, right)
 }
 
 func attempts(v Variant) int {

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/config"
@@ -83,6 +84,25 @@ func TestOnePerTrackUsesNonDefaultSelectionWithinQueuedCandidates(t *testing.T) 
 	items, err := service.Plan([]string{"one", "two"}, backend.PlaybackOptions{RepeatEach: 1, OneVideoPerTrack: true, SelectionStrategy: library.FavouriteSelection})
 	if err != nil || len(items) != 1 || items[0].VideoPath != tracks[0].Variants[1].VideoPath {
 		t.Fatalf("history selection = %#v, %v", items, err)
+	}
+}
+
+func TestOnePerTrackUsesLatestSelectionWithinQueuedCandidates(t *testing.T) {
+	tracks := testTracks(t)
+	tracks[0].Variants[1].AudioPath = tracks[0].Variants[0].AudioPath
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tracks[0].Variants[0].Category = library.MusicVideo
+	tracks[0].Variants[0].ModifiedAt = base
+	tracks[0].Variants[0].Date = base.AddDate(0, 0, 2)
+	tracks[0].Variants[0].History.CompletedCount = 20
+	tracks[0].Variants[1].Category = library.Performance
+	tracks[0].Variants[1].ModifiedAt = base.AddDate(0, 0, 1)
+	tracks[0].Variants[1].Date = base
+	tracks[0].Variants[1].History.SkippedCount = 20
+	service := Service{Tracks: tracks, Random: rand.New(rand.NewSource(1))}
+	items, err := service.Plan([]string{"one", "two"}, backend.PlaybackOptions{RepeatEach: 1, OneVideoPerTrack: true, SelectionStrategy: library.LatestSelection})
+	if err != nil || len(items) != 1 || items[0].VideoPath != tracks[0].Variants[1].VideoPath {
+		t.Fatalf("latest selection = %#v, %v", items, err)
 	}
 }
 

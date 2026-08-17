@@ -208,6 +208,40 @@ func TestExpansionAndPlaybackUseTheSameLanguageAwareDefault(t *testing.T) {
 	}
 }
 
+func TestExpansionDirectPlaybackAndBulkQueueUseLatestSelection(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	track := library.Track{ID: "track", Artist: "Artist", Title: "Song", Variants: []library.Variant{
+		{ID: "music-video", Filename: "Artist - Song.mkv", Category: library.MusicVideo, Date: base.AddDate(0, 0, 2), ModifiedAt: base},
+		{ID: "latest-performance", Filename: "Artist - Song (Live).mkv", Category: library.Performance, Date: base, ModifiedAt: base.AddDate(0, 0, 1), History: library.History{SkippedCount: 9}},
+	}, SearchTextByCategory: map[library.Category]string{}}
+	playback := &playbackStub{result: backend.PlaybackResult{Succeeded: true, PlannedVideoCount: 1}}
+	m := New([]library.Track{track}, playback)
+	m.enabled[library.Performance] = true
+	m.playbackOptions.SelectionStrategy = library.LatestSelection
+	m.refreshResults()
+	m = updateKey(t, m, "l")
+	if len(m.rows) < 2 {
+		t.Fatal("track did not expand")
+	}
+	firstChild := m.filtered[m.rows[1].trackIndex].Variants[m.rows[1].variantIndex]
+	if firstChild.ID != "latest-performance" {
+		t.Fatalf("expanded latest = %s", firstChild.ID)
+	}
+	m.cursor = 0
+	_, command := m.launchHighlighted()
+	if command == nil {
+		t.Fatal("latest highlighted playback did not start")
+	}
+	_ = command()
+	if len(playback.ids) != 1 || playback.ids[0] != firstChild.ID {
+		t.Fatalf("latest direct playback = %#v, want %s", playback.ids, firstChild.ID)
+	}
+	m.queueFilteredTracks()
+	if len(m.queueOrder) != 1 || m.queueOrder[0] != firstChild.ID {
+		t.Fatalf("latest bulk queue = %#v, want %s", m.queueOrder, firstChild.ID)
+	}
+}
+
 func TestParentRowsShowTheActiveEligibleDateSortValue(t *testing.T) {
 	track := library.Track{ID: "track", Artist: "Artist", Title: "Song", ReleaseDateLabel: "2024-01-01", Variants: []library.Variant{
 		{ID: "mv", Filename: "Artist - Song.mkv", Category: library.MusicVideo, Date: time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2026, 2, 24, 0, 0, 0, 0, time.UTC)},

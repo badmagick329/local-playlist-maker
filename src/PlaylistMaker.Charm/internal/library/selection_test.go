@@ -78,3 +78,44 @@ func TestQueryAwareDefaultSelectionUsesTheSameRanking(t *testing.T) {
 		t.Fatalf("query default = %s", got.ID)
 	}
 }
+
+func TestLatestSelectionUsesEligibleModificationTimeAndDefaultTieBreaks(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	variants := []Variant{
+		{ID: "old-mv", Category: MusicVideo, ModifiedAt: base, Date: base.AddDate(0, 0, 4), History: History{CompletedCount: 99}},
+		{ID: "latest-performance", Category: Performance, ModifiedAt: base.AddDate(0, 0, 2), Date: base, History: History{SkippedCount: 99}},
+	}
+	if got, _ := SelectVariant(variants, LatestSelection); got.ID != "latest-performance" {
+		t.Fatalf("latest modification = %s", got.ID)
+	}
+
+	tiedModified := base.AddDate(0, 0, 3)
+	if got, _ := SelectVariant([]Variant{
+		{ID: "older-video-date", Category: Performance, ModifiedAt: tiedModified, Date: base},
+		{ID: "newer-video-date", Category: Performance, ModifiedAt: tiedModified, Date: base.AddDate(0, 0, 1)},
+	}, LatestSelection); got.ID != "newer-video-date" {
+		t.Fatalf("video date tie break = %s", got.ID)
+	}
+	if got, _ := SelectVariant([]Variant{
+		{ID: "performance", Category: Performance, ModifiedAt: tiedModified, Date: base},
+		{ID: "music-video", Category: MusicVideo, ModifiedAt: tiedModified, Date: base},
+	}, LatestSelection); got.ID != "music-video" {
+		t.Fatalf("default fallback = %s", got.ID)
+	}
+}
+
+func TestLatestSelectionRespectsEligibleCandidates(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	track := Track{Variants: []Variant{
+		{ID: "music-video", Category: MusicVideo, ModifiedAt: base, Date: base},
+		{ID: "disabled-performance", Category: Performance, ModifiedAt: base.AddDate(0, 0, 3), Date: base},
+		{ID: "filtered-performance", Category: MusicShow, ModifiedAt: base.AddDate(0, 0, 2), Date: base.AddDate(0, 2, 0)},
+	}}
+	query := Query{
+		Enabled:   map[Category]bool{MusicVideo: true, Performance: false, MusicShow: true},
+		VideoDate: &DateRange{Start: base, End: base.AddDate(0, 0, 1)},
+	}
+	if got, ok := SelectVariant(EligibleVariants(track, query), LatestSelection); !ok || got.ID != "music-video" {
+		t.Fatalf("eligible latest = %#v, %t", got, ok)
+	}
+}
