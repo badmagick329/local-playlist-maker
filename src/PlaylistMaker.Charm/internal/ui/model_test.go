@@ -208,6 +208,31 @@ func TestExpansionAndPlaybackUseTheSameLanguageAwareDefault(t *testing.T) {
 	}
 }
 
+func TestParentRowsShowTheActiveEligibleDateSortValue(t *testing.T) {
+	track := library.Track{ID: "track", Artist: "Artist", Title: "Song", ReleaseDateLabel: "2024-01-01", Variants: []library.Variant{
+		{ID: "mv", Filename: "Artist - Song.mkv", Category: library.MusicVideo, Date: time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2026, 2, 24, 0, 0, 0, 0, time.UTC)},
+		{ID: "show", Filename: "Artist - Song (Live).mkv", Category: library.MusicShow, Date: time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)},
+	}, SearchTextByCategory: map[library.Category]string{}}
+	m := New([]library.Track{track})
+	m.enabled[library.MusicShow] = true
+	for _, test := range []struct {
+		sort library.Sort
+		want string
+	}{
+		{library.ModifiedNewest, "2026-08-15"},
+		{library.ModifiedOldest, "2026-08-15"},
+		{library.VideoNewest, "2026-07-24"},
+		{library.VideoOldest, "2026-07-24"},
+		{library.ReleaseNewest, "2024-01-01"},
+	} {
+		m.sort = test.sort
+		m.refreshResults()
+		if got := stripStyles(m.renderRow(m.rows[0], false, 120)); !strings.Contains(got, test.want) {
+			t.Fatalf("%s parent row = %q, want %s", test.sort, got, test.want)
+		}
+	}
+}
+
 func TestMappingUpdatePersistentIgnoreRestoreAndCursorSafety(t *testing.T) {
 	items := []updater.Item{{VideoPath: "one", Filename: "one.mkv"}, {VideoPath: "two", Filename: "two.mkv"}}
 	stub := &mappingUpdaterStub{items: items, ignored: []updater.Item{{VideoPath: "ignored", Filename: "ignored.mkv"}}, tracks: library.Generate(1, 2)}

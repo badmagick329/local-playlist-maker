@@ -270,8 +270,10 @@ func FilterAndSort(all []Track, query Query) []Track {
 	normalizedQuery := normalize(query.SearchText)
 	tokens := strings.Fields(normalizedQuery)
 	type scored struct {
-		track Track
-		score int
+		track    Track
+		score    int
+		modified time.Time
+		video    time.Time
 	}
 	matches := make([]scored, 0, len(all))
 
@@ -291,7 +293,8 @@ func FilterAndSort(all []Track, query Query) []Track {
 		if !ok {
 			continue
 		}
-		matches = append(matches, scored{track: track, score: score})
+		modified, video, _ := LatestEligibleDates(track, query)
+		matches = append(matches, scored{track: track, score: score, modified: modified, video: video})
 	}
 
 	sort.SliceStable(matches, func(i, j int) bool {
@@ -312,15 +315,15 @@ func FilterAndSort(all []Track, query Query) []Track {
 			if !left.track.ReleaseDate.Equal(right.track.ReleaseDate) {
 				return left.track.ReleaseDate.After(right.track.ReleaseDate) == (query.Sort == ReleaseNewest)
 			}
-		case VideoNewest, VideoOldest, ModifiedNewest, ModifiedOldest, Relevance:
-			leftDefault, _ := DefaultVariant(left.track, query)
-			rightDefault, _ := DefaultVariant(right.track, query)
-			leftValue, rightValue := leftDefault.ModifiedAt, rightDefault.ModifiedAt
-			newest := query.Sort != ModifiedOldest
-			if query.Sort == VideoNewest || query.Sort == VideoOldest {
-				leftValue, rightValue = leftDefault.Date, rightDefault.Date
-				newest = query.Sort == VideoNewest
+		case VideoNewest, VideoOldest:
+			leftValue, rightValue := left.video, right.video
+			newest := query.Sort == VideoNewest
+			if !leftValue.Equal(rightValue) {
+				return leftValue.After(rightValue) == newest
 			}
+		case ModifiedNewest, ModifiedOldest, Relevance:
+			leftValue, rightValue := left.modified, right.modified
+			newest := query.Sort != ModifiedOldest
 			if !leftValue.Equal(rightValue) {
 				return leftValue.After(rightValue) == newest
 			}
@@ -343,6 +346,25 @@ func EligibleVariants(track Track, query Query) []Variant {
 		}
 	}
 	return result
+}
+
+// LatestEligibleDates returns the latest modification and video dates used for
+// track sorting and parent-row dates.
+func LatestEligibleDates(track Track, query Query) (time.Time, time.Time, bool) {
+	eligible := EligibleVariants(track, query)
+	if len(eligible) == 0 {
+		return time.Time{}, time.Time{}, false
+	}
+	modified, video := eligible[0].ModifiedAt, eligible[0].Date
+	for _, variant := range eligible[1:] {
+		if variant.ModifiedAt.After(modified) {
+			modified = variant.ModifiedAt
+		}
+		if variant.Date.After(video) {
+			video = variant.Date
+		}
+	}
+	return modified, video, true
 }
 
 func DefaultVariant(track Track, query Query) (Variant, bool) {

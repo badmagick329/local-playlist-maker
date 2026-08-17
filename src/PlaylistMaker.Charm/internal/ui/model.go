@@ -1475,12 +1475,27 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 	}
 	left := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
 	eligibleCount := len(library.EligibleVariants(track, m.currentQuery()))
-	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", track.ReleaseDateLabel, eligibleCount))
+	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
 	line := joinAligned(left, right, width)
 	if selected {
 		return m.theme.selected.Width(width).Render(stripStyles(line))
 	}
 	return line
+}
+
+func (m Model) parentRowDate(track library.Track) string {
+	modified, video, ok := library.LatestEligibleDates(track, m.currentQuery())
+	if !ok {
+		return track.ReleaseDateLabel
+	}
+	switch m.sort {
+	case library.ModifiedNewest, library.ModifiedOldest:
+		return modified.Format("2006-01-02")
+	case library.VideoNewest, library.VideoOldest:
+		return video.Format("2006-01-02")
+	default:
+		return track.ReleaseDateLabel
+	}
 }
 
 func (m Model) renderFooter(width int) string {

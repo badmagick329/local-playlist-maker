@@ -123,6 +123,71 @@ func TestTrackReleaseAndVideoDateFiltersCombine(t *testing.T) {
 	}
 }
 
+func TestSortUsesLatestEligibleVariantDatesInsteadOfDefaultPlayback(t *testing.T) {
+	mvDate := time.Date(2025, 8, 11, 0, 0, 0, 0, time.UTC)
+	mvModified := time.Date(2026, 2, 24, 0, 0, 0, 0, time.UTC)
+	showDate := time.Date(2026, 7, 24, 0, 0, 0, 0, time.UTC)
+	showModified := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC)
+	track := Track{ID: "aggregate", Variants: []Variant{
+		{ID: "mv", Category: MusicVideo, Date: mvDate, ModifiedAt: mvModified},
+		{ID: "show", Category: MusicShow, Date: showDate, ModifiedAt: showModified},
+	}, SearchTextByCategory: map[Category]string{}}
+	other := Track{ID: "other", Variants: []Variant{{ID: "other-mv", Category: MusicVideo, Date: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)}}, SearchTextByCategory: map[Category]string{}}
+	query := Query{Enabled: map[Category]bool{MusicVideo: true, MusicShow: true}}
+	if got, _ := DefaultVariant(track, query); got.ID != "mv" {
+		t.Fatalf("default playback = %s", got.ID)
+	}
+	if got := FilterAndSort([]Track{other, track}, Query{Enabled: query.Enabled, Sort: ModifiedNewest}); got[0].ID != "aggregate" {
+		t.Fatalf("modified newest = %q", got[0].ID)
+	}
+	if got := FilterAndSort([]Track{other, track}, Query{Enabled: query.Enabled, Sort: VideoNewest}); got[0].ID != "aggregate" {
+		t.Fatalf("video newest = %q", got[0].ID)
+	}
+}
+
+func TestDateSortsRespectEligibilityDirectionsAndStableIDs(t *testing.T) {
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	newer := old.AddDate(1, 0, 0)
+	performance := Track{ID: "performance", Variants: []Variant{{ID: "mv", Category: MusicVideo, Date: old, ModifiedAt: old}, {ID: "performance", Category: Performance, Date: newer, ModifiedAt: newer}}, SearchTextByCategory: map[Category]string{}}
+	plain := Track{ID: "plain", Variants: []Variant{{ID: "plain-mv", Category: MusicVideo, Date: old.AddDate(0, 6, 0), ModifiedAt: old.AddDate(0, 6, 0)}}, SearchTextByCategory: map[Category]string{}}
+	both := map[Category]bool{MusicVideo: true, Performance: true}
+	mvOnly := map[Category]bool{MusicVideo: true}
+	if got := FilterAndSort([]Track{plain, performance}, Query{Enabled: both, Sort: ModifiedNewest}); got[0].ID != "performance" {
+		t.Fatalf("modified newest = %q", got[0].ID)
+	}
+	if got := FilterAndSort([]Track{plain, performance}, Query{Enabled: both, Sort: ModifiedOldest}); got[0].ID != "plain" {
+		t.Fatalf("modified oldest = %q", got[0].ID)
+	}
+	if got := FilterAndSort([]Track{plain, performance}, Query{Enabled: both, Sort: VideoNewest}); got[0].ID != "performance" {
+		t.Fatalf("video newest = %q", got[0].ID)
+	}
+	if got := FilterAndSort([]Track{plain, performance}, Query{Enabled: both, Sort: VideoOldest}); got[0].ID != "plain" {
+		t.Fatalf("video oldest = %q", got[0].ID)
+	}
+	if got := FilterAndSort([]Track{plain, performance}, Query{Enabled: mvOnly, Sort: ModifiedNewest}); got[0].ID != "plain" {
+		t.Fatalf("disabled performance affected sort = %q", got[0].ID)
+	}
+	filter, _ := ParseDateRange("2025")
+	if got := FilterAndSort([]Track{plain, performance}, Query{Enabled: both, VideoDate: filter, Sort: VideoNewest}); got[0].ID != "plain" {
+		t.Fatalf("filtered performance affected sort = %q", got[0].ID)
+	}
+	ties := []Track{{ID: "z", Variants: []Variant{{ID: "z", Category: MusicVideo, Date: old, ModifiedAt: old}}, SearchTextByCategory: map[Category]string{}}, {ID: "a", Variants: []Variant{{ID: "a", Category: MusicVideo, Date: old, ModifiedAt: old}}, SearchTextByCategory: map[Category]string{}}}
+	if got := FilterAndSort(ties, Query{Enabled: mvOnly, Sort: ModifiedNewest}); got[0].ID != "a" {
+		t.Fatalf("stable id tie = %q", got[0].ID)
+	}
+}
+
+func TestSearchRelevanceRemainsPrimaryOverEligibleDateSort(t *testing.T) {
+	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	tracks := []Track{
+		{ID: "relevant", Variants: []Variant{{ID: "relevant-mv", Category: MusicVideo, Date: old, ModifiedAt: old}}, BaseSearchText: "delulu", SearchTextByCategory: map[Category]string{}},
+		{ID: "newer", Variants: []Variant{{ID: "newer-mv", Category: MusicVideo, Date: old.AddDate(1, 0, 0), ModifiedAt: old.AddDate(1, 0, 0)}}, BaseSearchText: "distant elephant lunar umbrella", SearchTextByCategory: map[Category]string{}},
+	}
+	if got := FilterAndSort(tracks, Query{SearchText: "delu", Enabled: map[Category]bool{MusicVideo: true}, Sort: ModifiedNewest}); got[0].ID != "relevant" {
+		t.Fatalf("search relevance lost priority = %q", got[0].ID)
+	}
+}
+
 func BenchmarkFilterAndSortParityScale(b *testing.B) {
 	tracks := Generate(1337, 6420)
 	enabled := map[Category]bool{}
