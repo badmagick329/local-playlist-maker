@@ -492,6 +492,8 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.queueCurrentTrack()
 	case "A":
 		m.queueFilteredTracks()
+	case "ctrl+a":
+		m.queueAllFilteredVariants()
 	case "/":
 		m.mode = modeSearch
 		m.status = "Search mode: type freely; Enter or Esc returns to navigation"
@@ -1089,6 +1091,27 @@ func (m *Model) queueFilteredTracks() {
 	} else {
 		m.status = fmt.Sprintf("Queued %d tracks", added)
 	}
+}
+
+func (m *Model) queueAllFilteredVariants() {
+	if len(m.filtered) == 0 {
+		m.status = "No matching tracks"
+		return
+	}
+
+	added, skipped := 0, 0
+	for _, track := range m.filtered {
+		for _, variant := range library.EligibleVariants(track, m.currentQuery()) {
+			if m.queuedID(variant.ID) != "" {
+				skipped++
+				continue
+			}
+			m.queued[variant.ID] = variant
+			m.queueOrder = append(m.queueOrder, variant.ID)
+			added++
+		}
+	}
+	m.status = fmt.Sprintf("Queued %d videos from all filtered tracks; %d already queued", added, skipped)
 }
 
 func (m Model) handleSearchKey(key tea.KeyPressMsg) Model {

@@ -262,6 +262,56 @@ func TestPlanShuffleCapsAfterShufflingInsteadOfRanking(t *testing.T) {
 	}
 }
 
+func TestPlanShuffleMaximumUsesEveryBulkQueuedVariant(t *testing.T) {
+	tracks, queue := bulkQueuedTracks(12, 2)
+	service := Service{Tracks: tracks, Random: rand.New(rand.NewSource(31))}
+	items, err := service.Plan(queue, backend.PlaybackOptions{Shuffle: true, MaximumItems: 10, RepeatEach: 1, SelectionStrategy: library.LatestSelection})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 10 {
+		t.Fatalf("planned item count = %d, want 10", len(items))
+	}
+	allowed := make(map[string]bool, len(queue))
+	for _, id := range queue {
+		allowed[id] = true
+	}
+	for _, id := range itemIDs(items) {
+		if !allowed[id] {
+			t.Fatalf("shuffle selected %q outside complete queue", id)
+		}
+	}
+}
+
+func TestPlanShuffleMaximumOnePerTrackUsesRandomTracksAndRepresentatives(t *testing.T) {
+	tracks, queue := bulkQueuedTracks(12, 2)
+	service := Service{Tracks: tracks, Random: rand.New(rand.NewSource(31))}
+	items, err := service.Plan(queue, backend.PlaybackOptions{Shuffle: true, OneVideoPerTrack: true, MaximumItems: 10, RepeatEach: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != 10 {
+		t.Fatalf("planned item count = %d, want 10", len(items))
+	}
+	byID := make(map[string]library.Variant, len(queue))
+	for _, track := range tracks {
+		for _, variant := range track.Variants {
+			byID[variant.ID] = variant
+		}
+	}
+	seenTracks := map[string]bool{}
+	for _, id := range itemIDs(items) {
+		variant, ok := byID[id]
+		if !ok {
+			t.Fatalf("shuffle selected %q outside complete queue", id)
+		}
+		if seenTracks[variant.AudioPath] {
+			t.Fatalf("shuffle selected more than one variant for %q", variant.AudioPath)
+		}
+		seenTracks[variant.AudioPath] = true
+	}
+}
+
 func TestOnePerTrackUsesStrategyAndPreservesFirstTrackOrder(t *testing.T) {
 	tracks := testVariantTracks(t, 5)
 	groupA, groupB, groupC := "group-a.flac", "group-b.flac", "group-c.flac"
@@ -341,6 +391,25 @@ func testVariantTracks(t *testing.T, count int) []library.Track {
 		values[index] = library.Variant{ID: id, VideoPath: video, AudioPath: audio}
 	}
 	return []library.Track{{ID: "track", Variants: values}}
+}
+
+func bulkQueuedTracks(trackCount, variantsPerTrack int) ([]library.Track, []string) {
+	tracks := make([]library.Track, trackCount)
+	queue := make([]string, 0, trackCount*variantsPerTrack)
+	for trackIndex := range tracks {
+		variants := make([]library.Variant, variantsPerTrack)
+		for variantIndex := range variants {
+			id := fmt.Sprintf("bulk-%02d-%02d", trackIndex, variantIndex)
+			variants[variantIndex] = library.Variant{
+				ID:        id,
+				VideoPath: id + ".mkv",
+				AudioPath: fmt.Sprintf("bulk-%02d.flac", trackIndex),
+			}
+			queue = append(queue, id)
+		}
+		tracks[trackIndex] = library.Track{ID: fmt.Sprintf("track-%02d", trackIndex), Variants: variants}
+	}
+	return tracks, queue
 }
 
 func variantIDs(track library.Track) []string {

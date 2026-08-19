@@ -3,8 +3,10 @@ package ui
 import (
 	"errors"
 	"math"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -314,6 +316,86 @@ func TestQueueShortcutsToggleAdvanceBulkAndClear(t *testing.T) {
 	m = updateKey(t, m, "C")
 	if m.mode != modeQueue || len(m.queueOrder) != 0 || len(m.queued) != 0 || m.overlayCursor != 0 || m.status != "Queue cleared" {
 		t.Fatalf("C clear = %#v", m)
+	}
+}
+
+func TestCtrlAQueuesAllEligibleFilteredVariants(t *testing.T) {
+	base := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	tracks := []library.Track{
+		{ID: "first", Artist: "Alpha", Title: "Match", BaseSearchText: "alpha match", ReleaseDate: base, Variants: []library.Variant{
+			{ID: "first-video", Category: library.MusicVideo, Date: base.AddDate(0, 0, 1)},
+			{ID: "first-live", Category: library.BandLive, Date: base.AddDate(0, 0, 2)},
+			{ID: "first-old", Category: library.MusicVideo, Date: base.AddDate(-1, 0, 0)},
+		}},
+		{ID: "second", Artist: "Beta", Title: "Match", BaseSearchText: "beta match", ReleaseDate: base.AddDate(0, 1, 0), Variants: []library.Variant{
+			{ID: "second-video", Category: library.MusicVideo, Date: base.AddDate(0, 0, 3)},
+			{ID: "second-live", Category: library.BandLive, Date: base.AddDate(0, 0, 4)},
+		}},
+		{ID: "third", Artist: "Gamma", Title: "Other", BaseSearchText: "gamma other", ReleaseDate: base.AddDate(-1, 0, 0), Variants: []library.Variant{
+			{ID: "third-video", Category: library.MusicVideo, Date: base.AddDate(0, 0, 5)},
+		}},
+	}
+
+	t.Run("queues every eligible variant in filtered and variant order", func(t *testing.T) {
+		m := New(tracks)
+		m.enabled[library.BandLive] = true
+		m.sort = library.TitleAscending
+		m.refreshResults()
+		m = updateKey(t, m, "ctrl+a")
+		want := []string{"first-video", "first-live", "first-old", "second-video", "second-live", "third-video"}
+		if !slices.Equal(m.queueOrder, want) || !strings.Contains(m.status, "Queued 6 videos") || !strings.Contains(m.status, "0 already queued") {
+			t.Fatalf("Ctrl+A queue = %#v, status %q", m.queueOrder, m.status)
+		}
+	})
+
+	t.Run("search category video date and track release filters limit variants", func(t *testing.T) {
+		m := New(tracks)
+		m.enabled[library.BandLive] = true
+		m.query = "match"
+		m.trackDate, _ = library.ParseDateRange("2026")
+		m.videoDate, _ = library.ParseDateRange("2026-01-02..2026-01-04")
+		m.refreshResults()
+		m = updateKey(t, m, "ctrl+a")
+		want := []string{"second-video", "first-video", "first-live"}
+		if !slices.Equal(m.queueOrder, want) {
+			t.Fatalf("filtered Ctrl+A queue = %#v, want %#v", m.queueOrder, want)
+		}
+	})
+
+	t.Run("skips queued variants and handles empty filtered results", func(t *testing.T) {
+		m := New(tracks)
+		m.enabled[library.BandLive] = true
+		m.queued["second-live"] = tracks[1].Variants[1]
+		m.queueOrder = []string{"second-live"}
+		m = updateKey(t, m, "ctrl+a")
+		want := []string{"second-live", "first-video", "first-live", "first-old", "second-video", "third-video"}
+		if !slices.Equal(m.queueOrder, want) || !strings.Contains(m.status, "1 already queued") {
+			t.Fatalf("initial Ctrl+A queue = %#v, status %q", m.queueOrder, m.status)
+		}
+		m = updateKey(t, m, "ctrl+a")
+		if !slices.Equal(m.queueOrder, want) || !strings.Contains(m.status, "Queued 0 videos") || !strings.Contains(m.status, "6 already queued") {
+			t.Fatalf("repeated Ctrl+A queue = %#v, status %q", m.queueOrder, m.status)
+		}
+		m.query = "no results"
+		m.refreshResults()
+		m = updateKey(t, m, "ctrl+a")
+		if !slices.Equal(m.queueOrder, want) || m.status != "No matching tracks" {
+			t.Fatalf("empty Ctrl+A queue = %#v, status %q", m.queueOrder, m.status)
+		}
+	})
+}
+
+func TestCtrlAOnlyActsInNavigationMode(t *testing.T) {
+	for _, current := range []mode{modeSearch, modeCategories, modeQueue} {
+		t.Run(current.String(), func(t *testing.T) {
+			m := New(library.Generate(2, 4))
+			m.mode = current
+			next, _ := m.Update(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+			m = next.(Model)
+			if len(m.queueOrder) != 0 {
+				t.Fatalf("Ctrl+A queued variants in %s", current)
+			}
+		})
 	}
 }
 

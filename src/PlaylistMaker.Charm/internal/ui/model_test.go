@@ -675,6 +675,8 @@ func updateKey(t *testing.T, m Model, key string) Model {
 		message = tea.KeyPressMsg{Code: 'd', Mod: tea.ModCtrl}
 	case "ctrl+u":
 		message = tea.KeyPressMsg{Code: 'u', Mod: tea.ModCtrl}
+	case "ctrl+a":
+		message = tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl}
 	default:
 		message = tea.KeyPressMsg{Code: rune(key[0]), Text: key}
 	}
