@@ -3,6 +3,7 @@ package spotifylink
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -81,13 +82,78 @@ func TestConfirmAndIgnorePersistLinkDecisions(t *testing.T) {
 	}
 }
 
+func TestSearchRetriesOneShortRateLimit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		if requests == 1 {
+			writer.Header().Set("Retry-After", "1")
+			writer.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"tracks": map[string]any{"items": []any{}}})
+	}))
+	defer server.Close()
+	auth := linkingAuth(t, server)
+	waits := 0
+	service := Service{Auth: auth, Client: &spotify.Client{Auth: auth, HTTP: server.Client(), APIBase: server.URL}, Wait: func(_ context.Context, delay time.Duration) error {
+		waits++
+		if delay != time.Second {
+			t.Fatalf("wait delay = %s", delay)
+		}
+		return nil
+	}}
+	if _, err := service.Search(context.Background(), "query"); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 || waits != 1 {
+		t.Fatalf("requests = %d, waits = %d", requests, waits)
+	}
+}
+
+func TestSearchDoesNotRetryInvalidOrExcessiveRateLimit(t *testing.T) {
+	for _, retryAfter := range []string{"invalid", "31"} {
+		t.Run(retryAfter, func(t *testing.T) {
+			requests, waits := 0, 0
+			server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+				requests++
+				writer.Header().Set("Retry-After", retryAfter)
+				writer.WriteHeader(http.StatusTooManyRequests)
+			}))
+			defer server.Close()
+			auth := linkingAuth(t, server)
+			service := Service{Auth: auth, Client: &spotify.Client{Auth: auth, HTTP: server.Client(), APIBase: server.URL}, Wait: func(context.Context, time.Duration) error { waits++; return nil }}
+			if _, err := service.Search(context.Background(), "query"); err == nil {
+				t.Fatal("rate limit was accepted")
+			}
+			if requests != 1 || waits != 0 {
+				t.Fatalf("requests = %d, waits = %d", requests, waits)
+			}
+		})
+	}
+}
+
+func TestRateLimitWaitRespectsContextCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	requests := 0
+	_, err := retryRateLimit(ctx, nil, func() (int, error) {
+		requests++
+		return 0, &spotify.RateLimitError{RetryAfter: time.Second, Valid: true, Value: "1"}
+	})
+	if !errors.Is(err, context.Canceled) || requests != 1 {
+		t.Fatalf("retry error = %v, requests = %d", err, requests)
+	}
+}
+
 func TestScanCheckpointsBeforeAPIErrorAndRescanSkipsSavedTracks(t *testing.T) {
 	requests := 0
 	fail := true
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests++
-		if fail && requests == 26 {
-			writer.WriteHeader(http.StatusInternalServerError)
+		if fail && requests >= 26 && requests <= 27 {
+			writer.Header().Set("Retry-After", "1")
+			writer.WriteHeader(http.StatusTooManyRequests)
 			return
 		}
 		query, _ := url.QueryUnescape(request.URL.Query().Get("q"))
@@ -110,7 +176,7 @@ func TestScanCheckpointsBeforeAPIErrorAndRescanSkipsSavedTracks(t *testing.T) {
 		t.Fatal(err)
 	}
 	auth := &spotify.Auth{ClientID: "client", TokenPath: tokenPath, HTTP: server.Client()}
-	service := Service{CatalogPath: catalogPath, CachePath: filepath.Join(root, "cache.json"), Auth: auth, Client: &spotify.Client{Auth: auth, HTTP: server.Client(), APIBase: server.URL}}
+	service := Service{CatalogPath: catalogPath, CachePath: filepath.Join(root, "cache.json"), Auth: auth, Client: &spotify.Client{Auth: auth, HTTP: server.Client(), APIBase: server.URL}, Wait: func(context.Context, time.Duration) error { return nil }}
 	if _, err := service.Scan(context.Background()); err == nil {
 		t.Fatal("scan API failure was ignored")
 	}
@@ -131,7 +197,17 @@ func TestScanCheckpointsBeforeAPIErrorAndRescanSkipsSavedTracks(t *testing.T) {
 	if _, err := service.Scan(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 27 {
-		t.Fatalf("rescan requests = %d, want 27", requests)
+	if requests != 28 {
+		t.Fatalf("rescan requests = %d, want 28", requests)
 	}
+}
+
+func linkingAuth(t *testing.T, server *httptest.Server) *spotify.Auth {
+	t.Helper()
+	tokenPath := filepath.Join(t.TempDir(), "spotify-auth.json")
+	token, _ := json.Marshal(spotify.Token{AccessToken: "token", RefreshToken: "refresh", ExpiresAtUTC: time.Now().Add(time.Hour)})
+	if err := os.WriteFile(tokenPath, token, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return &spotify.Auth{ClientID: "client", TokenPath: tokenPath, HTTP: server.Client()}
 }

@@ -27,22 +27,83 @@ func TestRuntimePrefersSpotifyAndDisablesItAfterFailure(t *testing.T) {
 		t.Fatal(err)
 	}
 	spotify.Err = errors.New("network")
-	runtime.Load(context.Background(), 0, entries[0].Track)
-	runtime.Load(context.Background(), 1, entries[1].Track)
+	if err := runtime.Load(context.Background(), 0, entries[0].Track); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Load(context.Background(), 1, entries[1].Track); err != nil {
+		t.Fatal(err)
+	}
 	if len(spotify.Started) != 1 || len(local.Started) != 2 {
 		t.Fatalf("Spotify starts = %d, local fallbacks = %d", len(spotify.Started), len(local.Started))
 	}
 	contents, _ := os.ReadFile(runtime.DiagnosticsPath)
-	if !strings.Contains(string(contents), "spotify unavailable") || !strings.Contains(string(contents), "foobar") {
+	if !strings.Contains(string(contents), "Spotify: network") || !strings.Contains(string(contents), "foobar") {
 		t.Fatalf("diagnostics = %s", contents)
 	}
 }
 
 func TestPrepareRejectsSpotifyOnlyTrackWhenPreflightFails(t *testing.T) {
-	runtime := &Runtime{Spotify: &fakeSpotify{preflight: errors.New("missing device")}, Local: &tracking.Fake{}}
+	preflightErr := errors.New("missing device")
+	runtime := &Runtime{Spotify: &fakeSpotify{preflight: preflightErr}, Local: &tracking.Fake{}}
 	err := runtime.Prepare(context.Background(), "device", []Entry{{Track: tracking.Track{TrackID: "one", Artist: "Artist", Title: "Title", SpotifyURI: "spotify:track:one"}}})
-	if err == nil || !strings.Contains(err.Error(), "no tracking route") {
+	if !errors.Is(err, preflightErr) {
 		t.Fatalf("preflight error = %v", err)
+	}
+}
+
+func TestRuntimeRejectsProviderFailureWhenUntrackedIsDisabled(t *testing.T) {
+	spotify := &fakeSpotify{Fake: tracking.Fake{Err: errors.New("Spotify failed")}}
+	local := &tracking.Fake{Err: errors.New("foobar failed")}
+	runtime := &Runtime{Spotify: spotify, Local: local, DiagnosticsPath: filepath.Join(t.TempDir(), "diagnostics.jsonl")}
+	track := tracking.Track{TrackID: "one", Artist: "Artist", Title: "Title", SpotifyURI: "spotify:track:one", LocalAudioPath: "one.flac"}
+	if err := runtime.Prepare(context.Background(), "device", []Entry{{Track: track}}); err != nil {
+		t.Fatal(err)
+	}
+	err := runtime.Load(context.Background(), 0, track)
+	if err == nil || !strings.Contains(err.Error(), "Spotify failed") || !strings.Contains(err.Error(), "foobar failed") {
+		t.Fatalf("load error = %v", err)
+	}
+	if runtime.active != nil {
+		t.Fatal("disallowed fallback selected an active provider")
+	}
+	contents, _ := os.ReadFile(runtime.DiagnosticsPath)
+	if !strings.Contains(string(contents), "untracked playback is disabled") {
+		t.Fatalf("diagnostics = %s", contents)
+	}
+}
+
+func TestRuntimeUsesNoopOnlyWhenUntrackedIsEnabled(t *testing.T) {
+	spotify := &fakeSpotify{Fake: tracking.Fake{Err: errors.New("Spotify failed")}}
+	local := &tracking.Fake{Err: errors.New("foobar failed")}
+	runtime := &Runtime{Spotify: spotify, Local: local, AllowUntracked: true}
+	track := tracking.Track{TrackID: "one", SpotifyURI: "spotify:track:one", LocalAudioPath: "one.flac"}
+	if err := runtime.Prepare(context.Background(), "device", []Entry{{Track: track}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Load(context.Background(), 0, track); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.activeProvider != "untracked" {
+		t.Fatalf("active provider = %q", runtime.activeProvider)
+	}
+}
+
+func TestLocalFallbackUsesSpotifyPreflightError(t *testing.T) {
+	local := &tracking.Fake{}
+	runtime := &Runtime{Spotify: &fakeSpotify{preflight: errors.New("configured device missing")}, Local: local, DiagnosticsPath: filepath.Join(t.TempDir(), "diagnostics.jsonl")}
+	track := tracking.Track{TrackID: "one", SpotifyURI: "spotify:track:one", LocalAudioPath: "one.flac"}
+	if err := runtime.Prepare(context.Background(), "device", []Entry{{Track: track}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Load(context.Background(), 0, track); err != nil {
+		t.Fatal(err)
+	}
+	if len(local.Started) != 1 {
+		t.Fatalf("local starts = %d", len(local.Started))
+	}
+	contents, _ := os.ReadFile(runtime.DiagnosticsPath)
+	if !strings.Contains(string(contents), "configured device missing") {
+		t.Fatalf("diagnostics = %s", contents)
 	}
 }
 

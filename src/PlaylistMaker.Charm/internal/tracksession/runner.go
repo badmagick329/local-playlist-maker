@@ -18,6 +18,7 @@ type Runner struct {
 	IsAlive    func(int) bool
 	Poll       time.Duration
 	DeviceName string
+	Terminate  func(int) error
 }
 
 func (r Runner) Run(ctx context.Context, manifestPath string) error {
@@ -82,6 +83,12 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 				manifest = latest
 				mpvSeen = mpvSeen || manifest.MPVProcessID != 0
 			}
+			if manifest.MPVProcessID == 0 {
+				if time.Since(manifest.CreatedAtUTC) > 30*time.Second {
+					return fmt.Errorf("mpv did not attach to the tracking session")
+				}
+				continue
+			}
 			events, next, readErr := readEvents(manifest.EventPath, offset)
 			if readErr != nil {
 				return readErr
@@ -101,7 +108,12 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 					}
 					if event.PlaylistPosition != activePosition && event.PlaylistPosition >= 0 && event.PlaylistPosition < len(manifest.Entries) {
 						entry := manifest.Entries[event.PlaylistPosition]
-						r.Runtime.Load(ctx, event.PlaylistPosition, entry.Track)
+						if err := r.Runtime.Load(ctx, event.PlaylistPosition, entry.Track); err != nil {
+							if terminateErr := r.terminate(manifest.MPVProcessID); terminateErr != nil {
+								return fmt.Errorf("%w; terminate mpv: %v", err, terminateErr)
+							}
+							return err
+						}
 						activePosition = event.PlaylistPosition
 					}
 				case "end-file":
@@ -175,6 +187,13 @@ func (r Runner) alive(pid int) bool {
 		return r.IsAlive(pid)
 	}
 	return processAlive(pid)
+}
+
+func (r Runner) terminate(pid int) error {
+	if r.Terminate != nil {
+		return r.Terminate(pid)
+	}
+	return terminateProcess(pid)
 }
 
 func readEvents(path string, offset int) ([]Event, int, error) {

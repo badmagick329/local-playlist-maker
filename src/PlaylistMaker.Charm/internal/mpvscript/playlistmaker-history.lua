@@ -143,7 +143,6 @@ mp.register_event("file-loaded", function()
     emit_session_event("file-loaded", position, nil)
     write_history("started", entry, {durationSeconds = duration, rawDurationSeconds = raw, demuxerStartSeconds = start})
 end)
-
 mp.add_periodic_timer(0.25, function()
     if not active then return end
     local now = mp.get_time()
@@ -170,4 +169,3 @@ mp.register_event("shutdown", function()
         end
     end
 end)
-

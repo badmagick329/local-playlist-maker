@@ -17,7 +17,19 @@ type Client struct {
 	Auth    *Auth
 	HTTP    *http.Client
 	APIBase string
-	Sleep   func(context.Context, time.Duration) error
+}
+
+type RateLimitError struct {
+	RetryAfter time.Duration
+	Valid      bool
+	Value      string
+}
+
+func (e *RateLimitError) Error() string {
+	if !e.Valid {
+		return fmt.Sprintf("Spotify API rate limited request with invalid Retry-After %q", e.Value)
+	}
+	return fmt.Sprintf("Spotify API rate limited request; retry after %s", e.RetryAfter)
 }
 
 type Device struct {
@@ -105,7 +117,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 	if err != nil {
 		return err
 	}
-	refreshed, rateRetried := false, false
+	refreshed := false
 	for {
 		var encoded []byte
 		if body != nil {
@@ -140,18 +152,9 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 			continue
 		}
 		if response.StatusCode == http.StatusTooManyRequests {
-			delay, retryErr := retryAfter(response.Header.Get("Retry-After"), time.Now())
-			if retryErr != nil || rateRetried || delay > 30*time.Second {
-				if retryErr != nil {
-					return fmt.Errorf("Spotify API rate limited request: %w", retryErr)
-				}
-				return fmt.Errorf("Spotify API rate limited request; retry after %s", delay)
-			}
-			if err := c.sleep(ctx, delay); err != nil {
-				return err
-			}
-			rateRetried = true
-			continue
+			value := response.Header.Get("Retry-After")
+			delay, valid := retryAfter(value, time.Now())
+			return &RateLimitError{RetryAfter: delay, Valid: valid, Value: value}
 		}
 		if response.StatusCode/100 != 2 {
 			return fmt.Errorf("Spotify API returned %s", response.Status)
@@ -165,33 +168,19 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 	}
 }
 
-func retryAfter(value string, now time.Time) (time.Duration, error) {
+func retryAfter(value string, now time.Time) (time.Duration, bool) {
 	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
-		return time.Duration(seconds) * time.Second, nil
+		return time.Duration(seconds) * time.Second, true
 	}
 	when, err := http.ParseTime(value)
 	if err != nil {
-		return 0, fmt.Errorf("invalid Retry-After value %q", value)
+		return 0, false
 	}
 	delay := when.Sub(now)
 	if delay < 0 {
 		delay = 0
 	}
-	return delay, nil
-}
-
-func (c *Client) sleep(ctx context.Context, delay time.Duration) error {
-	if c.Sleep != nil {
-		return c.Sleep(ctx, delay)
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return delay, true
 }
 
 func trackID(value string) (string, error) {

@@ -3,6 +3,7 @@ package spotify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"net/http"
@@ -125,44 +126,23 @@ func TestPlayerRequiresUniqueDeviceAndRestoresVolume(t *testing.T) {
 	}
 }
 
-func TestSearchClampsLimitAndRetriesShortRateLimitOnce(t *testing.T) {
+func TestPlaybackRateLimitReturnsImmediatelyWithoutRetry(t *testing.T) {
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		requests++
-		if request.URL.Query().Get("limit") != "10" {
-			t.Errorf("search limit = %q", request.URL.Query().Get("limit"))
-		}
-		if requests == 1 {
-			writer.Header().Set("Retry-After", "1")
-			writer.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		_ = json.NewEncoder(writer).Encode(map[string]any{"tracks": map[string]any{"items": []any{}}})
-	}))
-	defer server.Close()
-	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL, Sleep: func(_ context.Context, delay time.Duration) error {
-		if delay != time.Second {
-			t.Fatalf("retry delay = %s", delay)
-		}
-		return nil
-	}}
-	if _, err := client.Search(context.Background(), "query", 20); err != nil {
-		t.Fatal(err)
-	}
-	if requests != 2 {
-		t.Fatalf("requests = %d", requests)
-	}
-}
-
-func TestSearchRejectsLongRateLimit(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Retry-After", "31")
+		requests++
+		writer.Header().Set("Retry-After", "30")
 		writer.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer server.Close()
 	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
-	if _, err := client.Search(context.Background(), "query", 10); err == nil || !strings.Contains(err.Error(), "rate limited") {
-		t.Fatalf("rate limit error = %v", err)
+	started := time.Now()
+	err := client.Play(context.Background(), "device", "spotify:track:one")
+	var rateLimit *RateLimitError
+	if !errors.As(err, &rateLimit) || rateLimit.RetryAfter != 30*time.Second {
+		t.Fatalf("play error = %v", err)
+	}
+	if requests != 1 || time.Since(started) > 500*time.Millisecond {
+		t.Fatalf("play requests = %d, duration = %s", requests, time.Since(started))
 	}
 }
 

@@ -2,9 +2,11 @@ package spotifylink
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"playlistmaker/charm/internal/catalog"
 	"playlistmaker/charm/internal/metadata"
@@ -42,6 +44,7 @@ type Service struct {
 	CachePath   string
 	Auth        *spotify.Auth
 	Client      *spotify.Client
+	Wait        func(context.Context, time.Duration) error
 }
 
 func (s Service) Scan(ctx context.Context) (ScanResult, error) {
@@ -85,7 +88,9 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		cached := cache[pathid.ComparisonKey(track.LocalAudioPath)]
 		item := Item{TrackID: track.ID, Artist: track.Artist, Title: track.Title, Album: cached.Album, ReleaseDate: track.ReleaseDate}
 		if cached.ISRC != "" {
-			matches, err := s.Client.Search(ctx, "isrc:"+cached.ISRC, 10)
+			matches, err := retryRateLimit(ctx, s.Wait, func() ([]spotify.Track, error) {
+				return s.Client.Search(ctx, "isrc:"+cached.ISRC, 10)
+			})
 			if err != nil {
 				return fail(err)
 			}
@@ -107,7 +112,9 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 				continue
 			}
 		}
-		matches, err := s.Client.Search(ctx, fmt.Sprintf("artist:%q track:%q", track.Artist, track.Title), 10)
+		matches, err := retryRateLimit(ctx, s.Wait, func() ([]spotify.Track, error) {
+			return s.Client.Search(ctx, fmt.Sprintf("artist:%q track:%q", track.Artist, track.Title), 10)
+		})
 		if err != nil {
 			return fail(err)
 		}
@@ -140,7 +147,9 @@ func (s Service) Search(ctx context.Context, query string) ([]Candidate, error) 
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
-	tracks, err := s.Client.Search(ctx, query, 10)
+	tracks, err := retryRateLimit(ctx, s.Wait, func() ([]spotify.Track, error) {
+		return s.Client.Search(ctx, query, 10)
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -148,7 +157,9 @@ func (s Service) Search(ctx context.Context, query string) ([]Candidate, error) 
 }
 
 func (s Service) Validate(ctx context.Context, value string) (Candidate, error) {
-	track, err := s.Client.Track(ctx, value)
+	track, err := retryRateLimit(ctx, s.Wait, func() (spotify.Track, error) {
+		return s.Client.Track(ctx, value)
+	})
 	if err != nil {
 		return Candidate{}, err
 	}
@@ -267,3 +278,30 @@ var libraryFuzzy = func(left, right string) (int, bool) {
 }
 
 func normalize(value string) string { return videoname.Normalize(value) }
+
+func retryRateLimit[T any](ctx context.Context, wait func(context.Context, time.Duration) error, operation func() (T, error)) (T, error) {
+	value, err := operation()
+	var rateLimit *spotify.RateLimitError
+	if err == nil || !errors.As(err, &rateLimit) || !rateLimit.Valid || rateLimit.RetryAfter > 30*time.Second {
+		return value, err
+	}
+	if wait == nil {
+		wait = waitContext
+	}
+	if err := wait(ctx, rateLimit.RetryAfter); err != nil {
+		var zero T
+		return zero, err
+	}
+	return operation()
+}
+
+func waitContext(ctx context.Context, delay time.Duration) error {
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
