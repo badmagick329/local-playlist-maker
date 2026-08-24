@@ -1,7 +1,7 @@
 ## Coding
 
 - Do not consider backward compatibility. Ignore legacy code/libraries
-- Prefer simplicity over complexity
+- Do not introduce guarding, excessive testing, except where input cannot be trusted. For example, user input or another software's input
  
 ## Response Discipline
 
