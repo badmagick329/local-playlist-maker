@@ -1,179 +1,151 @@
--- playlistmaker-history-version: 3
+-- playlistmaker-history-version: 4
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
 
 local config = {
-    session_id = "",
     manifest_path = "",
+    event_path = "",
     history_path = "",
     minimum_watched_percent = 50,
 }
 
 options.read_options(config, "playlistmaker_history")
-
-if config.session_id == "" or config.manifest_path == "" or config.history_path == "" then
+if config.manifest_path == "" or config.event_path == "" then
     return
 end
 
 local manifest_file = io.open(config.manifest_path, "r")
 if not manifest_file then
-    mp.msg.error("PlaylistMaker history: cannot read session manifest")
+    mp.msg.error("PlaylistMaker: cannot read playback manifest")
     return
 end
-
-local manifest_text = manifest_file:read("*a")
+local manifest = utils.parse_json(manifest_file:read("*a"))
 manifest_file:close()
-manifest_text = manifest_text:gsub("^\239\187\191", "")
-local manifest = utils.parse_json(manifest_text)
-if not manifest or manifest.sessionId ~= config.session_id or not manifest.entries then
-    mp.msg.error("PlaylistMaker history: invalid session manifest")
+if not manifest or not manifest.sessionId or not manifest.entries then
+    mp.msg.error("PlaylistMaker: invalid playback manifest")
     return
 end
 
 local active = nil
 local terminal_entries = {}
+local event_sequence = 0
 
 local function utc_now()
     return os.date("!%Y-%m-%dT%H:%M:%SZ")
 end
 
-local function write_event(event_name, entry, fields)
-    local event = {
-        schemaVersion = 2,
-        event = event_name,
-        eventAtUtc = utc_now(),
-        sessionId = config.session_id,
-        entryId = entry.entryId,
-        playlistPosition = entry.playlistPosition,
-        playlistSize = entry.playlistSize,
-        selectionSource = entry.selectionSource,
-        videoPath = entry.videoPath,
-        audioPath = entry.audioPath,
-        artist = entry.artist,
-        title = entry.title,
-    }
-
-    for key, value in pairs(fields or {}) do
-        event[key] = value
-    end
-
-    local history_file, error_message = io.open(config.history_path, "a")
-    if not history_file then
-        mp.msg.error("PlaylistMaker history: cannot write event: " .. (error_message or "unknown error"))
+local function append_json(path, value)
+    local file, message = io.open(path, "a")
+    if not file then
+        mp.msg.error("PlaylistMaker: cannot write event: " .. (message or "unknown error"))
         return
     end
-
-    history_file:write(utils.format_json(event) .. "\n")
-    history_file:close()
+    file:write(utils.format_json(value) .. "\n")
+    file:close()
 end
 
-local function watched_percent(watched_seconds, duration_seconds)
-    if not duration_seconds or duration_seconds <= 0 then
-        return 0
+local function emit_session_event(name, position, reason)
+    event_sequence = event_sequence + 1
+    append_json(config.event_path, {
+        eventId = manifest.sessionId .. ":" .. tostring(event_sequence),
+        event = name,
+        eventAtUtc = utc_now(),
+        playlistPosition = position,
+        endReason = reason,
+    })
+end
+
+local function write_history(name, entry, fields)
+    if config.history_path == "" then
+        return
     end
-    return math.max(0, math.min(100, watched_seconds / duration_seconds * 100))
+    local track = entry.track or {}
+    local value = {
+        schemaVersion = 3,
+        event = name,
+        eventAtUtc = utc_now(),
+        sessionId = manifest.sessionId,
+        entryId = entry.entryId,
+        playlistPosition = entry.playlistPosition,
+        playlistSize = #manifest.entries,
+        selectionSource = "charm-tui",
+        trackId = track.trackId,
+        videoPath = entry.videoPath,
+        audioPath = track.localAudioPath,
+        artist = track.artist,
+        title = track.title,
+    }
+    for key, item in pairs(fields or {}) do
+        value[key] = item
+    end
+    append_json(config.history_path, value)
 end
 
 local function playback_duration()
-    local raw_duration_seconds = mp.get_property_number("duration", nil)
-    local demuxer_start_seconds = mp.get_property_number("demuxer-start-time", nil)
-    local duration_seconds = raw_duration_seconds
-
-    -- With rebased playback, some containers retain a positive source timestamp
-    -- in duration even though playback begins at zero. Remove that non-playable
-    -- prefix so active wall-clock time is compared with the real playable span.
-    if duration_seconds
-        and demuxer_start_seconds
-        and demuxer_start_seconds > 0
-        and duration_seconds > demuxer_start_seconds then
-        duration_seconds = duration_seconds - demuxer_start_seconds
+    local raw = mp.get_property_number("duration", nil)
+    local start = mp.get_property_number("demuxer-start-time", nil)
+    local duration = raw
+    if duration and start and start > 0 and duration > start then
+        duration = duration - start
     end
-
-    return duration_seconds, raw_duration_seconds, demuxer_start_seconds
+    return duration, raw, start
 end
 
 local function finish_active(reason)
     if not active or terminal_entries[active.entry.entryId] then
         return
     end
-
     local now = mp.get_time()
     if not mp.get_property_native("pause") then
         active.watched_seconds = active.watched_seconds + math.max(0, now - active.last_tick)
     end
-
-    local duration_seconds, raw_duration_seconds, demuxer_start_seconds = playback_duration()
-    duration_seconds = duration_seconds or active.duration_seconds
-    raw_duration_seconds = raw_duration_seconds or active.raw_duration_seconds
-    demuxer_start_seconds = demuxer_start_seconds or active.demuxer_start_seconds
-    local final_position_seconds = mp.get_property_number("time-pos", nil)
-    local normalized_watched_seconds = active.watched_seconds
-    if duration_seconds and duration_seconds > 0 then
-        normalized_watched_seconds = math.max(0, math.min(duration_seconds, normalized_watched_seconds))
+    local duration, raw, start = playback_duration()
+    duration = duration or active.duration
+    raw = raw or active.raw
+    start = start or active.start
+    local watched = active.watched_seconds
+    if duration and duration > 0 then
+        watched = math.max(0, math.min(duration, watched))
     end
-    local percent = watched_percent(normalized_watched_seconds, duration_seconds)
-    if reason == "eof" then
-        percent = 100
+    local percent = 0
+    if duration and duration > 0 then
+        percent = math.max(0, math.min(100, watched / duration * 100))
     end
-    local event_name
-    local counted_as_played
-
+    if reason == "eof" then percent = 100 end
+    local name, counted = "skipped", false
     if reason == "eof" or percent >= 90 then
-        event_name = "completed"
-        counted_as_played = true
+        name, counted = "completed", true
     elseif percent >= tonumber(config.minimum_watched_percent) then
-        event_name = "stopped"
-        counted_as_played = true
-    else
-        event_name = "skipped"
-        counted_as_played = false
+        name, counted = "stopped", true
     end
-
-    write_event(event_name, active.entry, {
-        durationSeconds = duration_seconds,
-        rawDurationSeconds = raw_duration_seconds,
-        demuxerStartSeconds = demuxer_start_seconds,
-        watchedSeconds = normalized_watched_seconds,
+    write_history(name, active.entry, {
+        durationSeconds = duration,
+        rawDurationSeconds = raw,
+        demuxerStartSeconds = start,
+        watchedSeconds = watched,
         watchedPercent = percent,
-        finalPositionSeconds = final_position_seconds,
+        finalPositionSeconds = mp.get_property_number("time-pos", nil),
         endReason = reason,
-        countedAsPlayed = counted_as_played,
+        countedAsPlayed = counted,
     })
     terminal_entries[active.entry.entryId] = true
     active = nil
 end
 
 mp.register_event("file-loaded", function()
-    local playlist_position = mp.get_property_number("playlist-pos", -1)
-    local entry = manifest.entries[playlist_position + 1]
-    if not entry then
-        return
-    end
-
+    local position = mp.get_property_number("playlist-pos", -1)
+    local entry = manifest.entries[position + 1]
+    if not entry then return end
     terminal_entries[entry.entryId] = nil
-
-    local duration_seconds, raw_duration_seconds, demuxer_start_seconds = playback_duration()
-    active = {
-        entry = entry,
-        watched_seconds = 0,
-        last_tick = mp.get_time(),
-        duration_seconds = duration_seconds,
-        raw_duration_seconds = raw_duration_seconds,
-        demuxer_start_seconds = demuxer_start_seconds,
-    }
-    write_event("started", entry, {
-        durationSeconds = active.duration_seconds,
-        rawDurationSeconds = active.raw_duration_seconds,
-        demuxerStartSeconds = active.demuxer_start_seconds,
-    })
+    local duration, raw, start = playback_duration()
+    active = {entry = entry, watched_seconds = 0, last_tick = mp.get_time(), duration = duration, raw = raw, start = start}
+    emit_session_event("file-loaded", position, nil)
+    write_history("started", entry, {durationSeconds = duration, rawDurationSeconds = raw, demuxerStartSeconds = start})
 end)
 
 mp.add_periodic_timer(0.25, function()
-    if not active then
-        return
-    end
-
+    if not active then return end
     local now = mp.get_time()
     if not mp.get_property_native("pause") then
         active.watched_seconds = active.watched_seconds + math.max(0, now - active.last_tick)
@@ -182,17 +154,18 @@ mp.add_periodic_timer(0.25, function()
 end)
 
 mp.register_event("end-file", function(event)
-    finish_active(event.reason or "unknown")
+    local position = active and active.entry.playlistPosition or mp.get_property_number("playlist-pos", -1)
+    local reason = event.reason or "unknown"
+    finish_active(reason)
+    emit_session_event("end-file", position, reason)
 end)
 
 mp.register_event("shutdown", function()
     finish_active("quit")
+    emit_session_event("shutdown", -1, "quit")
     for _, entry in ipairs(manifest.entries) do
         if not terminal_entries[entry.entryId] then
-            write_event("not_started", entry, {
-                endReason = "mpv-shutdown-before-file-loaded",
-                countedAsPlayed = false,
-            })
+            write_history("not_started", entry, {endReason = "mpv-shutdown-before-file-loaded", countedAsPlayed = false})
             terminal_entries[entry.entryId] = true
         end
     end
