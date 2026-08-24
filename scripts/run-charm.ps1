@@ -1,6 +1,7 @@
 [CmdletBinding(PositionalBinding = $false)]
 param(
     [switch]$DisableHistory,
+	[switch]$AllowUntrackedPlayback,
 
     [ValidateSet('go', 'bridge', 'go-library', 'compare')]
     [string]$Backend = 'go',
@@ -83,6 +84,9 @@ try {
     if ($DisableHistory) {
         $arguments += '--disable-history'
     }
+	if ($AllowUntrackedPlayback) {
+		$arguments += '--allow-untracked-playback'
+	}
     $arguments += $ApplicationArguments
     & $executable $arguments
     if ($LASTEXITCODE -ne 0) {

@@ -297,3 +297,13 @@ __pycache__/
 *.m3u8
 data/*
 notes/
+**/media-catalog.json
+**/spotify-auth.json
+**/spotify-active-session.json
+**/active-tracking-session.json
+**/tracking-sessions/
+**/tracking-diagnostics.jsonl
+**/play-history.jsonl
+**/flac-cache.json
+**/flac_cache.json
+*.m3u
