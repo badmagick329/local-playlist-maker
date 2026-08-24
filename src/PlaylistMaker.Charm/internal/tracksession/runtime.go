@@ -15,38 +15,38 @@ type SpotifyPlayer interface {
 }
 
 type Runtime struct {
-	Spotify          SpotifyPlayer
-	Local            tracking.Player
-	AllowUntracked   bool
-	DiagnosticsPath  string
-	spotifyAvailable bool
-	spotifyPreflight error
-	active           tracking.Player
-	activeProvider   string
+	Spotify            SpotifyPlayer
+	Local              tracking.Player
+	AllowUntracked     bool
+	DiagnosticsPath    string
+	spotifyAvailable   bool
+	spotifyUnavailable error
+	active             tracking.Player
+	activeProvider     string
 }
 
 func (r *Runtime) Prepare(ctx context.Context, deviceName string, entries []Entry) error {
 	r.spotifyAvailable = false
-	r.spotifyPreflight = nil
+	r.spotifyUnavailable = nil
 	needsSpotify := false
 	for _, entry := range entries {
 		needsSpotify = needsSpotify || entry.Track.SpotifyURI != ""
 	}
 	if needsSpotify {
 		if r.Spotify == nil {
-			r.spotifyPreflight = fmt.Errorf("Spotify tracking is not configured")
+			r.spotifyUnavailable = fmt.Errorf("Spotify tracking is not configured")
 		} else if err := r.Spotify.Preflight(ctx, deviceName); err == nil {
 			r.spotifyAvailable = true
 		} else {
-			r.spotifyPreflight = err
+			r.spotifyUnavailable = err
 		}
 	}
 	for _, entry := range entries {
 		if entry.Track.SpotifyURI != "" && r.spotifyAvailable || entry.Track.LocalAudioPath != "" && r.Local != nil || r.AllowUntracked {
 			continue
 		}
-		if entry.Track.SpotifyURI != "" && r.spotifyPreflight != nil {
-			return fmt.Errorf("%s - %s Spotify preflight failed: %w", entry.Track.Artist, entry.Track.Title, r.spotifyPreflight)
+		if entry.Track.SpotifyURI != "" && r.spotifyUnavailable != nil {
+			return fmt.Errorf("%s - %s Spotify preflight failed: %w", entry.Track.Artist, entry.Track.Title, r.spotifyUnavailable)
 		}
 		return fmt.Errorf("%s - %s has no tracking route after Spotify preflight", entry.Track.Artist, entry.Track.Title)
 	}
@@ -63,12 +63,13 @@ func (r *Runtime) Load(ctx context.Context, position int, track tracking.Track) 
 			return nil
 		} else {
 			r.spotifyAvailable = false
+			r.spotifyUnavailable = err
 			r.diagnose(position, track.TrackID, "spotify", "", err.Error())
 			failures = append(failures, "Spotify: "+err.Error())
 		}
-	} else if track.SpotifyURI != "" && r.spotifyPreflight != nil {
-		r.diagnose(position, track.TrackID, "spotify", "", r.spotifyPreflight.Error())
-		failures = append(failures, "Spotify: "+r.spotifyPreflight.Error())
+	} else if track.SpotifyURI != "" && r.spotifyUnavailable != nil {
+		r.diagnose(position, track.TrackID, "spotify", "", r.spotifyUnavailable.Error())
+		failures = append(failures, "Spotify: "+r.spotifyUnavailable.Error())
 	}
 	if track.LocalAudioPath != "" && r.Local != nil {
 		if err := r.Local.Start(ctx, track); err == nil {

@@ -2,6 +2,7 @@ package tracksession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -39,6 +40,59 @@ func TestRuntimePrefersSpotifyAndDisablesItAfterFailure(t *testing.T) {
 	contents, _ := os.ReadFile(runtime.DiagnosticsPath)
 	if !strings.Contains(string(contents), "Spotify: network") || !strings.Contains(string(contents), "foobar") {
 		t.Fatalf("diagnostics = %s", contents)
+	}
+	later := diagnosticAt(t, runtime.DiagnosticsPath, 1, "foobar")
+	if !strings.Contains(later.FallbackReason, "network") {
+		t.Fatalf("later foobar diagnostic = %#v", later)
+	}
+}
+
+func TestLaterSpotifyOnlyTrackReturnsOriginalRuntimeFailure(t *testing.T) {
+	spotify := &fakeSpotify{Fake: tracking.Fake{Err: errors.New("first Spotify start failed")}}
+	local := &tracking.Fake{}
+	runtime := &Runtime{Spotify: spotify, Local: local, DiagnosticsPath: filepath.Join(t.TempDir(), "diagnostics.jsonl")}
+	first := tracking.Track{TrackID: "one", SpotifyURI: "spotify:track:one", LocalAudioPath: "one.flac"}
+	later := tracking.Track{TrackID: "two", Artist: "Artist", Title: "Two", SpotifyURI: "spotify:track:two"}
+	if err := runtime.Prepare(context.Background(), "device", []Entry{{Track: first}, {Track: later}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Load(context.Background(), 0, first); err != nil {
+		t.Fatal(err)
+	}
+	err := runtime.Load(context.Background(), 1, later)
+	if err == nil || !strings.Contains(err.Error(), "first Spotify start failed") {
+		t.Fatalf("later load error = %v", err)
+	}
+	if len(spotify.Started) != 1 {
+		t.Fatalf("Spotify starts = %d", len(spotify.Started))
+	}
+	final := diagnosticAt(t, runtime.DiagnosticsPath, 1, "untracked")
+	if !strings.Contains(final.FallbackReason, "first Spotify start failed") {
+		t.Fatalf("later diagnostic = %#v", final)
+	}
+}
+
+func TestLaterSpotifyOnlyTrackUsesNoopWithOriginalRuntimeFailure(t *testing.T) {
+	spotify := &fakeSpotify{Fake: tracking.Fake{Err: errors.New("first Spotify start failed")}}
+	local := &tracking.Fake{}
+	runtime := &Runtime{Spotify: spotify, Local: local, AllowUntracked: true, DiagnosticsPath: filepath.Join(t.TempDir(), "diagnostics.jsonl")}
+	first := tracking.Track{TrackID: "one", SpotifyURI: "spotify:track:one", LocalAudioPath: "one.flac"}
+	later := tracking.Track{TrackID: "two", SpotifyURI: "spotify:track:two"}
+	if err := runtime.Prepare(context.Background(), "device", []Entry{{Track: first}, {Track: later}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Load(context.Background(), 0, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Load(context.Background(), 1, later); err != nil {
+		t.Fatal(err)
+	}
+	if runtime.activeProvider != "untracked" || len(spotify.Started) != 1 {
+		t.Fatalf("provider = %q, Spotify starts = %d", runtime.activeProvider, len(spotify.Started))
+	}
+	final := diagnosticAt(t, runtime.DiagnosticsPath, 1, "untracked")
+	if !strings.Contains(final.FallbackReason, "first Spotify start failed") {
+		t.Fatalf("later diagnostic = %#v", final)
 	}
 }
 
@@ -123,4 +177,20 @@ func TestReadEventsReturnsCompleteLinesOnce(t *testing.T) {
 	if err != nil || len(events) != 1 || events[0].EventID != "two" {
 		t.Fatalf("resumed events = %#v, %v", events, err)
 	}
+}
+
+func diagnosticAt(t *testing.T, path string, position int, provider string) Diagnostic {
+	t.Helper()
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(string(contents)), "\n") {
+		var diagnostic Diagnostic
+		if json.Unmarshal([]byte(line), &diagnostic) == nil && diagnostic.PlaylistPosition == position && diagnostic.Provider == provider {
+			return diagnostic
+		}
+	}
+	t.Fatalf("diagnostic position %d provider %q not found in %s", position, provider, contents)
+	return Diagnostic{}
 }
