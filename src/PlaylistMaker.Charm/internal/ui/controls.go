@@ -5,7 +5,6 @@ import (
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
-	"playlistmaker/charm/internal/pathid"
 )
 
 func validateOptions(options backend.PlaybackOptions) backend.PlaybackOptions {
@@ -24,7 +23,7 @@ func plannedCount(queue []string, variants map[string]library.Variant, options b
 			continue
 		}
 		if options.OneVideoPerTrack {
-			identity := pathid.ComparisonKey(item.AudioPath)
+			identity := item.TrackID
 			if seen[identity] {
 				continue
 			}

@@ -16,7 +16,7 @@ import (
 type Config struct {
 	ConfigPath                           string
 	DataDirectory                        string   `yaml:"dataDirectory"`
-	MappingFile                          string   `yaml:"mappingFile"`
+	MediaCatalogFile                     string   `yaml:"mediaCatalogFile"`
 	VideoDirectories                     []string `yaml:"videoDirectories"`
 	IgnoredVideoDirectories              []string `yaml:"ignoredVideoDirectories"`
 	AudioDirectories                     []string `yaml:"audioDirectories"`
@@ -24,10 +24,12 @@ type Config struct {
 	PlaylistTemplate                     string   `yaml:"playlistTemplate"`
 	VideoPlaylistCommand                 []string `yaml:"videoPlaylistCommand"`
 	VideoPlaylistSuffix                  string   `yaml:"videoPlaylistSuffix"`
-	AudioPlaylistCommand                 []string `yaml:"audioPlaylistCommand"`
-	AudioPlaylistSuffix                  string   `yaml:"audioPlaylistSuffix"`
 	VideoSingleFileCommand               []string `yaml:"videoSingleFileCommand"`
-	AudioSingleFileCommand               []string `yaml:"audioSingleFileCommand"`
+	LocalTrackingStartCommand            []string `yaml:"localTrackingStartCommand"`
+	LocalTrackingStopCommand             []string `yaml:"localTrackingStopCommand"`
+	SpotifyClientID                      string   `yaml:"spotifyClientId"`
+	SpotifyDeviceName                    string   `yaml:"spotifyDeviceName"`
+	SpotifyRedirectURI                   string   `yaml:"spotifyRedirectUri"`
 	PlaylistTxtFilePath                  string   `yaml:"playlistTxtFilePath"`
 	PlaybackHistoryEnabled               bool     `yaml:"playbackHistoryEnabled"`
 	PlaybackHistoryMinimumWatchedPercent int      `yaml:"playbackHistoryMinimumWatchedPercent"`
@@ -60,10 +62,10 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 	}
 	c.DataDirectory = pathid.Resolve(configDirectory, c.DataDirectory)
 
-	if err := required("mappingFile", c.MappingFile); err != nil {
+	if err := required("mediaCatalogFile", c.MediaCatalogFile); err != nil {
 		return err
 	}
-	c.MappingFile = pathid.Resolve(configDirectory, c.MappingFile)
+	c.MediaCatalogFile = pathid.Resolve(configDirectory, c.MediaCatalogFile)
 	if len(c.VideoDirectories) == 0 {
 		return fmt.Errorf("videoDirectories must contain at least one directory")
 	}
@@ -113,9 +115,9 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 		value []string
 	}{
 		{"videoPlaylistCommand", c.VideoPlaylistCommand},
-		{"audioPlaylistCommand", c.AudioPlaylistCommand},
 		{"videoSingleFileCommand", c.VideoSingleFileCommand},
-		{"audioSingleFileCommand", c.AudioSingleFileCommand},
+		{"localTrackingStartCommand", c.LocalTrackingStartCommand},
+		{"localTrackingStopCommand", c.LocalTrackingStopCommand},
 	} {
 		if len(command.value) == 0 || strings.TrimSpace(command.value[0]) == "" {
 			return fmt.Errorf("%s must contain a program", command.name)
@@ -124,8 +126,16 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 	if err := required("videoPlaylistSuffix", c.VideoPlaylistSuffix); err != nil {
 		return err
 	}
-	if err := required("audioPlaylistSuffix", c.AudioPlaylistSuffix); err != nil {
-		return err
+	if c.SpotifyClientID != "" || c.SpotifyDeviceName != "" || c.SpotifyRedirectURI != "" {
+		if err := required("spotifyClientId", c.SpotifyClientID); err != nil {
+			return err
+		}
+		if err := required("spotifyDeviceName", c.SpotifyDeviceName); err != nil {
+			return err
+		}
+		if err := required("spotifyRedirectUri", c.SpotifyRedirectURI); err != nil {
+			return err
+		}
 	}
 	if c.PlaybackHistoryMinimumWatchedPercent < 0 || c.PlaybackHistoryMinimumWatchedPercent > 100 {
 		return fmt.Errorf("playbackHistoryMinimumWatchedPercent must be between 0 and 100")

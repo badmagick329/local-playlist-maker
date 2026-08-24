@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"playlistmaker/charm/internal/catalog"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/metadata"
@@ -172,6 +173,46 @@ func copyFixture(t *testing.T) string {
 		if err := os.Chtimes(path, modified, modified); err != nil {
 			t.Fatal(err)
 		}
+	}
+	mappingContents, err := os.ReadFile(filepath.Join(destination, "data", "video-audio-map.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mappings map[string]string
+	if err := json.Unmarshal(mappingContents, &mappings); err != nil {
+		t.Fatal(err)
+	}
+	media := catalog.New()
+	trackIDs := map[string]string{}
+	for _, audio := range mappings {
+		if _, ok := trackIDs[strings.ToLower(audio)]; ok {
+			continue
+		}
+		id := "trk_" + strings.Repeat("0", 23) + string(rune('1'+len(trackIDs)))
+		trackIDs[strings.ToLower(audio)] = id
+		artist, title, date := "AURORA", "Northern Lights", "2024-01-15"
+		if strings.Contains(audio, "Pop.flac") {
+			artist, title, date = "나연", "Pop!", "2024-05"
+		}
+		media.Tracks = append(media.Tracks, catalog.Track{ID: id, Artist: artist, Title: title, ReleaseDate: date, LocalAudioPath: audio})
+	}
+	for video, audio := range mappings {
+		media.Videos = append(media.Videos, catalog.Video{Path: video, TrackID: trackIDs[strings.ToLower(audio)]})
+	}
+	if err := catalog.Write(filepath.Join(destination, "data", "media-catalog.json"), media); err != nil {
+		t.Fatal(err)
+	}
+	fixture := filepath.Join(destination, "fixture.yml")
+	fixtureContents, err := os.ReadFile(fixture)
+	if err != nil {
+		t.Fatal(err)
+	}
+	updated := strings.Replace(string(fixtureContents), "mappingFile: data/video-audio-map.json", "mediaCatalogFile: data/media-catalog.json", 1)
+	updated = strings.Replace(updated, "audioPlaylistCommand: [\"foobar2000.exe\", \"{playlistPath}\"]", "localTrackingStartCommand: [\"foobar2000.exe\", \"{audioPath}\"]", 1)
+	updated = strings.Replace(updated, "audioPlaylistSuffix: \"_audios.m3u8\"", "localTrackingStopCommand: [\"foobar2000.exe\", \"/stop\"]", 1)
+	updated = strings.Replace(updated, "audioSingleFileCommand: [\"foobar2000.exe\"]", "", 1)
+	if err := os.WriteFile(fixture, []byte(updated), 0o600); err != nil {
+		t.Fatal(err)
 	}
 	return destination
 }

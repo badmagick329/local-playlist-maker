@@ -25,6 +25,7 @@ type Event struct {
 	PlaylistPosition int       `json:"playlistPosition"`
 	PlaylistSize     int       `json:"playlistSize"`
 	SelectionSource  string    `json:"selectionSource"`
+	TrackID          string    `json:"trackId"`
 	VideoPath        string    `json:"videoPath"`
 	AudioPath        string    `json:"audioPath"`
 	Artist           string    `json:"artist"`
@@ -89,7 +90,7 @@ func Read(path string) (Index, error) {
 	for _, event := range terminal {
 		normalized = append(normalized, Normalize(event))
 	}
-	result.Tracks = summarize(normalized, func(item Normalized) string { return item.Event.AudioPath })
+	result.Tracks = summarize(normalized, func(item Normalized) string { return item.Event.TrackID })
 	result.Videos = summarize(normalized, func(item Normalized) string { return item.Event.VideoPath })
 	return result, nil
 }
@@ -173,6 +174,7 @@ type SessionEntry struct {
 	PlaylistPosition int    `json:"playlistPosition"`
 	PlaylistSize     int    `json:"playlistSize"`
 	SelectionSource  string `json:"selectionSource"`
+	TrackID          string `json:"trackId"`
 	VideoPath        string `json:"videoPath"`
 	AudioPath        string `json:"audioPath"`
 	Artist           string `json:"artist"`
@@ -253,7 +255,7 @@ func (s Service) Recover() error {
 				outcome = "abandoned"
 			}
 			counted := false
-			if err := s.Append(Event{SchemaVersion: 2, Event: outcome, EventAtUTC: time.Now().UTC(), SessionID: session.SessionID, EntryID: entry.EntryID, PlaylistPosition: entry.PlaylistPosition, PlaylistSize: entry.PlaylistSize, SelectionSource: entry.SelectionSource, VideoPath: entry.VideoPath, AudioPath: entry.AudioPath, Artist: entry.Artist, Title: entry.Title, EndReason: "mpv-process-exited-without-terminal-event", CountedAsPlayed: &counted}); err != nil {
+			if err := s.Append(Event{SchemaVersion: 2, Event: outcome, EventAtUTC: time.Now().UTC(), SessionID: session.SessionID, EntryID: entry.EntryID, PlaylistPosition: entry.PlaylistPosition, PlaylistSize: entry.PlaylistSize, SelectionSource: entry.SelectionSource, TrackID: entry.TrackID, VideoPath: entry.VideoPath, AudioPath: entry.AudioPath, Artist: entry.Artist, Title: entry.Title, EndReason: "mpv-process-exited-without-terminal-event", CountedAsPlayed: &counted}); err != nil {
 				return err
 			}
 		}

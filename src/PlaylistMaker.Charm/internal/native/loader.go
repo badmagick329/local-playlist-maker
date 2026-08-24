@@ -2,7 +2,6 @@ package native
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"playlistmaker/charm/internal/backend"
+	"playlistmaker/charm/internal/catalog"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/metadata"
@@ -24,118 +24,79 @@ type Loader struct {
 	TagReader metadata.Reader
 	ReadOnly  bool
 }
-type cacheEntry struct {
-	FilePath    string `json:"filePath"`
-	Artist      string `json:"artist"`
-	Title       string `json:"title"`
-	Date        string `json:"date"`
-	TrackNumber int    `json:"trackNumber"`
-}
-type trackBuild struct {
-	track library.Track
-	first int
-}
 
 func (l Loader) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
 	if err := ctx.Err(); err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
-	mappings, err := loadMappings(l.Config.MappingFile)
+	media, err := catalog.Read(l.Config.MediaCatalogFile)
 	if err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return backend.LibrarySnapshot{}, err
-	}
-	audioPaths := make([]string, 0, len(mappings))
-	for _, entry := range mappings {
-		audioPaths = append(audioPaths, entry.audioPath)
+	audioPaths := make([]string, 0, len(media.Tracks))
+	for _, track := range media.Tracks {
+		if track.LocalAudioPath != "" {
+			audioPaths = append(audioPaths, track.LocalAudioPath)
+		}
 	}
 	if !l.ReadOnly {
 		reader := l.TagReader
 		if reader == nil {
 			reader = metadata.FLACReader{}
 		}
-		_, _, err = metadata.Ensure(ctx, l.Config.FlacCacheFile, audioPaths, reader)
-		if err != nil {
+		if _, _, err := metadata.Ensure(ctx, l.Config.FlacCacheFile, audioPaths, reader); err != nil {
 			return backend.LibrarySnapshot{}, err
 		}
 	}
-	cache, err := loadCache(l.Config.FlacCacheFile)
+	cache, err := metadata.ReadCache(l.Config.FlacCacheFile)
 	if err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
-	if err := ctx.Err(); err != nil {
-		return backend.LibrarySnapshot{}, err
-	}
-	return buildLibrary(mappings, cache)
+	return buildLibrary(media, cache)
 }
 
-func loadCache(path string) (map[string]cacheEntry, error) {
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read FLAC cache %q: %w", path, err)
-	}
-	var entries []cacheEntry
-	contents = []byte(strings.TrimPrefix(string(contents), "\ufeff"))
-	if err := json.Unmarshal(contents, &entries); err != nil {
-		return nil, fmt.Errorf("parse FLAC cache %q: %w", path, err)
-	}
-	index := make(map[string]cacheEntry, len(entries))
-	for indexInFile, entry := range entries {
-		if strings.TrimSpace(entry.FilePath) == "" || strings.TrimSpace(entry.Artist) == "" || strings.TrimSpace(entry.Title) == "" {
-			return nil, fmt.Errorf("FLAC cache %q contains invalid entry %d", path, indexInFile+1)
+func buildLibrary(media catalog.Catalog, cache map[string]metadata.Entry) (backend.LibrarySnapshot, error) {
+	positions := make(map[string]int, len(media.Tracks))
+	tracks := make([]library.Track, len(media.Tracks))
+	for index, source := range media.Tracks {
+		artist, title, releaseLabel := source.Artist, source.Title, source.ReleaseDate
+		if cached, ok := cache[pathid.ComparisonKey(source.LocalAudioPath)]; ok {
+			artist, title = cached.Artist, cached.Title
+			if releaseLabel == "" {
+				releaseLabel = cached.Date
+			}
 		}
-		entry.FilePath = pathid.Normalize(entry.FilePath)
-		index[pathid.ComparisonKey(entry.FilePath)] = entry
+		release, label, ok := dateLabel(releaseLabel)
+		if releaseLabel != "" && !ok {
+			return backend.LibrarySnapshot{}, fmt.Errorf("track %q has invalid release date %q", source.ID, releaseLabel)
+		}
+		tracks[index] = library.Track{
+			ID: source.ID, Artist: artist, Title: title,
+			LocalAudioPath: source.LocalAudioPath, SpotifyURI: source.SpotifyURI, SpotifyIgnored: source.SpotifyIgnored,
+			ReleaseDate: release, ReleaseDateLabel: label, SearchTextByCategory: map[library.Category]string{},
+		}
+		positions[source.ID] = index
 	}
-	return index, nil
-}
-
-func buildLibrary(mappings []mappingEntry, cache map[string]cacheEntry) (backend.LibrarySnapshot, error) {
-	missing := make([]string, 0)
-	missingIndex := make(map[string]bool)
-	tracks := make([]trackBuild, 0)
-	trackPositions := make(map[string]int)
-	for entryIndex, entry := range mappings {
-		metadata, ok := cache[pathid.ComparisonKey(entry.audioPath)]
+	for _, video := range media.Videos {
+		position, ok := positions[video.TrackID]
 		if !ok {
-			key := pathid.ComparisonKey(entry.audioPath)
-			if !missingIndex[key] {
-				missingIndex[key] = true
-				missing = append(missing, entry.audioPath)
-			}
-			continue
+			return backend.LibrarySnapshot{}, fmt.Errorf("video %q references missing track %q", video.Path, video.TrackID)
 		}
-		trackKey := pathid.ComparisonKey(entry.audioPath)
-		position, exists := trackPositions[trackKey]
-		if !exists {
-			release, label, ok := releaseDate(metadata.Date, entry.audioPath)
-			if !ok {
-				return backend.LibrarySnapshot{}, fmt.Errorf("cache metadata for %q has no valid release date", entry.audioPath)
-			}
-			position = len(tracks)
-			trackPositions[trackKey] = position
-			tracks = append(tracks, trackBuild{first: entryIndex, track: library.Track{ID: entry.audioPath, Artist: metadata.Artist, Title: metadata.Title, ReleaseDate: release, ReleaseDateLabel: label, SearchTextByCategory: make(map[library.Category]string)}})
-		}
-		variant, err := makeVariant(entry)
+		variant, err := makeVariant(video.Path, video.TrackID)
 		if err != nil {
 			return backend.LibrarySnapshot{}, err
 		}
-		tracks[position].track.Variants = append(tracks[position].track.Variants, variant)
+		tracks[position].Variants = append(tracks[position].Variants, variant)
 	}
-	if len(missing) > 0 {
-		return backend.LibrarySnapshot{}, fmt.Errorf("%d mapped audio file(s) are missing from the FLAC cache (for example: %s); use bridge mode or refresh the cache", len(missing), strings.Join(missing[:min(3, len(missing))], ", "))
-	}
-	result := make([]library.Track, 0, len(tracks))
-	for _, built := range tracks {
-		track := built.track
+	result := tracks[:0]
+	for index := range tracks {
+		track := tracks[index]
 		sort.SliceStable(track.Variants, func(i, j int) bool {
 			left, right := track.Variants[i], track.Variants[j]
 			if !left.Date.Equal(right.Date) {
 				return left.Date.After(right.Date)
 			}
-			return strings.ToUpper(pathid.Normalize(left.VideoPath)) < strings.ToUpper(pathid.Normalize(right.VideoPath))
+			return pathid.ComparisonKey(left.VideoPath) < pathid.ComparisonKey(right.VideoPath)
 		})
 		for _, variant := range track.Variants {
 			if variant.ModifiedAt.After(track.ModifiedAt) {
@@ -147,42 +108,29 @@ func buildLibrary(mappings []mappingEntry, cache map[string]cacheEntry) (backend
 			track.SearchTextByCategory[variant.Category] += " " + strings.ToLower(variant.Filename)
 		}
 		track.BaseSearchText = strings.ToLower(track.Artist + " " + track.Title)
-		result = append(result, track)
+		if len(track.Variants) > 0 {
+			result = append(result, track)
+		}
 	}
 	return backend.LibrarySnapshot{Tracks: result}, nil
 }
 
-func makeVariant(entry mappingEntry) (library.Variant, error) {
-	date, label, ok := videoDate(entry.videoPath)
+func makeVariant(videoPath, trackID string) (library.Variant, error) {
+	date, label, ok := videoDate(videoPath)
 	if !ok {
-		return library.Variant{}, fmt.Errorf("could not parse video date from %q", entry.videoPath)
+		return library.Variant{}, fmt.Errorf("could not parse video date from %q", videoPath)
 	}
 	modified := time.Time{}
-	if info, err := os.Stat(entry.videoPath); err == nil {
+	if info, err := os.Stat(videoPath); err == nil {
 		modified = info.ModTime().UTC()
 	}
-	return library.Variant{ID: entry.videoPath, VideoPath: entry.videoPath, AudioPath: entry.audioPath, Filename: filepath.Base(entry.videoPath), Category: classify(entry.videoPath), Date: date, DateLabel: label, ModifiedAt: modified}, nil
+	return library.Variant{ID: videoPath, TrackID: trackID, VideoPath: videoPath, Filename: filepath.Base(videoPath), Category: classify(videoPath), Date: date, DateLabel: label, ModifiedAt: modified}, nil
 }
 
-var fullDatePattern = regexp.MustCompile(`(?i)(?:\b|_)(?:(\d{4})|(?:20)?(\d{2}))[./-]?(\d{2})[./-]?(\d{2})(?:\b|_)`)
-
-func releaseDate(tag, audioPath string) (time.Time, string, bool) {
-	labels := make(map[string]bool)
-	for _, match := range fullDatePattern.FindAllStringSubmatch(audioPath, -1) {
-		year := match[1]
-		if year == "" {
-			year = "20" + match[2]
-		}
-		labels[year+"-"+match[3]+"-"+match[4]] = true
-	}
-	if len(labels) == 1 {
-		for label := range labels {
-			return dateLabel(label)
-		}
-	}
-	return dateLabel(tag)
-}
 func dateLabel(value string) (time.Time, string, bool) {
+	if value == "" {
+		return time.Time{}, "", true
+	}
 	for _, layout := range []string{"2006-01-02", "2006-01", "2006"} {
 		if parsed, err := time.Parse(layout, value); err == nil {
 			return parsed, value, true
@@ -190,6 +138,7 @@ func dateLabel(value string) (time.Time, string, bool) {
 	}
 	return time.Time{}, "", false
 }
+
 func videoDate(path string) (time.Time, string, bool) {
 	value := videoname.Parse(path).Date
 	switch len(value) {

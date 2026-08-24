@@ -21,6 +21,8 @@ type Entry struct {
 	FilePath    string `json:"filePath"`
 	Artist      string `json:"artist"`
 	Title       string `json:"title"`
+	Album       string `json:"album,omitempty"`
+	ISRC        string `json:"isrc,omitempty"`
 	Date        string `json:"date"`
 	TrackNumber int    `json:"trackNumber"`
 	LastRead    string `json:"lastRead,omitempty"`
@@ -64,7 +66,7 @@ func (FLACReader) Read(ctx context.Context, path string) (Entry, error) {
 			break
 		}
 	}
-	entry := Entry{FilePath: pathid.Normalize(path), Artist: values["ARTIST"], Title: values["TITLE"], Date: values["DATE"], TrackNumber: trackNumber(values["TRACKNUMBER"]), LastRead: time.Now().UTC().Format(time.RFC3339)}
+	entry := Entry{FilePath: pathid.Normalize(path), Artist: values["ARTIST"], Title: values["TITLE"], Album: values["ALBUM"], ISRC: values["ISRC"], Date: values["DATE"], TrackNumber: trackNumber(values["TRACKNUMBER"]), LastRead: time.Now().UTC().Format(time.RFC3339)}
 	if entry.Artist == "" || entry.Title == "" {
 		return Entry{}, fmt.Errorf("FLAC tags require ARTIST and TITLE")
 	}

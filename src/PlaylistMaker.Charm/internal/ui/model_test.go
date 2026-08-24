@@ -52,9 +52,10 @@ func (s *mappingUpdaterStub) Ignored(context.Context) ([]updater.Item, error) { 
 func (s *mappingUpdaterStub) Search(context.Context, string) ([]updater.Audio, error) {
 	return s.candidates, nil
 }
-func (s *mappingUpdaterStub) Confirm(string, string) error { s.confirms++; return nil }
-func (s *mappingUpdaterStub) Ignore(string) error          { s.ignores++; return nil }
-func (s *mappingUpdaterStub) Restore(string) error         { s.restores++; return nil }
+func (s *mappingUpdaterStub) Confirm(string, string) error        { s.confirms++; return nil }
+func (s *mappingUpdaterStub) Create(string, string, string) error { s.confirms++; return nil }
+func (s *mappingUpdaterStub) Ignore(string) error                 { s.ignores++; return nil }
+func (s *mappingUpdaterStub) Restore(string) error                { s.restores++; return nil }
 func (s *mappingUpdaterStub) Reload(context.Context) ([]library.Track, PlaybackLauncher, error) {
 	return s.tracks, nil, nil
 }

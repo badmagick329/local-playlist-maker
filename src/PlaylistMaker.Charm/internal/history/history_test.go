@@ -13,9 +13,9 @@ func TestReadNormalizesLatestTerminalEvents(t *testing.T) {
 	contents := strings.Join([]string{
 		`not json`,
 		`{"event":"started","sessionId":"s","entryId":"e"}`,
-		`{"event":"stopped","eventAtUtc":"2026-01-01T00:00:00Z","sessionId":"s","entryId":"e","audioPath":"C:\\Music\\One.flac","videoPath":"C:\\Video\\One.mkv","watchedPercent":95}`,
-		`{"event":"skipped","eventAtUtc":"2025-01-01T00:00:00Z","sessionId":"s","entryId":"e","audioPath":"C:\\Music\\One.flac","videoPath":"C:\\Video\\One.mkv"}`,
-		`{"event":"stopped","eventAtUtc":"2026-01-02T00:00:00Z","sessionId":"s","entryId":"two","audioPath":"c:/music/one.flac","videoPath":"c:/video/two.mkv","endReason":"eof","watchedPercent":10}`,
+		`{"event":"stopped","eventAtUtc":"2026-01-01T00:00:00Z","sessionId":"s","entryId":"e","trackId":"trk_one","audioPath":"C:\\Music\\One.flac","videoPath":"C:\\Video\\One.mkv","watchedPercent":95}`,
+		`{"event":"skipped","eventAtUtc":"2025-01-01T00:00:00Z","sessionId":"s","entryId":"e","trackId":"trk_one","audioPath":"C:\\Music\\One.flac","videoPath":"C:\\Video\\One.mkv"}`,
+		`{"event":"stopped","eventAtUtc":"2026-01-02T00:00:00Z","sessionId":"s","entryId":"two","trackId":"trk_one","audioPath":"c:/music/one.flac","videoPath":"c:/video/two.mkv","endReason":"eof","watchedPercent":10}`,
 	}, "\n")
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
 		t.Fatal(err)
@@ -24,7 +24,7 @@ func TestReadNormalizesLatestTerminalEvents(t *testing.T) {
 	if err != nil || index.InvalidLines != 1 {
 		t.Fatalf("read = %#v, %v", index, err)
 	}
-	summary := index.Tracks[`c:\music\one.flac`]
+	summary := index.Tracks[`trk_one`]
 	if summary.Played != 2 || summary.Completed != 2 || summary.Skipped != 0 || len(summary.Recent) != 2 {
 		t.Fatalf("summary = %#v", summary)
 	}

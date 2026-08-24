@@ -11,9 +11,9 @@ import (
 	"sort"
 	"strings"
 
+	"playlistmaker/charm/internal/catalog"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
-	"playlistmaker/charm/internal/mapping"
 	"playlistmaker/charm/internal/metadata"
 	"playlistmaker/charm/internal/pathid"
 	"playlistmaker/charm/internal/videoname"
@@ -50,7 +50,7 @@ type scanIndex struct {
 }
 
 func (s Service) Scan(ctx context.Context) ([]Item, error) {
-	mapped, err := mapping.Read(s.Config.MappingFile)
+	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
 		return nil, err
 	}
@@ -66,7 +66,7 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	index := buildScanIndex(mapped, cache)
+	index := buildScanIndex(media, cache)
 	paths := []string{}
 	for _, root := range s.Config.VideoDirectories {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
@@ -90,17 +90,23 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	}
 	sort.Slice(paths, func(i, j int) bool { return pathid.ComparisonKey(paths[i]) < pathid.ComparisonKey(paths[j]) })
 	items := make([]Item, 0, len(paths))
+	trackByAudio := make(map[string]catalog.Track, len(media.Tracks))
+	trackByID := make(map[string]catalog.Track, len(media.Tracks))
+	for _, track := range media.Tracks {
+		trackByID[track.ID] = track
+		if track.LocalAudioPath != "" {
+			trackByAudio[pathid.ComparisonKey(track.LocalAudioPath)] = track
+		}
+	}
 	for _, path := range paths {
 		item := Item{VideoPath: path, Filename: filepath.Base(path)}
 		parsed := videoname.Parse(item.Filename)
 		item.Artist, item.Title = parsed.Artist, parsed.Title
 		key := matchKey(item.Artist, item.Title)
 		if candidates := index.evidence[key]; len(candidates) == 1 {
-			for audio := range candidates {
-				item.AudioPath, item.Reason = audio, "Exact match"
-				if metadata, ok := cache[pathid.ComparisonKey(audio)]; ok {
-					item.AudioArtist, item.AudioTitle = metadata.Artist, metadata.Title
-				}
+			for trackID := range candidates {
+				track := trackByID[trackID]
+				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = track.ID, track.Artist, track.Title, "Exact match"
 			}
 		}
 		if item.AudioPath == "" {
@@ -120,14 +126,19 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 				item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = audio.FilePath, audio.Artist, audio.Title, "Possible match"
 			}
 		}
+		if track, ok := trackByAudio[pathid.ComparisonKey(item.AudioPath)]; ok {
+			item.AudioPath, item.AudioArtist, item.AudioTitle = track.ID, track.Artist, track.Title
+		} else if item.AudioPath != "" && !strings.HasPrefix(item.AudioPath, "trk_") {
+			item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = "", "", "", ""
+		}
 		items = append(items, item)
 	}
 	return items, nil
 }
 
-func buildScanIndex(mapped []mapping.Entry, cache map[string]metadata.Entry) scanIndex {
+func buildScanIndex(media catalog.Catalog, cache map[string]metadata.Entry) scanIndex {
 	index := scanIndex{
-		mapped:   make(map[string]bool, len(mapped)),
+		mapped:   make(map[string]bool, len(media.Videos)),
 		evidence: make(map[string]map[string]int),
 		exact:    make(map[string][]metadata.Entry),
 		title:    make(map[string][]metadata.Entry),
@@ -154,14 +165,16 @@ func buildScanIndex(mapped []mapping.Entry, cache map[string]metadata.Entry) sca
 			return pathid.ComparisonKey(entries[i].FilePath) < pathid.ComparisonKey(entries[j].FilePath)
 		})
 	}
-	for _, entry := range mapped {
-		index.mapped[pathid.ComparisonKey(entry.VideoPath)] = true
-		if audio, ok := cache[pathid.ComparisonKey(entry.AudioPath)]; ok {
+	for _, video := range media.Videos {
+		index.mapped[pathid.ComparisonKey(video.Path)] = true
+	}
+	for _, track := range media.Tracks {
+		if audio, ok := cache[pathid.ComparisonKey(track.LocalAudioPath)]; ok {
 			key := matchKey(audio.Artist, audio.Title)
 			if index.evidence[key] == nil {
 				index.evidence[key] = map[string]int{}
 			}
-			index.evidence[key][audio.FilePath]++
+			index.evidence[key][track.ID]++
 		}
 	}
 	return index
@@ -333,29 +346,48 @@ func removePath(paths []string, key string) []string {
 }
 
 func (s Service) Search(ctx context.Context, query string) ([]Audio, error) {
-	cache, err := metadata.ReadCache(s.Config.FlacCacheFile)
+	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
 		return nil, err
 	}
 	needle := normalize(query)
 	result := []Audio{}
-	for _, entry := range cache {
-		if needle == "" || strings.Contains(normalize(entry.Artist+" "+entry.Title), needle) {
-			result = append(result, Audio{Path: entry.FilePath, Artist: entry.Artist, Title: entry.Title})
+	for _, track := range media.Tracks {
+		if needle == "" || strings.Contains(normalize(track.Artist+" "+track.Title), needle) {
+			result = append(result, Audio{Path: track.ID, Artist: track.Artist, Title: track.Title})
 		}
 	}
 	sort.Slice(result, func(i, j int) bool {
-		return pathid.ComparisonKey(result[i].Path) < pathid.ComparisonKey(result[j].Path)
+		return result[i].Path < result[j].Path
 	})
 	return result, nil
 }
 
-func (s Service) Confirm(videoPath, audioPath string) error {
-	entries, err := mapping.Read(s.Config.MappingFile)
+func (s Service) Confirm(videoPath, trackID string) error {
+	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
 		return err
 	}
-	return mapping.Write(s.Config.MappingFile, mapping.Upsert(entries, videoPath, audioPath))
+	if err := media.LinkVideo(videoPath, trackID); err != nil {
+		return err
+	}
+	return catalog.Write(s.Config.MediaCatalogFile, media)
+}
+
+func (s Service) Create(videoPath, artist, title string) error {
+	media, err := catalog.Read(s.Config.MediaCatalogFile)
+	if err != nil {
+		return err
+	}
+	id, err := catalog.NewTrackID()
+	if err != nil {
+		return err
+	}
+	media.Tracks = append(media.Tracks, catalog.Track{ID: id, Artist: strings.TrimSpace(artist), Title: strings.TrimSpace(title)})
+	if err := media.LinkVideo(videoPath, id); err != nil {
+		return err
+	}
+	return catalog.Write(s.Config.MediaCatalogFile, media)
 }
 
 func supported(path string) bool {

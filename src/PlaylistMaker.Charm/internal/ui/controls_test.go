@@ -17,9 +17,9 @@ import (
 
 func TestPlannedCountAppliesQueueRulesInOrder(t *testing.T) {
 	variants := map[string]library.Variant{
-		"a": {ID: "a", AudioPath: `C:\\Music\\Alpha.flac`},
-		"b": {ID: "b", AudioPath: `c:/music/alpha.flac`},
-		"c": {ID: "c", AudioPath: `C:\\Music\\Bravo.flac`},
+		"a": {ID: "a", TrackID: "trk_alpha"},
+		"b": {ID: "b", TrackID: "trk_alpha"},
+		"c": {ID: "c", TrackID: "trk_bravo"},
 	}
 	queue := []string{"a", "b", "c", "missing"}
 	tests := []struct {

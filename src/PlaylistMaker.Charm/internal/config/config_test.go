@@ -19,7 +19,7 @@ func TestLoadResolvesEveryConfiguredFileAgainstTheConfigDirectory(t *testing.T) 
 	path := filepath.Join(configDirectory, "config.yaml")
 	writeConfig(t, path, `
 dataDirectory: state
-mappingFile: maps/video-audio-map.json
+mediaCatalogFile: maps/media-catalog.json
 videoDirectories: [videos, other-videos]
 ignoredVideoDirectories: [ignored, "`+filepath.ToSlash(absoluteIgnored)+`"]
 audioDirectories: [audio, "`+filepath.ToSlash(absoluteAudio)+`"]
@@ -27,10 +27,9 @@ flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"
 videoPlaylistCommand: [mpv.exe, "--playlist={playlistPath}"]
 videoPlaylistSuffix: _videos.m3u
-audioPlaylistCommand: [foobar2000.exe, "{playlistPath}"]
-audioPlaylistSuffix: _audios.m3u8
 videoSingleFileCommand: [mpv.exe]
-audioSingleFileCommand: [foobar2000.exe]
+localTrackingStartCommand: [foobar2000.exe, "{audioPath}"]
+localTrackingStopCommand: [foobar2000.exe, /stop]
 playlistTxtFilePath: imports/queue.txt
 playbackHistoryEnabled: true
 playbackHistoryMinimumWatchedPercent: 50
@@ -44,7 +43,7 @@ playbackHistoryMinimumWatchedPercent: 50
 	if loaded.DataDirectory != want("state") || loaded.FlacCacheFile != filepath.Join(want("state"), "cache/flac_cache.json") || loaded.PlaylistTxtFilePath != want("imports/queue.txt") {
 		t.Fatalf("relative paths were not resolved from the config directory: %#v", loaded)
 	}
-	if loaded.MappingFile != want("maps/video-audio-map.json") || len(loaded.VideoDirectories) != 2 || loaded.VideoDirectories[0] != want("videos") || loaded.VideoDirectories[1] != want("other-videos") {
+	if loaded.MediaCatalogFile != want("maps/media-catalog.json") || len(loaded.VideoDirectories) != 2 || loaded.VideoDirectories[0] != want("videos") || loaded.VideoDirectories[1] != want("other-videos") {
 		t.Fatalf("mapping/update paths = %#v", loaded)
 	}
 	if len(loaded.IgnoredVideoDirectories) != 2 || loaded.IgnoredVideoDirectories[0] != want("ignored") || loaded.IgnoredVideoDirectories[1] != absoluteIgnored {
@@ -109,7 +108,7 @@ func TestLoadReportsTheMissingFieldAndResolvedConfigPath(t *testing.T) {
 	writeConfig(t, path, "dataDirectory: state\n")
 
 	_, err := Load(path)
-	if err == nil || !strings.Contains(err.Error(), "mappingFile") || !strings.Contains(err.Error(), "invalid config") || !strings.Contains(err.Error(), filepath.Base(path)) {
+	if err == nil || !strings.Contains(err.Error(), "mediaCatalogFile") || !strings.Contains(err.Error(), "invalid config") || !strings.Contains(err.Error(), filepath.Base(path)) {
 		t.Fatalf("error = %v, want the missing field and resolved config path", err)
 	}
 }
@@ -123,17 +122,16 @@ func writeConfig(t *testing.T, path, contents string) {
 
 func validConfig(extra string) string {
 	return `dataDirectory: state
-mappingFile: maps/video-audio-map.json
+mediaCatalogFile: maps/media-catalog.json
 videoDirectories: [videos]
 audioDirectories: [audio]
 flacCacheFile: cache/flac_cache.json
 playlistTemplate: "{playlistPath}"
 videoPlaylistCommand: [mpv.exe]
 videoPlaylistSuffix: _videos.m3u
-audioPlaylistCommand: [foobar2000.exe]
-audioPlaylistSuffix: _audios.m3u8
 videoSingleFileCommand: [mpv.exe]
-audioSingleFileCommand: [foobar2000.exe]
+localTrackingStartCommand: [foobar2000.exe, "{audioPath}"]
+localTrackingStopCommand: [foobar2000.exe, /stop]
 playlistTxtFilePath: imports/queue.txt
 ` + extra
 }

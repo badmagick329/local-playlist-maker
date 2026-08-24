@@ -16,6 +16,7 @@ import (
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/pathid"
+	"playlistmaker/charm/internal/spotifylink"
 	"playlistmaker/charm/internal/updater"
 )
 
@@ -33,6 +34,8 @@ const (
 	modeDetails
 	modeMappingUpdate
 	modeMappingPicker
+	modeSpotifyUpdate
+	modeSpotifySearch
 )
 
 func (m mode) String() string {
@@ -56,7 +59,11 @@ func (m mode) String() string {
 	case modeMappingUpdate:
 		return "UPDATE MAPPINGS"
 	case modeMappingPicker:
-		return "CHOOSE AUDIO"
+		return "CHOOSE TRACK"
+	case modeSpotifyUpdate:
+		return "SPOTIFY LINKS"
+	case modeSpotifySearch:
+		return "SPOTIFY SEARCH"
 	default:
 		return "NAV"
 	}
@@ -87,8 +94,18 @@ type MappingUpdater interface {
 	Ignored(context.Context) ([]updater.Item, error)
 	Search(context.Context, string) ([]updater.Audio, error)
 	Confirm(string, string) error
+	Create(string, string, string) error
 	Ignore(string) error
 	Restore(string) error
+	Reload(context.Context) ([]library.Track, PlaybackLauncher, error)
+}
+
+type SpotifyUpdater interface {
+	SpotifyScan(context.Context) (spotifylink.ScanResult, error)
+	SpotifySearch(context.Context, string) ([]spotifylink.Candidate, error)
+	SpotifyValidate(context.Context, string) (spotifylink.Candidate, error)
+	SpotifyConfirm(context.Context, string, string) error
+	SpotifyIgnore(string) error
 	Reload(context.Context) ([]library.Track, PlaybackLauncher, error)
 }
 
@@ -129,6 +146,19 @@ type mappingReloadMsg struct {
 	playback PlaybackLauncher
 	err      error
 }
+type spotifyScanMsg struct {
+	result spotifylink.ScanResult
+	err    error
+}
+type spotifySearchMsg struct {
+	items []spotifylink.Candidate
+	err   error
+}
+type spotifyValidateMsg struct {
+	item spotifylink.Candidate
+	err  error
+}
+type spotifySaveMsg struct{ err error }
 
 type Model struct {
 	all               []library.Track
@@ -174,6 +204,13 @@ type Model struct {
 	mappingCandidates []updater.Audio
 	mappingCursor     int
 	mappingDirty      bool
+	spotifyUpdater    SpotifyUpdater
+	spotifyItems      []spotifylink.Item
+	spotifyIndex      int
+	spotifyCandidate  int
+	spotifyScanning   bool
+	spotifyQuery      string
+	spotifyDirty      bool
 }
 
 func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
@@ -229,11 +266,55 @@ func (m Model) WithMappingUpdater(updater MappingUpdater) Model {
 	return m
 }
 
+func (m Model) WithSpotifyUpdater(updater SpotifyUpdater) Model {
+	m.spotifyUpdater = updater
+	return m
+}
+
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	started := time.Now()
 	defer func() { m.stats.recordUpdate(time.Since(started)) }()
 
 	switch message := message.(type) {
+	case spotifyScanMsg:
+		m.spotifyScanning = false
+		if message.err != nil {
+			m.status = "Spotify link scan failed: " + message.err.Error()
+		} else {
+			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
+			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
+			m.status = fmt.Sprintf("%d Spotify links saved automatically; %d need review", message.result.AutoLinked, len(message.result.Items))
+		}
+		return m, nil
+	case spotifySearchMsg:
+		m.spotifyScanning = false
+		if message.err != nil {
+			m.status = "Spotify search failed: " + message.err.Error()
+		} else if item, ok := m.currentSpotifyItem(); ok {
+			item.Candidates = message.items
+			item.Reason = "Manual search results"
+			m.spotifyItems[m.spotifyIndex], m.spotifyCandidate, m.mode = item, 0, modeSpotifyUpdate
+		}
+		return m, nil
+	case spotifyValidateMsg:
+		m.spotifyScanning = false
+		if message.err != nil {
+			m.status = "Spotify track validation failed: " + message.err.Error()
+		} else if item, ok := m.currentSpotifyItem(); ok {
+			item.Candidates = []spotifylink.Candidate{message.item}
+			item.Reason = "Validated pasted Spotify track"
+			m.spotifyItems[m.spotifyIndex], m.spotifyCandidate, m.mode = item, 0, modeSpotifyUpdate
+		}
+		return m, nil
+	case spotifySaveMsg:
+		if message.err != nil {
+			m.status = "Spotify link save failed: " + message.err.Error()
+		} else {
+			m.spotifyDirty = true
+			m.removeCurrentSpotifyItem()
+			m.status = "Spotify link saved"
+		}
+		return m, nil
 	case mappingScanMsg:
 		m.mappingScanning = false
 		if message.err != nil {
@@ -375,6 +456,10 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleMappingUpdateKey(key)
 	case modeMappingPicker:
 		return m.handleMappingPickerKey(key)
+	case modeSpotifyUpdate:
+		return m.handleSpotifyUpdateKey(key)
+	case modeSpotifySearch:
+		return m.handleSpotifySearchKey(key)
 	default:
 		return m.handleNavigationKey(key)
 	}
@@ -459,6 +544,15 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if key.Text == "R" {
 		return m.requestHistoryRefresh()
+	}
+	if key.Text == "U" {
+		if m.spotifyUpdater == nil {
+			m.status = "Spotify updates are unavailable"
+			return m, nil
+		}
+		m.mode, m.spotifyScanning, m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = modeSpotifyUpdate, true, nil, 0, 0
+		m.status = "Scanning catalogue tracks missing Spotify links…"
+		return m, m.spotifyScanCmd()
 	}
 
 	switch key.String() {
@@ -692,9 +786,11 @@ func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 			return m, nil
 		}
 		item, ok := m.currentMappingItem()
-		if !ok || item.AudioPath == "" {
-			m.status = "Choose an audio track first"
+		if !ok {
 			return m, nil
+		}
+		if item.AudioPath == "" {
+			return m, m.mappingCreateCmd(item.VideoPath, item.Artist, item.Title)
 		}
 		return m, m.mappingConfirmCmd(item.VideoPath, item.AudioPath)
 	}
@@ -736,6 +832,74 @@ func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	return m, nil
 }
 
+func (m Model) handleSpotifyUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.spotifyScanning {
+		return m, nil
+	}
+	switch key.String() {
+	case "esc", "U", "shift+u":
+		m.mode = modeNavigate
+		if m.spotifyDirty {
+			return m, m.spotifyReloadCmd()
+		}
+	case "j", "down":
+		m.spotifyIndex = min(m.spotifyIndex+1, max(len(m.spotifyItems)-1, 0))
+		m.spotifyCandidate = 0
+	case "k", "up":
+		m.spotifyIndex = max(m.spotifyIndex-1, 0)
+		m.spotifyCandidate = 0
+	case "l", "right":
+		if item, ok := m.currentSpotifyItem(); ok {
+			m.spotifyCandidate = min(m.spotifyCandidate+1, max(len(item.Candidates)-1, 0))
+		}
+	case "h", "left":
+		m.spotifyCandidate = max(m.spotifyCandidate-1, 0)
+	case "/":
+		m.mode, m.spotifyQuery = modeSpotifySearch, ""
+	case "s":
+		m.removeCurrentSpotifyItem()
+		m.status = "Spotify link skipped"
+	case "i":
+		if item, ok := m.currentSpotifyItem(); ok {
+			return m, m.spotifyIgnoreCmd(item.TrackID)
+		}
+	case "r":
+		m.spotifyScanning, m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = true, nil, 0, 0
+		return m, m.spotifyScanCmd()
+	case "enter":
+		if item, ok := m.currentSpotifyItem(); ok && m.spotifyCandidate < len(item.Candidates) {
+			return m, m.spotifyConfirmCmd(item.TrackID, item.Candidates[m.spotifyCandidate].URI)
+		}
+	}
+	return m, nil
+}
+
+func (m Model) handleSpotifySearchKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc", "/":
+		m.mode = modeSpotifyUpdate
+	case "enter":
+		if strings.TrimSpace(m.spotifyQuery) == "" {
+			return m, nil
+		}
+		m.spotifyScanning = true
+		if strings.Contains(m.spotifyQuery, "spotify:track:") || strings.Contains(m.spotifyQuery, "open.spotify.com/track/") {
+			return m, m.spotifyValidateCmd()
+		}
+		return m, m.spotifySearchCmd()
+	case "backspace":
+		if m.spotifyQuery != "" {
+			_, size := utf8.DecodeLastRuneInString(m.spotifyQuery)
+			m.spotifyQuery = m.spotifyQuery[:len(m.spotifyQuery)-size]
+		}
+	default:
+		if key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) {
+			m.spotifyQuery += key.Text
+		}
+	}
+	return m, nil
+}
+
 func (m Model) currentMappingItem() (updater.Item, bool) {
 	if m.mappingIndex < 0 || m.mappingIndex >= len(m.mappingItems) {
 		return updater.Item{}, false
@@ -764,9 +928,13 @@ func (m Model) mappingSearchCmd() tea.Cmd {
 		return mappingSearchMsg{items: items, err: err}
 	}
 }
-func (m Model) mappingConfirmCmd(video, audio string) tea.Cmd {
+func (m Model) mappingConfirmCmd(video, trackID string) tea.Cmd {
 	service := m.mappingUpdater
-	return func() tea.Msg { return mappingConfirmMsg{err: service.Confirm(video, audio)} }
+	return func() tea.Msg { return mappingConfirmMsg{err: service.Confirm(video, trackID)} }
+}
+func (m Model) mappingCreateCmd(video, artist, title string) tea.Cmd {
+	service := m.mappingUpdater
+	return func() tea.Msg { return mappingConfirmMsg{err: service.Create(video, artist, title)} }
 }
 func (m Model) mappingIgnoreCmd(video string, restored bool) tea.Cmd {
 	service := m.mappingUpdater
@@ -783,6 +951,59 @@ func (m Model) mappingReloadCmd() tea.Cmd {
 		tracks, playback, err := service.Reload(context.Background())
 		return mappingReloadMsg{tracks: tracks, playback: playback, err: err}
 	}
+}
+
+func (m Model) spotifyScanCmd() tea.Cmd {
+	service := m.spotifyUpdater
+	return func() tea.Msg {
+		result, err := service.SpotifyScan(context.Background())
+		return spotifyScanMsg{result: result, err: err}
+	}
+}
+func (m Model) spotifySearchCmd() tea.Cmd {
+	service, query := m.spotifyUpdater, m.spotifyQuery
+	return func() tea.Msg {
+		items, err := service.SpotifySearch(context.Background(), query)
+		return spotifySearchMsg{items: items, err: err}
+	}
+}
+func (m Model) spotifyValidateCmd() tea.Cmd {
+	service, value := m.spotifyUpdater, m.spotifyQuery
+	return func() tea.Msg {
+		item, err := service.SpotifyValidate(context.Background(), value)
+		return spotifyValidateMsg{item: item, err: err}
+	}
+}
+func (m Model) spotifyConfirmCmd(trackID, uri string) tea.Cmd {
+	service := m.spotifyUpdater
+	return func() tea.Msg { return spotifySaveMsg{err: service.SpotifyConfirm(context.Background(), trackID, uri)} }
+}
+func (m Model) spotifyIgnoreCmd(trackID string) tea.Cmd {
+	service := m.spotifyUpdater
+	return func() tea.Msg { return spotifySaveMsg{err: service.SpotifyIgnore(trackID)} }
+}
+func (m Model) spotifyReloadCmd() tea.Cmd {
+	service := m.spotifyUpdater
+	return func() tea.Msg {
+		tracks, playback, err := service.Reload(context.Background())
+		return mappingReloadMsg{tracks: tracks, playback: playback, err: err}
+	}
+}
+
+func (m Model) currentSpotifyItem() (spotifylink.Item, bool) {
+	if m.spotifyIndex < 0 || m.spotifyIndex >= len(m.spotifyItems) {
+		return spotifylink.Item{}, false
+	}
+	return m.spotifyItems[m.spotifyIndex], true
+}
+
+func (m *Model) removeCurrentSpotifyItem() {
+	if m.spotifyIndex < 0 || m.spotifyIndex >= len(m.spotifyItems) {
+		return
+	}
+	m.spotifyItems = slices.Delete(m.spotifyItems, m.spotifyIndex, m.spotifyIndex+1)
+	m.spotifyIndex = min(m.spotifyIndex, max(len(m.spotifyItems)-1, 0))
+	m.spotifyCandidate = 0
 }
 
 func (m *Model) removeCurrentMappingItem() {
@@ -1420,7 +1641,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker || m.mode == modeSpotifyUpdate || m.mode == modeSpotifySearch {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -1649,7 +1870,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		}
 		lines = []string{mappingSummary(m.mappingItems), fmt.Sprintf("%d of %d", m.mappingIndex+1, len(m.mappingItems)), "Video: " + item.Filename, "Artist: " + emptyAny(item.Artist), "Title: " + emptyAny(item.Title)}
 		if item.AudioPath == "" {
-			lines = append(lines, "No automatic suggestion")
+			lines = append(lines, "No automatic suggestion; Enter creates a video-only track")
 		} else {
 			audio := item.AudioArtist + " — " + item.AudioTitle
 			if item.AudioArtist == "" && item.AudioTitle == "" {
@@ -1657,9 +1878,9 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			}
 			lines = append(lines, "Audio: "+audio, item.Reason)
 		}
-		lines = append(lines, "", "enter confirm • / choose audio • s skip • i ignore • I ignored list • r rescan • u/esc close")
+		lines = append(lines, "", "enter link/create • / choose track • s skip • i ignore • I ignored list • r rescan • u/esc close")
 	case modeMappingPicker:
-		title = "Choose audio"
+		title = "Choose catalogue track"
 		lines = append(lines, "Search: "+m.mappingQuery)
 		for index, candidate := range m.mappingCandidates {
 			prefix := "  "
@@ -1669,9 +1890,31 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			lines = append(lines, prefix+candidate.Artist+" — "+candidate.Title)
 		}
 		if len(m.mappingCandidates) == 0 {
-			lines = append(lines, "No matching audio")
+			lines = append(lines, "No matching track")
 		}
 		lines = append(lines, "", "type search • j/k move • enter choose • / or esc cancel")
+	case modeSpotifyUpdate:
+		title = "Update Spotify links"
+		if m.spotifyScanning {
+			lines = []string{"Contacting Spotify…"}
+			break
+		}
+		item, ok := m.currentSpotifyItem()
+		if !ok {
+			lines = []string{"All eligible catalogue tracks have Spotify links or are ignored", "", "r rescan • U/esc close"}
+			break
+		}
+		lines = []string{fmt.Sprintf("%d of %d", m.spotifyIndex+1, len(m.spotifyItems)), "Track: " + item.Artist + " — " + item.Title, "Album: " + emptyAny(item.Album), "Release: " + emptyAny(item.ReleaseDate), item.Reason}
+		if len(item.Candidates) == 0 {
+			lines = append(lines, "No suggestion; use / to search or paste a Spotify track")
+		} else {
+			candidate := item.Candidates[min(m.spotifyCandidate, len(item.Candidates)-1)]
+			lines = append(lines, fmt.Sprintf("Candidate %d of %d: %s — %s", m.spotifyCandidate+1, len(item.Candidates), candidate.Artist, candidate.Title), "Album: "+candidate.Album, "Release: "+candidate.ReleaseDate, fmt.Sprintf("Duration: %d:%02d", candidate.DurationMS/60000, candidate.DurationMS/1000%60))
+		}
+		lines = append(lines, "", "h/l candidate • enter confirm • / search or paste • s skip • i ignore • r rescan • U/esc close")
+	case modeSpotifySearch:
+		title = "Search Spotify"
+		lines = []string{"Query or Spotify track URL/URI:", m.spotifyQuery + "▏", "", "enter validate/search • / or esc cancel"}
 	}
 
 	overlayWidth := min(max(width*2/3, 28), min(88, width))
@@ -1723,10 +1966,43 @@ func (m Model) plannedPreview() string {
 		return "Queue is empty"
 	}
 	planned := plannedCount(m.queueOrder, m.queued, m.draftOptions)
-	if planned == queued {
-		return fmt.Sprintf("%d queued", queued)
+	spotifyCount, foobarCount, untrackedCount := m.plannedSourceCounts(m.draftOptions)
+	return fmt.Sprintf("%d queued → %d plays • Spotify %d • foobar %d • untracked %d", queued, planned, spotifyCount, foobarCount, untrackedCount)
+}
+
+func (m Model) plannedSourceCounts(options backend.PlaybackOptions) (int, int, int) {
+	tracks := make(map[string]library.Track, len(m.all))
+	for _, track := range m.all {
+		tracks[track.ID] = track
 	}
-	return fmt.Sprintf("%d queued → %d plays", queued, planned)
+	trackIDs := []string{}
+	seen := map[string]bool{}
+	for _, id := range m.queueOrder {
+		variant, ok := m.queued[id]
+		if !ok || options.OneVideoPerTrack && seen[variant.TrackID] {
+			continue
+		}
+		seen[variant.TrackID] = true
+		for range max(options.RepeatEach, 1) {
+			trackIDs = append(trackIDs, variant.TrackID)
+		}
+	}
+	if options.MaximumItems > 0 && len(trackIDs) > options.MaximumItems {
+		trackIDs = trackIDs[:options.MaximumItems]
+	}
+	spotifyCount, foobarCount, untrackedCount := 0, 0, 0
+	for _, id := range trackIDs {
+		track := tracks[id]
+		switch {
+		case track.SpotifyURI != "":
+			spotifyCount++
+		case track.LocalAudioPath != "":
+			foobarCount++
+		default:
+			untrackedCount++
+		}
+	}
+	return spotifyCount, foobarCount, untrackedCount
 }
 
 func onOff(value bool) string {
@@ -1744,10 +2020,10 @@ func (m Model) detailsLines() []string {
 	track := m.filtered[current.trackIndex]
 	if current.isVariant() {
 		variant := track.Variants[current.variantIndex]
-		return append([]string{"Video: " + variant.Filename, "Video path: " + variant.VideoPath, "Audio path: " + variant.AudioPath, "Category: " + string(variant.Category), "Video date: " + variant.DateLabel, "Modified: " + variant.ModifiedAt.UTC().Format(time.RFC3339), queueState(m.queuedID(variant.ID) != "")}, historyLines(variant.History)...)
+		return append([]string{"Video: " + variant.Filename, "Video path: " + variant.VideoPath, "Track ID: " + track.ID, "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Category: " + string(variant.Category), "Video date: " + variant.DateLabel, "Modified: " + variant.ModifiedAt.UTC().Format(time.RFC3339), queueState(m.queuedID(variant.ID) != "")}, historyLines(variant.History)...)
 	}
 	eligible := len(library.EligibleVariants(track, m.currentQuery()))
-	lines := []string{"Artist: " + track.Artist, "Title: " + track.Title, "Audio path: " + track.ID, "Release: " + track.ReleaseDateLabel, fmt.Sprintf("Variants: %d total • %d eligible", len(track.Variants), eligible), queueState(m.trackQueued(track))}
+	lines := []string{"Artist: " + track.Artist, "Title: " + track.Title, "Track ID: " + track.ID, "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Release: " + emptyAny(track.ReleaseDateLabel), fmt.Sprintf("Variants: %d total • %d eligible", len(track.Variants), eligible), queueState(m.trackQueued(track))}
 	return append(lines, historyLines(track.History)...)
 }
 
@@ -1794,6 +2070,12 @@ func emptyAny(value string) string {
 		return "Any"
 	}
 	return value
+}
+func availability(value bool) string {
+	if value {
+		return "available"
+	}
+	return "missing"
 }
 
 func joinAligned(left, right string, width int) string {

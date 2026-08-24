@@ -41,6 +41,7 @@ var Categories = []Category{
 
 type Variant struct {
 	ID         string
+	TrackID    string
 	VideoPath  string
 	AudioPath  string
 	Filename   string
@@ -55,6 +56,9 @@ type Track struct {
 	ID                   string
 	Artist               string
 	Title                string
+	LocalAudioPath       string
+	SpotifyURI           string
+	SpotifyIgnored       bool
 	ReleaseDate          time.Time
 	ReleaseDateLabel     string
 	ModifiedAt           time.Time
@@ -236,8 +240,8 @@ func Generate(trackCount, variantCount int) []Track {
 			filename := fmt.Sprintf("%s - %s (%s %02d).mkv", artist, title, category, j+1)
 			variants[j] = Variant{
 				ID:         fmt.Sprintf("video-%04d-%02d", i, j),
+				TrackID:    fmt.Sprintf("track-%04d", i),
 				VideoPath:  fmt.Sprintf("synthetic/video-%04d-%02d.mkv", i, j),
-				AudioPath:  fmt.Sprintf("synthetic/audio-%04d.flac", i),
 				Filename:   filename,
 				Category:   category,
 				Date:       date,
@@ -253,6 +257,7 @@ func Generate(trackCount, variantCount int) []Track {
 			ID:                   fmt.Sprintf("track-%04d", i),
 			Artist:               artist,
 			Title:                title,
+			LocalAudioPath:       fmt.Sprintf("synthetic/audio-%04d.flac", i),
 			ReleaseDate:          release,
 			ReleaseDateLabel:     release.Format("2006-01-02"),
 			ModifiedAt:           modified,
