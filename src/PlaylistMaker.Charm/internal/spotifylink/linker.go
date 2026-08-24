@@ -162,7 +162,11 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 			continue
 		}
 		if len(exact) > 1 {
-			item.Candidates, item.Reason = exact, "Multiple exact editions require confirmation"
+			item.Candidates = prioritizeReleaseDate(track.ReleaseDate, exact)
+			item.Reason = "Multiple exact editions require confirmation"
+			if hasReleaseDateMatch(track.ReleaseDate, item.Candidates) {
+				item.Reason = "Multiple exact editions; matching release date suggested first"
+			}
 		} else {
 			item.Candidates = ranked(track.Artist, track.Title, track.ReleaseDate, matches)
 			item.Reason = "Fuzzy suggestions require confirmation"
@@ -306,6 +310,14 @@ func hasReleaseDateMatch(releaseDate string, values []Candidate) bool {
 		}
 	}
 	return false
+}
+
+func prioritizeReleaseDate(releaseDate string, values []Candidate) []Candidate {
+	result := append([]Candidate(nil), values...)
+	sort.SliceStable(result, func(i, j int) bool {
+		return releaseDateMatches(releaseDate, result[i].ReleaseDate) && !releaseDateMatches(releaseDate, result[j].ReleaseDate)
+	})
+	return result
 }
 
 func releaseDateMatches(left, right string) bool {

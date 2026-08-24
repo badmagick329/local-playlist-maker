@@ -77,6 +77,17 @@ func TestReleaseDateMatchesDifferentPrecision(t *testing.T) {
 	}
 }
 
+func TestPrioritizeReleaseDateKeepsMatchingEditionFirst(t *testing.T) {
+	values := []Candidate{
+		{URI: "spotify:track:wrong", ReleaseDate: "2023-01-01"},
+		{URI: "spotify:track:right", ReleaseDate: "2024-10-11"},
+	}
+	result := prioritizeReleaseDate("2024-10-11", values)
+	if result[0].URI != "spotify:track:right" {
+		t.Fatalf("prioritized candidates = %#v", result)
+	}
+}
+
 func TestConfirmAndIgnorePersistLinkDecisions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.json")
 	media := catalog.New()
