@@ -16,6 +16,7 @@ import (
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/history"
 	"playlistmaker/charm/internal/library"
+	"playlistmaker/charm/internal/mpvscript"
 	"playlistmaker/charm/internal/pathid"
 	"playlistmaker/charm/internal/tracking"
 	"playlistmaker/charm/internal/tracksession"
@@ -67,6 +68,10 @@ func (s Service) Launch(ctx context.Context, request backend.PlaybackRequest) (b
 			return backend.PlaybackResult{UserSafeError: "A queued video is unavailable."}, nil
 		}
 	}
+	scriptPath, err := mpvscript.Ensure(s.Config.DataDirectory)
+	if err != nil {
+		return backend.PlaybackResult{UserSafeError: "Could not install the mpv tracking script."}, nil
+	}
 	entries := make([]tracksession.Entry, len(items))
 	for index, item := range items {
 		entries[index] = tracksession.Entry{VideoPath: item.VideoPath, Track: item.Track}
@@ -94,7 +99,7 @@ func (s Service) Launch(ctx context.Context, request backend.PlaybackRequest) (b
 		tracksession.Cleanup(manifestPath, manifest)
 		return backend.PlaybackResult{UserSafeError: err.Error()}, nil
 	}
-	program, arguments, err := s.videoCommand(items, manifestPath, manifest)
+	program, arguments, err := s.videoCommand(items, scriptPath, manifestPath, manifest)
 	if err != nil {
 		_ = helper.Cancel()
 		tracksession.Cleanup(manifestPath, manifest)
@@ -109,6 +114,9 @@ func (s Service) Launch(ctx context.Context, request backend.PlaybackRequest) (b
 		_ = helper.Cancel()
 		tracksession.Cleanup(manifestPath, manifest)
 		return backend.PlaybackResult{UserSafeError: "Could not start video player."}, nil
+	}
+	if latest, readErr := tracksession.ReadManifest(manifestPath); readErr == nil {
+		manifest = latest
 	}
 	manifest.MPVProcessID = mpvPID
 	if err := tracksession.WriteManifest(manifestPath, manifest); err != nil {
@@ -209,6 +217,9 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 	planned := make([]Item, len(expanded))
 	for index, value := range expanded {
 		localPath := value.track.LocalAudioPath
+		if len(s.Config.LocalTrackingStartCommand) == 0 || len(s.Config.LocalTrackingStopCommand) == 0 {
+			localPath = ""
+		}
 		if localPath != "" {
 			if _, err := os.Stat(localPath); err != nil {
 				localPath = ""
@@ -229,11 +240,12 @@ func (s Service) random() *rand.Rand {
 	return rand.New(rand.NewSource(time.Now().UnixNano()))
 }
 
-func (s Service) videoCommand(items []Item, manifestPath string, manifest tracksession.Manifest) (string, []string, error) {
+func (s Service) videoCommand(items []Item, scriptPath, manifestPath string, manifest tracksession.Manifest) (string, []string, error) {
 	if len(items) == 0 {
 		return "", nil, fmt.Errorf("The queue is empty.")
 	}
 	additional := []string{
+		"--script=" + scriptPath,
 		"--script-opt=playlistmaker_history-manifest_path=" + manifestPath,
 		"--script-opt=playlistmaker_history-event_path=" + manifest.EventPath,
 		fmt.Sprintf("--script-opt=playlistmaker_history-minimum_watched_percent=%d", manifest.MinimumWatchedPercent),

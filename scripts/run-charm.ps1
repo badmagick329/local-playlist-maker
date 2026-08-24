@@ -41,7 +41,6 @@ if ($Backend -in @('bridge', 'go-library', 'compare')) {
     $bridgeSources = @(
         Get-ChildItem -Path (Join-Path $repositoryRoot 'src\PlaylistMaker.Bridge'), (Join-Path $repositoryRoot 'src\PlaylistMaker.App') -Recurse -File |
             Where-Object { $_.Extension -in '.cs', '.csproj' }
-        Get-Item -LiteralPath (Join-Path $repositoryRoot 'mpv-scripts\playlistmaker-history.lua')
     )
     $bridgeFingerprint = Get-SourceFingerprint -Sources $bridgeSources
     $bridgeDirectory = Join-Path $outputDirectory "bridge-$bridgeFingerprint"
@@ -57,7 +56,7 @@ if ($Backend -in @('bridge', 'go-library', 'compare')) {
 
 $goSources = @(
     Get-ChildItem -Path $goProject -Recurse -File |
-        Where-Object { $_.Extension -eq '.go' -or $_.Name -in 'go.mod', 'go.sum' }
+        Where-Object { $_.Extension -in '.go', '.lua' -or $_.Name -in 'go.mod', 'go.sum' }
 )
 $goFingerprint = Get-SourceFingerprint -Sources $goSources
 $executable = Join-Path $outputDirectory "playlistmaker-charm-$goFingerprint.exe"
