@@ -46,7 +46,7 @@ func (p *Player) Preflight(ctx context.Context, deviceName string) error {
 		return fmt.Errorf("Spotify device name %q matched %d devices", deviceName, len(matches))
 	}
 	device := matches[0]
-	if device.ID == "" || device.Restricted || device.VolumePercent == nil {
+	if device.ID == "" || device.Restricted || !device.SupportsVolume || device.VolumePercent == nil {
 		return fmt.Errorf("Spotify device %q does not support volume control", deviceName)
 	}
 	p.deviceID, p.originalVolume, p.prepared = device.ID, *device.VolumePercent, true
@@ -92,7 +92,7 @@ func (p *Player) Close(ctx context.Context) error {
 	return first
 }
 
-func Recover(ctx context.Context, client *Client, statePath string) error {
+func Recover(ctx context.Context, client *Client, statePath string, alive ...func(int) bool) error {
 	contents, err := os.ReadFile(statePath)
 	if os.IsNotExist(err) {
 		return nil
@@ -103,6 +103,13 @@ func Recover(ctx context.Context, client *Client, statePath string) error {
 	var state ActiveState
 	if err := json.Unmarshal(contents, &state); err != nil {
 		return err
+	}
+	isAlive := processAlive
+	if len(alive) > 0 && alive[0] != nil {
+		isAlive = alive[0]
+	}
+	if state.HelperPID > 0 && isAlive(state.HelperPID) {
+		return nil
 	}
 	if err := client.Pause(ctx, state.DeviceID); err != nil {
 		return err

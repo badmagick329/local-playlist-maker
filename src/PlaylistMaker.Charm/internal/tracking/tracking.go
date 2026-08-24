@@ -29,10 +29,24 @@ func (Noop) Stop(context.Context) error         { return nil }
 func (Noop) Close(context.Context) error        { return nil }
 
 type CommandRunner interface {
+	Start(context.Context, string, []string) error
 	Run(context.Context, string, []string) error
 }
 
 type OSCommandRunner struct{}
+
+func (OSCommandRunner) Start(ctx context.Context, program string, arguments []string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	command := exec.Command(program, arguments...)
+	command.Stdin, command.Stdout, command.Stderr = nil, io.Discard, io.Discard
+	if err := command.Start(); err != nil {
+		return err
+	}
+	go func() { _ = command.Wait() }()
+	return nil
+}
 
 func (OSCommandRunner) Run(ctx context.Context, program string, arguments []string) error {
 	command := exec.CommandContext(ctx, program, arguments...)
@@ -50,15 +64,37 @@ func (p Local) Start(ctx context.Context, track Track) error {
 	if track.LocalAudioPath == "" {
 		return fmt.Errorf("track %q has no local audio", track.TrackID)
 	}
-	return p.run(ctx, p.StartCommand, track)
+	return p.start(ctx, p.StartCommand, track)
 }
 
 func (p Local) Stop(ctx context.Context) error  { return p.run(ctx, p.StopCommand, Track{}) }
 func (p Local) Close(ctx context.Context) error { return p.Stop(ctx) }
 
 func (p Local) run(ctx context.Context, command []string, track Track) error {
+	program, arguments, runner, err := p.command(command, track)
+	if err != nil {
+		return err
+	}
+	if err := runner.Run(ctx, program, arguments); err != nil {
+		return fmt.Errorf("run local tracking command: %w", err)
+	}
+	return nil
+}
+
+func (p Local) start(ctx context.Context, command []string, track Track) error {
+	program, arguments, runner, err := p.command(command, track)
+	if err != nil {
+		return err
+	}
+	if err := runner.Start(ctx, program, arguments); err != nil {
+		return fmt.Errorf("start local tracking command: %w", err)
+	}
+	return nil
+}
+
+func (p Local) command(command []string, track Track) (string, []string, CommandRunner, error) {
 	if len(command) == 0 || strings.TrimSpace(command[0]) == "" {
-		return fmt.Errorf("local tracking command is not configured")
+		return "", nil, nil, fmt.Errorf("local tracking command is not configured")
 	}
 	arguments := make([]string, len(command)-1)
 	for index, argument := range command[1:] {
@@ -70,10 +106,7 @@ func (p Local) run(ctx context.Context, command []string, track Track) error {
 	if runner == nil {
 		runner = OSCommandRunner{}
 	}
-	if err := runner.Run(ctx, command[0], arguments); err != nil {
-		return fmt.Errorf("run local tracking command: %w", err)
-	}
-	return nil
+	return command[0], arguments, runner, nil
 }
 
 type Fake struct {

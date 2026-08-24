@@ -10,19 +10,22 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Client struct {
 	Auth    *Auth
 	HTTP    *http.Client
 	APIBase string
+	Sleep   func(context.Context, time.Duration) error
 }
 
 type Device struct {
-	ID            string `json:"id"`
-	Name          string `json:"name"`
-	Restricted    bool   `json:"is_restricted"`
-	VolumePercent *int   `json:"volume_percent"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Restricted     bool   `json:"is_restricted"`
+	SupportsVolume bool   `json:"supports_volume"`
+	VolumePercent  *int   `json:"volume_percent"`
 }
 
 type Track struct {
@@ -64,6 +67,12 @@ func (c *Client) Pause(ctx context.Context, deviceID string) error {
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Track, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 10 {
+		limit = 10
+	}
 	path := "/search?type=track&limit=" + strconv.Itoa(limit) + "&q=" + url.QueryEscape(query)
 	var payload struct {
 		Tracks struct {
@@ -96,7 +105,8 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 	if err != nil {
 		return err
 	}
-	for attempt := 0; attempt < 2; attempt++ {
+	refreshed, rateRetried := false, false
+	for {
 		var encoded []byte
 		if body != nil {
 			encoded, err = json.Marshal(body)
@@ -121,11 +131,26 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 		if readErr != nil {
 			return readErr
 		}
-		if response.StatusCode == http.StatusUnauthorized && attempt == 0 {
+		if response.StatusCode == http.StatusUnauthorized && !refreshed {
 			access, err = c.Auth.Refresh(ctx)
 			if err != nil {
 				return err
 			}
+			refreshed = true
+			continue
+		}
+		if response.StatusCode == http.StatusTooManyRequests {
+			delay, retryErr := retryAfter(response.Header.Get("Retry-After"), time.Now())
+			if retryErr != nil || rateRetried || delay > 30*time.Second {
+				if retryErr != nil {
+					return fmt.Errorf("Spotify API rate limited request: %w", retryErr)
+				}
+				return fmt.Errorf("Spotify API rate limited request; retry after %s", delay)
+			}
+			if err := c.sleep(ctx, delay); err != nil {
+				return err
+			}
+			rateRetried = true
 			continue
 		}
 		if response.StatusCode/100 != 2 {
@@ -138,7 +163,35 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 		}
 		return nil
 	}
-	return fmt.Errorf("Spotify authentication retry failed")
+}
+
+func retryAfter(value string, now time.Time) (time.Duration, error) {
+	if seconds, err := strconv.Atoi(strings.TrimSpace(value)); err == nil && seconds >= 0 {
+		return time.Duration(seconds) * time.Second, nil
+	}
+	when, err := http.ParseTime(value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid Retry-After value %q", value)
+	}
+	delay := when.Sub(now)
+	if delay < 0 {
+		delay = 0
+	}
+	return delay, nil
+}
+
+func (c *Client) sleep(ctx context.Context, delay time.Duration) error {
+	if c.Sleep != nil {
+		return c.Sleep(ctx, delay)
+	}
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func trackID(value string) (string, error) {

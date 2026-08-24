@@ -60,7 +60,23 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		return ScanResult{}, err
 	}
 	result := ScanResult{}
-	changed := false
+	dirty := 0
+	flush := func() error {
+		if dirty == 0 {
+			return nil
+		}
+		if err := catalog.Write(s.CatalogPath, media); err != nil {
+			return err
+		}
+		dirty = 0
+		return nil
+	}
+	fail := func(scanErr error) (ScanResult, error) {
+		if err := flush(); err != nil {
+			return result, err
+		}
+		return result, scanErr
+	}
 	for index := range media.Tracks {
 		track := &media.Tracks[index]
 		if track.SpotifyURI != "" || track.SpotifyIgnored {
@@ -71,13 +87,18 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		if cached.ISRC != "" {
 			matches, err := s.Client.Search(ctx, "isrc:"+cached.ISRC, 10)
 			if err != nil {
-				return result, err
+				return fail(err)
 			}
 			item.Candidates = candidates(matches)
 			if len(item.Candidates) == 1 {
 				track.SpotifyURI = item.Candidates[0].URI
 				result.AutoLinked++
-				changed = true
+				dirty++
+				if dirty >= 25 {
+					if err := flush(); err != nil {
+						return result, err
+					}
+				}
 				continue
 			}
 			if len(item.Candidates) > 1 {
@@ -86,15 +107,20 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 				continue
 			}
 		}
-		matches, err := s.Client.Search(ctx, fmt.Sprintf("artist:%q track:%q", track.Artist, track.Title), 20)
+		matches, err := s.Client.Search(ctx, fmt.Sprintf("artist:%q track:%q", track.Artist, track.Title), 10)
 		if err != nil {
-			return result, err
+			return fail(err)
 		}
 		exact := exactMatches(track.Artist, track.Title, matches)
 		if len(exact) == 1 {
 			track.SpotifyURI = exact[0].URI
 			result.AutoLinked++
-			changed = true
+			dirty++
+			if dirty >= 25 {
+				if err := flush(); err != nil {
+					return result, err
+				}
+			}
 			continue
 		}
 		if len(exact) > 1 {
@@ -104,10 +130,8 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		}
 		result.Items = append(result.Items, item)
 	}
-	if changed {
-		if err := catalog.Write(s.CatalogPath, media); err != nil {
-			return result, err
-		}
+	if err := flush(); err != nil {
+		return result, err
 	}
 	return result, nil
 }
@@ -116,7 +140,7 @@ func (s Service) Search(ctx context.Context, query string) ([]Candidate, error) 
 	if strings.TrimSpace(query) == "" {
 		return nil, nil
 	}
-	tracks, err := s.Client.Search(ctx, query, 20)
+	tracks, err := s.Client.Search(ctx, query, 10)
 	if err != nil {
 		return nil, err
 	}

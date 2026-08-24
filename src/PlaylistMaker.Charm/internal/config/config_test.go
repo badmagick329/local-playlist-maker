@@ -113,6 +113,29 @@ func TestLoadReportsTheMissingFieldAndResolvedConfigPath(t *testing.T) {
 	}
 }
 
+func TestLoadAllowsSpotifyOnlyConfiguration(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contents := strings.ReplaceAll(validConfig("spotifyClientId: client\nspotifyDeviceName: Living Room\nspotifyRedirectUri: http://127.0.0.1/callback\n"), "audioDirectories: [audio]\n", "audioDirectories: []\n")
+	contents = strings.ReplaceAll(contents, "localTrackingStartCommand: [foobar2000.exe, \"{audioPath}\"]\nlocalTrackingStopCommand: [foobar2000.exe, /stop]\n", "")
+	writeConfig(t, path, contents)
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.AudioDirectories) != 0 || len(loaded.LocalTrackingStartCommand) != 0 || len(loaded.LocalTrackingStopCommand) != 0 {
+		t.Fatalf("Spotify-only config = %#v", loaded)
+	}
+}
+
+func TestLoadRequiresBothLocalTrackingCommands(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	contents := strings.ReplaceAll(validConfig(""), "localTrackingStopCommand: [foobar2000.exe, /stop]\n", "")
+	writeConfig(t, path, contents)
+	if _, err := Load(path); err == nil || !strings.Contains(err.Error(), "must either both") {
+		t.Fatalf("one local command error = %v", err)
+	}
+}
+
 func writeConfig(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {

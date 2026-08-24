@@ -89,9 +89,9 @@ func TestPlayerRequiresUniqueDeviceAndRestoresVolume(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests = append(requests, request.Method+" "+request.URL.String())
 		if request.URL.Path == "/me/player/devices" {
-			devices := []map[string]any{{"id": "one", "name": "Living Room", "is_restricted": false, "volume_percent": 37}}
+			devices := []map[string]any{{"id": "one", "name": "Living Room", "is_restricted": false, "supports_volume": true, "volume_percent": 37}}
 			if duplicate {
-				devices = append(devices, map[string]any{"id": "two", "name": "living room", "is_restricted": false, "volume_percent": 20})
+				devices = append(devices, map[string]any{"id": "two", "name": "living room", "is_restricted": false, "supports_volume": true, "volume_percent": 20})
 			}
 			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": devices})
 			return
@@ -122,6 +122,104 @@ func TestPlayerRequiresUniqueDeviceAndRestoresVolume(t *testing.T) {
 	duplicate = true
 	if err := (&Player{Client: client, StatePath: state}).Preflight(context.Background(), "Living Room"); err == nil || !strings.Contains(err.Error(), "matched 2") {
 		t.Fatalf("duplicate device error = %v", err)
+	}
+}
+
+func TestSearchClampsLimitAndRetriesShortRateLimitOnce(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests++
+		if request.URL.Query().Get("limit") != "10" {
+			t.Errorf("search limit = %q", request.URL.Query().Get("limit"))
+		}
+		if requests == 1 {
+			writer.Header().Set("Retry-After", "1")
+			writer.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"tracks": map[string]any{"items": []any{}}})
+	}))
+	defer server.Close()
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL, Sleep: func(_ context.Context, delay time.Duration) error {
+		if delay != time.Second {
+			t.Fatalf("retry delay = %s", delay)
+		}
+		return nil
+	}}
+	if _, err := client.Search(context.Background(), "query", 20); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("requests = %d", requests)
+	}
+}
+
+func TestSearchRejectsLongRateLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		writer.Header().Set("Retry-After", "31")
+		writer.WriteHeader(http.StatusTooManyRequests)
+	}))
+	defer server.Close()
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	if _, err := client.Search(context.Background(), "query", 10); err == nil || !strings.Contains(err.Error(), "rate limited") {
+		t.Fatalf("rate limit error = %v", err)
+	}
+}
+
+func TestRecoverLeavesActiveStateAndRestoresStaleState(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		requests++
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "active.json")
+	state, _ := json.Marshal(ActiveState{SessionID: "session", HelperPID: 42, DeviceID: "device", OriginalVolume: 37})
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	if err := Recover(context.Background(), client, statePath, func(pid int) bool { return pid == 42 }); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 0 {
+		t.Fatal("active Spotify state was recovered")
+	}
+	if err := Recover(context.Background(), client, statePath, func(int) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 2 {
+		t.Fatalf("stale recovery requests = %d", requests)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatal("stale state remained")
+	}
+}
+
+func TestRecoverHandlesMissingAndPreservesMalformedState(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "active.json")
+	if err := Recover(context.Background(), nil, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("not json"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := Recover(context.Background(), nil, path); err == nil {
+		t.Fatal("malformed state was accepted")
+	}
+	if _, err := os.Stat(path); err != nil {
+		t.Fatal("malformed state was removed")
+	}
+}
+
+func TestPlayerRejectsDeviceWithoutVolumeSupport(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "one", "name": "Room", "supports_volume": false, "volume_percent": 20}}})
+	}))
+	defer server.Close()
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	if err := (&Player{Client: client, StatePath: filepath.Join(t.TempDir(), "state")}).Preflight(context.Background(), "room"); err == nil {
+		t.Fatal("unsupported volume device was accepted")
 	}
 }
 

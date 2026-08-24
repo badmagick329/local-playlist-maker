@@ -81,9 +81,6 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 		}
 		c.IgnoredVideoDirectories[index] = pathid.Resolve(configDirectory, value)
 	}
-	if len(c.AudioDirectories) == 0 {
-		return fmt.Errorf("audioDirectories must contain at least one directory")
-	}
 	for index, value := range c.AudioDirectories {
 		if err := required(fmt.Sprintf("audioDirectories[%d]", index), value); err != nil {
 			return err
@@ -116,12 +113,15 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 	}{
 		{"videoPlaylistCommand", c.VideoPlaylistCommand},
 		{"videoSingleFileCommand", c.VideoSingleFileCommand},
-		{"localTrackingStartCommand", c.LocalTrackingStartCommand},
-		{"localTrackingStopCommand", c.LocalTrackingStopCommand},
 	} {
 		if len(command.value) == 0 || strings.TrimSpace(command.value[0]) == "" {
 			return fmt.Errorf("%s must contain a program", command.name)
 		}
+	}
+	localStart := len(c.LocalTrackingStartCommand) > 0 && strings.TrimSpace(c.LocalTrackingStartCommand[0]) != ""
+	localStop := len(c.LocalTrackingStopCommand) > 0 && strings.TrimSpace(c.LocalTrackingStopCommand[0]) != ""
+	if localStart != localStop {
+		return fmt.Errorf("localTrackingStartCommand and localTrackingStopCommand must either both be configured or both be absent")
 	}
 	if err := required("videoPlaylistSuffix", c.VideoPlaylistSuffix); err != nil {
 		return err

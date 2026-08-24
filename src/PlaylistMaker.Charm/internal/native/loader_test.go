@@ -25,14 +25,25 @@ func TestLoaderBuildsThePortableLibraryFixture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Tracks) != 2 || len(snapshot.Tracks[0].Variants) != 3 || snapshot.Tracks[0].Artist != "AURORA" {
+	if len(snapshot.Tracks) != 2 {
 		t.Fatalf("unexpected snapshot: %#v", snapshot.Tracks)
 	}
-	if got := snapshot.Tracks[0].Variants[2]; got.ID != filepath.Join(root, "VIDEOS", "240101 AURORA - Northern Lights.mkv") || got.Category != "Music Video" {
+	var aurora, nayeon library.Track
+	for _, track := range snapshot.Tracks {
+		if track.Artist == "AURORA" {
+			aurora = track
+		} else if track.Artist == "나연" {
+			nayeon = track
+		}
+	}
+	if len(aurora.Variants) != 3 {
+		t.Fatalf("AURORA variants = %#v", aurora.Variants)
+	}
+	if got := aurora.Variants[2]; got.ID != filepath.Join(root, "VIDEOS", "240101 AURORA - Northern Lights.mkv") || got.Category != "Music Video" {
 		t.Fatalf("default video identity/category = %#v", got)
 	}
-	if snapshot.Tracks[1].Title != "Pop!" || snapshot.Tracks[1].Variants[0].Filename != "240301 나연 - Pop!.mkv" {
-		t.Fatalf("unicode track = %#v", snapshot.Tracks[1])
+	if nayeon.Title != "Pop!" || nayeon.Variants[0].Filename != "240301 나연 - Pop!.mkv" {
+		t.Fatalf("unicode track = %#v", nayeon)
 	}
 }
 
