@@ -128,9 +128,11 @@ func main() {
 			_ = tracksession.WriteReady(manifest.ReadyPath, tracksession.Ready{Error: err.Error()})
 			os.Exit(1)
 		}
-		local := tracking.Local{StartCommand: goConfig.LocalTrackingStartCommand, StopCommand: goConfig.LocalTrackingStopCommand}
-		runtime := &tracksession.Runtime{Local: local}
-		if goConfig.SpotifyClientID != "" {
+		runtime := &tracksession.Runtime{}
+		if len(goConfig.LocalTrackingStartCommand) > 0 && len(goConfig.LocalTrackingStopCommand) > 0 {
+			runtime.Local = tracking.Local{StartCommand: goConfig.LocalTrackingStartCommand, StopCommand: goConfig.LocalTrackingStopCommand}
+		}
+		if goConfig.SpotifyClientID != "" && !*check {
 			auth := &spotify.Auth{ClientID: goConfig.SpotifyClientID, RedirectURI: goConfig.SpotifyRedirectURI, TokenPath: filepath.Join(goConfig.DataDirectory, "spotify-auth.json")}
 			client := &spotify.Client{Auth: auth}
 			runtime.Spotify = &spotify.Player{Client: client, StatePath: manifest.SpotifyStatePath, SessionID: manifest.SessionID, HelperPID: os.Getpid()}
@@ -191,8 +193,8 @@ func main() {
 		loggingEnabled := goConfig.PlaybackHistoryEnabled && !*disableHistory
 		historyService := history.Service{DataDirectory: goConfig.DataDirectory, MinimumWatchedPercent: goConfig.PlaybackHistoryMinimumWatchedPercent}
 		historyPath = historyService.HistoryPath()
-		if loggingEnabled && !*check {
-			if err := historyService.Recover(); err != nil {
+		if !*check {
+			if err := tracksession.RecoverStale(context.Background(), goConfig.DataDirectory, nil); err != nil {
 				fmt.Fprintf(os.Stderr, "PlaylistMaker history recovery failed: %v\n", err)
 			}
 		}

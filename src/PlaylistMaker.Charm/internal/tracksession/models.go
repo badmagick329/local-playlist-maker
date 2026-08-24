@@ -28,7 +28,11 @@ type Manifest struct {
 	DiagnosticsPath       string    `json:"diagnosticsPath"`
 	LockPath              string    `json:"lockPath"`
 	SpotifyStatePath      string    `json:"spotifyStatePath"`
+	HelperProcessID       int       `json:"helperProcessId,omitempty"`
 	MPVProcessID          int       `json:"mpvProcessId,omitempty"`
+	LoadedPositions       []int     `json:"loadedPositions,omitempty"`
+	TerminalPositions     []int     `json:"terminalPositions,omitempty"`
+	ShutdownSeen          bool      `json:"shutdownSeen,omitempty"`
 	AllowUntracked        bool      `json:"allowUntracked"`
 	HistoryEnabled        bool      `json:"historyEnabled"`
 	HistoryPath           string    `json:"historyPath,omitempty"`

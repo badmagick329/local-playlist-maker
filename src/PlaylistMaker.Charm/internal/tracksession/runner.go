@@ -30,12 +30,17 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 		return err
 	}
 	defer os.Remove(manifest.LockPath)
-	ready := false
+	cleanup := false
 	defer func() {
-		if ready {
+		if cleanup {
 			Cleanup(manifestPath, manifest)
 		}
 	}()
+	manifest.HelperProcessID = os.Getpid()
+	if err := WriteManifest(manifestPath, manifest); err != nil {
+		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
+		return err
+	}
 	if r.Runtime == nil {
 		err = fmt.Errorf("tracking runtime is unavailable")
 		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
@@ -52,7 +57,6 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 		r.Runtime.Close(context.Background())
 		return err
 	}
-	ready = true
 	defer r.Runtime.Close(context.Background())
 	poll := r.Poll
 	if poll == 0 {
@@ -70,17 +74,13 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 			return ctx.Err()
 		case <-ticker.C:
 			if _, cancelErr := os.Stat(manifest.CancelPath); cancelErr == nil {
+				cleanup = true
 				return nil
 			}
 			latest, readErr := ReadManifest(manifestPath)
 			if readErr == nil {
 				manifest = latest
-				if manifest.MPVProcessID != 0 {
-					mpvSeen = true
-					if !r.alive(manifest.MPVProcessID) {
-						return nil
-					}
-				}
+				mpvSeen = mpvSeen || manifest.MPVProcessID != 0
 			}
 			events, next, readErr := readEvents(manifest.EventPath, offset)
 			if readErr != nil {
@@ -94,25 +94,60 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 				seen[event.EventID] = true
 				switch event.Event {
 				case "file-loaded":
+					if addPosition(&manifest.LoadedPositions, event.PlaylistPosition) {
+						if err := WriteManifest(manifestPath, manifest); err != nil {
+							return err
+						}
+					}
 					if event.PlaylistPosition != activePosition && event.PlaylistPosition >= 0 && event.PlaylistPosition < len(manifest.Entries) {
 						entry := manifest.Entries[event.PlaylistPosition]
 						r.Runtime.Load(ctx, event.PlaylistPosition, entry.Track)
 						activePosition = event.PlaylistPosition
 					}
 				case "end-file":
+					if addPosition(&manifest.TerminalPositions, event.PlaylistPosition) {
+						if err := WriteManifest(manifestPath, manifest); err != nil {
+							return err
+						}
+					}
 					if activePosition != -1 {
 						r.Runtime.End(ctx)
 						activePosition = -1
 					}
 				case "shutdown":
+					manifest.ShutdownSeen = true
+					if err := WriteManifest(manifestPath, manifest); err != nil {
+						return err
+					}
+					cleanup = true
 					return nil
 				}
+			}
+			if manifest.MPVProcessID != 0 && !r.alive(manifest.MPVProcessID) {
+				if err := recoverHistory(manifest); err != nil {
+					return err
+				}
+				cleanup = true
+				return nil
 			}
 			if !mpvSeen && time.Since(manifest.CreatedAtUTC) > 30*time.Second {
 				return fmt.Errorf("mpv did not attach to the tracking session")
 			}
 		}
 	}
+}
+
+func addPosition(values *[]int, position int) bool {
+	if position < 0 {
+		return false
+	}
+	for _, value := range *values {
+		if value == position {
+			return false
+		}
+	}
+	*values = append(*values, position)
+	return true
 }
 
 func (r Runner) acquire(manifest Manifest) error {

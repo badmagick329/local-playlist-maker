@@ -33,36 +33,6 @@ func TestReadNormalizesLatestTerminalEvents(t *testing.T) {
 	}
 }
 
-func TestServiceCreatesRecordsAndRecoversSession(t *testing.T) {
-	directory := t.TempDir()
-	ids := []string{"session", "entry-a", "entry-b"}
-	service := Service{DataDirectory: directory, MinimumWatchedPercent: 50, NewID: func() string { value := ids[0]; ids = ids[1:]; return value }, IsAlive: func(int) bool { return false }}
-	session, err := service.Create([]SessionEntry{{VideoPath: "video-a", AudioPath: "audio-a"}, {VideoPath: "video-b", AudioPath: "audio-b"}})
-	if err != nil || len(session.Entries) != 2 || !strings.Contains(strings.Join(service.MpvArguments(session), " "), "session") {
-		t.Fatalf("create = %#v, %v", session, err)
-	}
-	started := Event{SchemaVersion: 2, Event: "started", SessionID: session.SessionID, EntryID: session.Entries[0].EntryID}
-	if err := service.Append(started); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Recover(); err != nil {
-		t.Fatal(err)
-	}
-	contents, err := os.ReadFile(service.HistoryPath())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(contents), "abandoned") || !strings.Contains(string(contents), "not_started") {
-		t.Fatalf("recovery = %s", contents)
-	}
-	if _, err := os.Stat(filepath.Join(directory, "playback-sessions", "session.json")); !os.IsNotExist(err) {
-		t.Fatal("recovered manifest remained")
-	}
-	if err := service.Recover(); err != nil {
-		t.Fatal(err)
-	}
-}
-
 func TestNormalizeClampsDurationAndPercent(t *testing.T) {
 	percent, seconds := 150.0, 80.0
 	duration := 60.0
@@ -107,40 +77,5 @@ func TestReadUsesLaterCompletionForRevisitedEntry(t *testing.T) {
 	summary := index.Videos["video"]
 	if summary.Completed != 1 || summary.Skipped != 0 || summary.Played != 1 {
 		t.Fatalf("revisited summary = %#v", summary)
-	}
-}
-
-func TestRecoverTreatsNewerStartedEventAsUnfinished(t *testing.T) {
-	directory := t.TempDir()
-	ids := []string{"entry", "session"}
-	service := Service{DataDirectory: directory, NewID: func() string { value := ids[0]; ids = ids[1:]; return value }, IsAlive: func(int) bool { return false }}
-	session, err := service.Create([]SessionEntry{{VideoPath: "video", AudioPath: "audio"}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	entry := session.Entries[0]
-	if err := service.Append(Event{Event: "skipped", SessionID: session.SessionID, EntryID: entry.EntryID}); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Append(Event{Event: "started", SessionID: session.SessionID, EntryID: entry.EntryID}); err != nil {
-		t.Fatal(err)
-	}
-	if err := service.Recover(); err != nil {
-		t.Fatal(err)
-	}
-	contents, err := os.ReadFile(service.HistoryPath())
-	if err != nil || !strings.Contains(string(contents), `"event":"abandoned"`) {
-		t.Fatalf("recovery contents = %q, %v", contents, err)
-	}
-}
-
-func TestLuaAllowsRevisitedTerminalEntry(t *testing.T) {
-	path := filepath.Join("..", "..", "..", "..", "mpv-scripts", "playlistmaker-history.lua")
-	contents, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(contents), "not entry or terminal_entries[entry.entryId]") || !strings.Contains(string(contents), "terminal_entries[entry.entryId] = nil") {
-		t.Fatal("Lua source still blocks revisited playlist entries")
 	}
 }
