@@ -16,12 +16,13 @@ import (
 )
 
 type Candidate struct {
-	URI         string
-	Artist      string
-	Title       string
-	Album       string
-	ReleaseDate string
-	DurationMS  int
+	URI              string
+	Artist           string
+	Title            string
+	Album            string
+	ReleaseDate      string
+	DurationMS       int
+	ReleaseDateMatch bool
 }
 
 type Item struct {
@@ -164,15 +165,9 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 		if len(exact) > 1 {
 			item.Candidates = prioritizeReleaseDate(track.ReleaseDate, exact)
 			item.Reason = "Multiple exact editions require confirmation"
-			if hasReleaseDateMatch(track.ReleaseDate, item.Candidates) {
-				item.Reason = "Multiple exact editions; matching release date suggested first"
-			}
 		} else {
 			item.Candidates = ranked(track.Artist, track.Title, track.ReleaseDate, matches)
 			item.Reason = "Fuzzy suggestions require confirmation"
-			if hasReleaseDateMatch(track.ReleaseDate, item.Candidates) {
-				item.Reason = "Fuzzy suggestion with matching release date requires confirmation"
-			}
 		}
 		result.Items = append(result.Items, item)
 	}
@@ -287,7 +282,8 @@ func ranked(artist, title, releaseDate string, values []spotify.Track) []Candida
 		artistScore, artistOK := fuzzyScore(artist, current.Artist)
 		titleScore, titleOK := fuzzyScore(title, current.Title)
 		if artistOK || titleOK {
-			items = append(items, scored{value: current, score: artistScore + titleScore, dateMatch: releaseDateMatches(releaseDate, current.ReleaseDate)})
+			current.ReleaseDateMatch = releaseDateMatches(releaseDate, current.ReleaseDate)
+			items = append(items, scored{value: current, score: artistScore + titleScore, dateMatch: current.ReleaseDateMatch})
 		}
 	}
 	sort.SliceStable(items, func(i, j int) bool {
@@ -303,19 +299,13 @@ func ranked(artist, title, releaseDate string, values []spotify.Track) []Candida
 	return result
 }
 
-func hasReleaseDateMatch(releaseDate string, values []Candidate) bool {
-	for _, value := range values {
-		if releaseDateMatches(releaseDate, value.ReleaseDate) {
-			return true
-		}
-	}
-	return false
-}
-
 func prioritizeReleaseDate(releaseDate string, values []Candidate) []Candidate {
 	result := append([]Candidate(nil), values...)
+	for index := range result {
+		result[index].ReleaseDateMatch = releaseDateMatches(releaseDate, result[index].ReleaseDate)
+	}
 	sort.SliceStable(result, func(i, j int) bool {
-		return releaseDateMatches(releaseDate, result[i].ReleaseDate) && !releaseDateMatches(releaseDate, result[j].ReleaseDate)
+		return result[i].ReleaseDateMatch && !result[j].ReleaseDateMatch
 	})
 	return result
 }

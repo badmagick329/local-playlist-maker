@@ -1990,12 +1990,16 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			lines = []string{"All eligible catalogue tracks have Spotify links or are ignored", "", "r rescan • U/esc close"}
 			break
 		}
-		lines = []string{fmt.Sprintf("%d of %d", m.spotifyIndex+1, len(m.spotifyItems)), "Track: " + item.Artist + " — " + item.Title, "Album: " + emptyAny(item.Album), "Release: " + emptyAny(item.ReleaseDate), item.Reason}
+		lines = []string{fmt.Sprintf("%d of %d", m.spotifyIndex+1, len(m.spotifyItems)), "LOCAL TRACK", item.Artist + " — " + item.Title, "Release: " + emptyAny(item.ReleaseDate)}
 		if len(item.Candidates) == 0 {
-			lines = append(lines, "No suggestion; use / to search or paste a Spotify track")
+			lines = append(lines, "", item.Reason, "No suggestion; use / to search or paste a Spotify track")
 		} else {
 			candidate := item.Candidates[min(m.spotifyCandidate, len(item.Candidates)-1)]
-			lines = append(lines, fmt.Sprintf("Candidate %d of %d: %s — %s", m.spotifyCandidate+1, len(item.Candidates), candidate.Artist, candidate.Title), "Album: "+candidate.Album, "Release: "+candidate.ReleaseDate, fmt.Sprintf("Duration: %d:%02d", candidate.DurationMS/60000, candidate.DurationMS/1000%60))
+			lines = append(lines, "", fmt.Sprintf("SPOTIFY CANDIDATE %d of %d", m.spotifyCandidate+1, len(item.Candidates)), candidate.Artist+" — "+candidate.Title, "Release: "+emptyAny(candidate.ReleaseDate))
+			if candidate.ReleaseDateMatch {
+				lines = append(lines, "Release date matches")
+			}
+			lines = append(lines, "Album: "+emptyAny(candidate.Album), fmt.Sprintf("Duration: %d:%02d", candidate.DurationMS/60000, candidate.DurationMS/1000%60), "", item.Reason)
 		}
 		lines = append(lines, "", "h/l candidate • enter confirm • / search or paste • s skip • i ignore • r rescan • U/esc close")
 	case modeSpotifySearch:
