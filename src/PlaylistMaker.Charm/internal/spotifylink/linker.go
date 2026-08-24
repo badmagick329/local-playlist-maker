@@ -164,7 +164,11 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 		if len(exact) > 1 {
 			item.Candidates, item.Reason = exact, "Multiple exact editions require confirmation"
 		} else {
-			item.Candidates, item.Reason = ranked(track.Artist, track.Title, matches), "Fuzzy suggestions require confirmation"
+			item.Candidates = ranked(track.Artist, track.Title, track.ReleaseDate, matches)
+			item.Reason = "Fuzzy suggestions require confirmation"
+			if hasReleaseDateMatch(track.ReleaseDate, item.Candidates) {
+				item.Reason = "Fuzzy suggestion with matching release date requires confirmation"
+			}
 		}
 		result.Items = append(result.Items, item)
 	}
@@ -267,10 +271,11 @@ func exactMatches(artist, title string, values []spotify.Track) []Candidate {
 	return result
 }
 
-func ranked(artist, title string, values []spotify.Track) []Candidate {
+func ranked(artist, title, releaseDate string, values []spotify.Track) []Candidate {
 	type scored struct {
-		value Candidate
-		score int
+		value     Candidate
+		score     int
+		dateMatch bool
 	}
 	items := []scored{}
 	for _, value := range values {
@@ -278,15 +283,40 @@ func ranked(artist, title string, values []spotify.Track) []Candidate {
 		artistScore, artistOK := fuzzyScore(artist, current.Artist)
 		titleScore, titleOK := fuzzyScore(title, current.Title)
 		if artistOK || titleOK {
-			items = append(items, scored{value: current, score: artistScore + titleScore})
+			items = append(items, scored{value: current, score: artistScore + titleScore, dateMatch: releaseDateMatches(releaseDate, current.ReleaseDate)})
 		}
 	}
-	sort.SliceStable(items, func(i, j int) bool { return items[i].score > items[j].score })
+	sort.SliceStable(items, func(i, j int) bool {
+		if items[i].dateMatch != items[j].dateMatch {
+			return items[i].dateMatch
+		}
+		return items[i].score > items[j].score
+	})
 	result := make([]Candidate, len(items))
 	for index := range items {
 		result[index] = items[index].value
 	}
 	return result
+}
+
+func hasReleaseDateMatch(releaseDate string, values []Candidate) bool {
+	for _, value := range values {
+		if releaseDateMatches(releaseDate, value.ReleaseDate) {
+			return true
+		}
+	}
+	return false
+}
+
+func releaseDateMatches(left, right string) bool {
+	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
+	if left == "" || right == "" {
+		return false
+	}
+	if len(left) > len(right) {
+		left, right = right, left
+	}
+	return strings.HasPrefix(right, left)
 }
 
 func fuzzyScore(left, right string) (int, bool) {

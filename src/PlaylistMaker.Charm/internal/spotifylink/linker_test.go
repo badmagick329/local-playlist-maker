@@ -66,6 +66,17 @@ func TestScanAutoSavesOnlyUniqueExactMatch(t *testing.T) {
 	}
 }
 
+func TestReleaseDateMatchesDifferentPrecision(t *testing.T) {
+	for _, values := range [][2]string{{"2024-01-01", "2024"}, {"2024", "2024-01"}} {
+		if !releaseDateMatches(values[0], values[1]) {
+			t.Fatalf("releaseDateMatches(%q, %q) = false", values[0], values[1])
+		}
+	}
+	if releaseDateMatches("2024-01-01", "2024-01-15") || releaseDateMatches("2024-01-01", "2023-01-01") || releaseDateMatches("", "2024") {
+		t.Fatal("different or missing release dates matched")
+	}
+}
+
 func TestConfirmAndIgnorePersistLinkDecisions(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "catalog.json")
 	media := catalog.New()
