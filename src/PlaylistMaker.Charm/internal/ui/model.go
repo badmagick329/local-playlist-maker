@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"slices"
 	"strconv"
@@ -101,7 +102,7 @@ type MappingUpdater interface {
 }
 
 type SpotifyUpdater interface {
-	SpotifyScan(context.Context) (spotifylink.ScanResult, error)
+	SpotifyScan(context.Context, func(spotifylink.ScanProgress)) (spotifylink.ScanResult, error)
 	SpotifySearch(context.Context, string) ([]spotifylink.Candidate, error)
 	SpotifyValidate(context.Context, string) (spotifylink.Candidate, error)
 	SpotifyConfirm(context.Context, string, string) error
@@ -147,9 +148,12 @@ type mappingReloadMsg struct {
 	err      error
 }
 type spotifyScanMsg struct {
-	result spotifylink.ScanResult
-	err    error
+	result    spotifylink.ScanResult
+	err       error
+	progress  spotifylink.ScanProgress
+	cancelled bool
 }
+type spotifyScanProgressMsg struct{ progress spotifylink.ScanProgress }
 type spotifySearchMsg struct {
 	items []spotifylink.Candidate
 	err   error
@@ -209,8 +213,17 @@ type Model struct {
 	spotifyIndex      int
 	spotifyCandidate  int
 	spotifyScanning   bool
+	spotifyCancelling bool
+	spotifyProgress   spotifylink.ScanProgress
+	spotifyScan       *spotifyScanRunner
+	spotifyScanCancel context.CancelFunc
 	spotifyQuery      string
 	spotifyDirty      bool
+}
+
+type spotifyScanRunner struct {
+	updates chan spotifyScanProgressMsg
+	done    chan spotifyScanMsg
 }
 
 func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
@@ -278,12 +291,36 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	switch message := message.(type) {
 	case spotifyScanMsg:
 		m.spotifyScanning = false
+		m.spotifyCancelling = false
+		m.spotifyScan = nil
+		m.spotifyScanCancel = nil
+		m.spotifyProgress = message.progress
+		if message.cancelled {
+			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
+			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
+			m.status = fmt.Sprintf("Spotify scan cancelled after %d/%d; %d links saved; %d need review", message.progress.Current, message.progress.Total, message.result.AutoLinked, len(message.result.Items))
+			return m, nil
+		}
 		if message.err != nil {
-			m.status = "Spotify link scan failed: " + message.err.Error()
+			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
+			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
+			if message.progress.Phase == "authenticating" {
+				m.status = "Spotify authentication failed: " + message.err.Error()
+			} else if message.progress.Total > 0 {
+				m.status = fmt.Sprintf("Spotify scan failed at %d/%d; %d links saved; %d need review: %v", message.progress.Current, message.progress.Total, message.result.AutoLinked, len(message.result.Items), message.err)
+			} else {
+				m.status = "Spotify link scan failed: " + message.err.Error()
+			}
 		} else {
 			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
 			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
 			m.status = fmt.Sprintf("%d Spotify links saved automatically; %d need review", message.result.AutoLinked, len(message.result.Items))
+		}
+		return m, nil
+	case spotifyScanProgressMsg:
+		if m.spotifyScanning {
+			m.spotifyProgress = message.progress
+			return m, m.waitSpotifyScanCmd()
 		}
 		return m, nil
 	case spotifySearchMsg:
@@ -426,6 +463,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		if message.String() == "ctrl+q" {
+			if m.spotifyScanCancel != nil {
+				m.spotifyScanCancel()
+			}
 			m.closeHistoryWatcher()
 			return m, tea.Quit
 		}
@@ -551,8 +591,8 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode, m.spotifyScanning, m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = modeSpotifyUpdate, true, nil, 0, 0
-		m.status = "Scanning catalogue tracks missing Spotify links…"
-		return m, m.spotifyScanCmd()
+		m.status = "Starting Spotify link scan…"
+		return m.beginSpotifyScan()
 	}
 
 	switch key.String() {
@@ -834,6 +874,13 @@ func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 
 func (m Model) handleSpotifyUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.spotifyScanning {
+		if key.String() == "esc" || key.String() == "U" || key.String() == "shift+u" {
+			if m.spotifyScanCancel != nil {
+				m.spotifyCancelling = true
+				m.status = "Cancelling Spotify scan…"
+				m.spotifyScanCancel()
+			}
+		}
 		return m, nil
 	}
 	switch key.String() {
@@ -865,7 +912,8 @@ func (m Model) handleSpotifyUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 	case "r":
 		m.spotifyScanning, m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = true, nil, 0, 0
-		return m, m.spotifyScanCmd()
+		m.status = "Starting Spotify link scan…"
+		return m.beginSpotifyScan()
 	case "enter":
 		if item, ok := m.currentSpotifyItem(); ok && m.spotifyCandidate < len(item.Candidates) {
 			return m, m.spotifyConfirmCmd(item.TrackID, item.Candidates[m.spotifyCandidate].URI)
@@ -953,11 +1001,34 @@ func (m Model) mappingReloadCmd() tea.Cmd {
 	}
 }
 
-func (m Model) spotifyScanCmd() tea.Cmd {
+func (m Model) beginSpotifyScan() (tea.Model, tea.Cmd) {
+	ctx, cancel := context.WithCancel(context.Background())
+	runner := &spotifyScanRunner{updates: make(chan spotifyScanProgressMsg, 1), done: make(chan spotifyScanMsg, 1)}
+	m.spotifyScan, m.spotifyScanCancel, m.spotifyCancelling = runner, cancel, false
 	service := m.spotifyUpdater
+	go func() {
+		last := spotifylink.ScanProgress{}
+		result, err := service.SpotifyScan(ctx, func(progress spotifylink.ScanProgress) {
+			last = progress
+			select {
+			case runner.updates <- spotifyScanProgressMsg{progress: progress}:
+			case <-ctx.Done():
+			}
+		})
+		runner.done <- spotifyScanMsg{result: result, err: err, progress: last, cancelled: errors.Is(err, context.Canceled)}
+	}()
+	return m, m.waitSpotifyScanCmd()
+}
+
+func (m Model) waitSpotifyScanCmd() tea.Cmd {
+	runner := m.spotifyScan
 	return func() tea.Msg {
-		result, err := service.SpotifyScan(context.Background())
-		return spotifyScanMsg{result: result, err: err}
+		select {
+		case progress := <-runner.updates:
+			return progress
+		case result := <-runner.done:
+			return result
+		}
 	}
 }
 func (m Model) spotifySearchCmd() tea.Cmd {
@@ -1896,7 +1967,22 @@ func (m Model) renderOverlay(base string, width, height int) string {
 	case modeSpotifyUpdate:
 		title = "Update Spotify links"
 		if m.spotifyScanning {
-			lines = []string{"Contacting Spotify…"}
+			if m.spotifyCancelling {
+				lines = []string{"Cancelling Spotify scan…", "", "Please wait"}
+				break
+			}
+			switch m.spotifyProgress.Phase {
+			case "authenticating":
+				lines = []string{"Authenticating with Spotify…", "", "Esc cancel"}
+			case "scanning":
+				lines = []string{"Scanning Spotify links", fmt.Sprintf("Track %d of %d", m.spotifyProgress.Current, m.spotifyProgress.Total), fmt.Sprintf("Automatically linked: %d", m.spotifyProgress.AutoLinked), fmt.Sprintf("Needs review: %d", m.spotifyProgress.ReviewCount)}
+				if m.spotifyProgress.Artist != "" || m.spotifyProgress.Title != "" {
+					lines = append(lines, "Current: "+m.spotifyProgress.Artist+" — "+m.spotifyProgress.Title)
+				}
+				lines = append(lines, "", "Esc cancel")
+			default:
+				lines = []string{"Starting Spotify link scan…", "", "Esc cancel"}
+			}
 			break
 		}
 		item, ok := m.currentSpotifyItem()

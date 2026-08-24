@@ -39,6 +39,16 @@ type ScanResult struct {
 	AutoLinked int
 }
 
+type ScanProgress struct {
+	Phase       string
+	Current     int
+	Total       int
+	AutoLinked  int
+	ReviewCount int
+	Artist      string
+	Title       string
+}
+
 type Service struct {
 	CatalogPath string
 	CachePath   string
@@ -48,8 +58,15 @@ type Service struct {
 }
 
 func (s Service) Scan(ctx context.Context) (ScanResult, error) {
+	return s.ScanWithProgress(ctx, nil)
+}
+
+func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)) (ScanResult, error) {
 	if s.Auth == nil || s.Client == nil || strings.TrimSpace(s.Auth.ClientID) == "" {
 		return ScanResult{}, fmt.Errorf("Spotify is not configured")
+	}
+	if report != nil {
+		report(ScanProgress{Phase: "authenticating"})
 	}
 	if _, err := s.Auth.AccessToken(ctx, true); err != nil {
 		return ScanResult{}, err
@@ -62,8 +79,18 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 	if err != nil {
 		return ScanResult{}, err
 	}
+	total := 0
+	for _, track := range media.Tracks {
+		if track.SpotifyURI == "" && !track.SpotifyIgnored {
+			total++
+		}
+	}
+	if report != nil {
+		report(ScanProgress{Phase: "scanning", Total: total})
+	}
 	result := ScanResult{}
 	dirty := 0
+	current := 0
 	flush := func() error {
 		if dirty == 0 {
 			return nil
@@ -84,6 +111,10 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		track := &media.Tracks[index]
 		if track.SpotifyURI != "" || track.SpotifyIgnored {
 			continue
+		}
+		current++
+		if report != nil {
+			report(ScanProgress{Phase: "scanning", Current: current, Total: total, AutoLinked: result.AutoLinked, ReviewCount: len(result.Items), Artist: track.Artist, Title: track.Title})
 		}
 		cached := cache[pathid.ComparisonKey(track.LocalAudioPath)]
 		item := Item{TrackID: track.ID, Artist: track.Artist, Title: track.Title, Album: cached.Album, ReleaseDate: track.ReleaseDate}

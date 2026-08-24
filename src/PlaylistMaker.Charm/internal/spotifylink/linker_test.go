@@ -47,9 +47,13 @@ func TestScanAutoSavesOnlyUniqueExactMatch(t *testing.T) {
 	}
 	auth := &spotify.Auth{ClientID: "client", TokenPath: tokenPath, HTTP: server.Client()}
 	service := Service{CatalogPath: catalogPath, CachePath: filepath.Join(root, "missing-cache.json"), Auth: auth, Client: &spotify.Client{Auth: auth, HTTP: server.Client(), APIBase: server.URL}}
-	result, err := service.Scan(context.Background())
+	progress := []ScanProgress{}
+	result, err := service.ScanWithProgress(context.Background(), func(value ScanProgress) { progress = append(progress, value) })
 	if err != nil || result.AutoLinked != 1 || len(result.Items) != 1 || len(result.Items[0].Candidates) != 2 {
 		t.Fatalf("scan = %#v, %v", result, err)
+	}
+	if len(progress) < 4 || progress[0].Phase != "authenticating" || progress[1].Phase != "scanning" || progress[1].Total != 2 || progress[2].Current != 1 || progress[3].Current != 2 {
+		t.Fatalf("progress = %#v", progress)
 	}
 	loaded, _ := catalog.Read(catalogPath)
 	if loaded.Tracks[0].SpotifyURI == "" && loaded.Tracks[1].SpotifyURI == "" {

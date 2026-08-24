@@ -55,8 +55,8 @@ func (u mappingUpdater) Confirm(videoPath, audioPath string) error {
 func (u mappingUpdater) Create(videoPath, artist, title string) error {
 	return u.service.Create(videoPath, artist, title)
 }
-func (u mappingUpdater) SpotifyScan(ctx context.Context) (spotifylink.ScanResult, error) {
-	return u.spotifyService.Scan(ctx)
+func (u mappingUpdater) SpotifyScan(ctx context.Context, report func(spotifylink.ScanProgress)) (spotifylink.ScanResult, error) {
+	return u.spotifyService.ScanWithProgress(ctx, report)
 }
 func (u mappingUpdater) SpotifySearch(ctx context.Context, query string) ([]spotifylink.Candidate, error) {
 	return u.spotifyService.Search(ctx, query)
