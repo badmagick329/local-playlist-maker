@@ -9,7 +9,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
@@ -327,25 +326,32 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 
 	selectedBackground := ";48;2;139;213;255m"
 	selectedCases := []struct {
-		name       string
-		track      library.Track
-		badgeStyle lipgloss.Style
+		name  string
+		track library.Track
 	}{
-		{name: "Spotify", track: tracks[0], badgeStyle: m.theme.spotify},
-		{name: "Local", track: tracks[1], badgeStyle: m.theme.localAudioSelected},
-		{name: "Video only", track: tracks[2], badgeStyle: m.theme.videoOnly},
+		{name: "Spotify", track: tracks[0]},
+		{name: "Local", track: tracks[1]},
+		{name: "Video only", track: tracks[2]},
 	}
 	for _, test := range selectedCases {
 		t.Run("selected "+test.name, func(t *testing.T) {
 			rowModel := New([]library.Track{test.track})
 			raw := rowModel.renderRow(rowModel.rows[0], true, 80)
-			badge := " " + test.badgeStyle.Inherit(rowModel.theme.selected).Render("●")
+			badge := " " + rowModel.selectedSourceBadge(test.track)
 			before, after, found := strings.Cut(raw, badge)
 			if !found || !strings.Contains(before, selectedBackground) || !strings.Contains(after, selectedBackground) {
 				t.Fatalf("selected row does not keep background around badge: %q", raw)
 			}
+			if badge == " "+rowModel.theme.selected.Render("●") {
+				t.Fatalf("selected %s badge uses the ordinary selected foreground", test.name)
+			}
 			if got := ansi.StringWidth(raw); got != 80 {
 				t.Fatalf("selected row width = %d, want 80", got)
+			}
+			for _, ordinary := range []string{"› ", test.track.Artist, "  —  ", test.track.Title, "0001-01-01  1"} {
+				if !strings.Contains(raw, rowModel.theme.selected.Render(ordinary)) {
+					t.Fatalf("selected %s content %q does not use selected foreground: %q", test.name, ordinary, raw)
+				}
 			}
 			unselected := rowModel.renderRow(rowModel.rows[0], false, 80)
 			if got := ansi.StringWidth(unselected); got != 80 {
@@ -356,11 +362,11 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 
 	localModel := New([]library.Track{tracks[1]})
 	localSelected := localModel.renderRow(localModel.rows[0], true, 80)
-	if !strings.Contains(localSelected, localModel.theme.localAudioSelected.Inherit(localModel.theme.selected).Render("●")) {
+	if !strings.Contains(localSelected, localModel.selectedSourceBadge(tracks[1])) {
 		t.Fatalf("selected local badge is not using its contrasting foreground: %q", localSelected)
 	}
-	if strings.Contains(localSelected, localModel.theme.localAudio.Inherit(localModel.theme.selected).Render("●")) {
-		t.Fatalf("selected local badge still uses the light selected-background colour: %q", localSelected)
+	if strings.Contains(localSelected, localModel.theme.selected.Render("●")) {
+		t.Fatalf("selected local badge still uses the ordinary selected foreground: %q", localSelected)
 	}
 
 	queuedModel := New([]library.Track{tracks[0]})
@@ -370,7 +376,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	if !strings.Contains(stripStyles(queuedRaw), "●") || strings.Count(stripStyles(queuedRaw), "●") < 2 {
 		t.Fatalf("selected row does not retain both queue and source dots: %q", stripStyles(queuedRaw))
 	}
-	if !strings.Contains(queuedRaw, queuedModel.theme.queued.Inherit(queuedModel.theme.selected).Render("● ")) {
+	if !strings.Contains(queuedRaw, queuedModel.theme.selected.Render("● ")) {
 		t.Fatalf("selected row lost queued indicator: %q", queuedRaw)
 	}
 
@@ -381,6 +387,10 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	}
 	if width := ansi.StringWidth(longRow); width > 40 {
 		t.Fatalf("narrow parent row width = %d, want <= 40", width)
+	}
+	longSelected := stripStyles(long.renderRow(long.rows[0], true, 40))
+	if width := ansi.StringWidth(longSelected); width > 40 {
+		t.Fatalf("narrow selected parent row width = %d, want <= 40", width)
 	}
 }
 

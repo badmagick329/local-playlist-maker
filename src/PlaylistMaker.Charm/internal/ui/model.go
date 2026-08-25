@@ -1809,22 +1809,14 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 	eligibleCount := len(library.EligibleVariants(track, m.currentQuery()))
 	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
 	if selected {
-		selectedText := func(style lipgloss.Style, value string) string {
-			return style.Inherit(m.theme.selected).Render(value)
-		}
-		selectedQueued := selectedText(m.theme.selected, "  ")
+		selectedText := m.theme.selected.Render
+		selectedQueued := selectedText("  ")
 		if queued != "  " {
-			selectedQueued = m.theme.queued.Inherit(m.theme.selected).Render("● ")
+			selectedQueued = selectedText("● ")
 		}
-		selectedBadgeStyle := m.theme.videoOnly
-		if classifyTrackSource(track) == trackSourceSpotify {
-			selectedBadgeStyle = m.theme.spotify
-		} else if classifyTrackSource(track) == trackSourceLocal {
-			selectedBadgeStyle = m.theme.localAudioSelected
-		}
-		selectedLeftPrefix := selectedText(m.theme.muted, expansion+" ") + selectedQueued + selectedText(m.theme.accent, track.Artist) + selectedText(m.theme.muted, "  —  ") + selectedText(m.theme.title, track.Title)
-		selectedBadge := " " + selectedBadgeStyle.Inherit(m.theme.selected).Render("●")
-		selectedRight := selectedText(m.theme.muted, fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
+		selectedLeftPrefix := selectedText(expansion+" ") + selectedQueued + selectedText(track.Artist) + selectedText("  —  ") + selectedText(track.Title)
+		selectedBadge := " " + m.selectedSourceBadge(track)
+		selectedRight := selectedText(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
 		return joinAlignedWithSuffixFill(selectedLeftPrefix, selectedBadge, selectedRight, width, m.theme.selected)
 	}
 	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
@@ -1842,6 +1834,17 @@ func (m Model) sourceBadge(track library.Track) string {
 		style = m.theme.localAudio
 	}
 	return style.Render("●")
+}
+
+func (m Model) selectedSourceBadge(track library.Track) string {
+	color := "#4F5868"
+	switch classifyTrackSource(track) {
+	case trackSourceSpotify:
+		color = "#176B3A"
+	case trackSourceLocal:
+		color = "#245A91"
+	}
+	return m.theme.selected.Foreground(lipgloss.Color(color)).Render("●")
 }
 
 func (m Model) parentRowDate(track library.Track) string {
