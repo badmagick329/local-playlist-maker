@@ -346,7 +346,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 			if !strings.Contains(separator, selectedBackground) {
 				t.Fatalf("selected badge separator has no selected background: %q", separator)
 			}
-			if badge == " "+rowModel.theme.selected.Render("●") {
+			if badge == rowModel.theme.selected.Render("●") {
 				t.Fatalf("selected %s badge uses the ordinary selected foreground", test.name)
 			}
 			if got := ansi.StringWidth(raw); got != 80 {
