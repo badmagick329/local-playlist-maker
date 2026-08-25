@@ -47,7 +47,7 @@ The exact category names are: `Music Video`, `Band Live`, `Performance`,
 `Choreography`, `Relay`, `Be Original`, `Fancam`, `Concert`, `Music Show`,
 `Remix`, and `Live Audio`.
 
-The development launcher reads `C:\code\csharp\PlaylistMaker\config.yaml`.
+The development launcher reads `config.yaml` from the repository root.
 Direct binary launches read `config.yaml` beside the executable unless
 `--config` supplies another path. The local `config.yaml` is ignored; use
 `sample_config.yaml` for the documented configuration shape.
