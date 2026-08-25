@@ -442,7 +442,7 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 		}
 	}
 	help := strings.Join(helpLines(), "\n")
-	for _, value := range []string{"h/l, left/right, Enter", "digits / Backspace", "Shift+J/K", "Ctrl+U/D, PgUp/Dn", "o  —  play queue or highlighted media", "green ● Spotify linked", "blue ● local audio only", "grey ● video only"} {
+	for _, value := range []string{"h/l, left/right, Enter", "digits / Backspace", "Shift+J/K", "Ctrl+U/D, PgUp/Dn", "o  —  play queue or highlighted media", "green • Spotify linked", "blue • local audio only", "grey • video only"} {
 		if !strings.Contains(help, value) {
 			t.Fatalf("help missing %q", value)
 		}

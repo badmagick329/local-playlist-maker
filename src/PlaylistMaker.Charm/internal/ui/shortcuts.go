@@ -4,7 +4,7 @@ type shortcut struct{ section, key, description string }
 
 var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
-	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green ● Spotify linked, blue ● local audio only, grey ● video only"},
+	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green • Spotify linked, blue • local audio only, grey • video only"},
 	{"Views", "d", "selected media details"},
 	{"Views", "u", "update mappings"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
 	{"Views", "U", "update Spotify links"}, {"Spotify updates", "enter / search / skip / ignore", "confirm, find, defer, or persistently ignore a link"},

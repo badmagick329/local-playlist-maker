@@ -297,8 +297,11 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	for index, want := range []string{"Spotify", "Local", "Video only"} {
 		m := New([]library.Track{tracks[index]})
 		row := stripStyles(m.renderRow(m.rows[0], false, 80))
-		if !strings.Contains(row, "●") {
+		if !strings.Contains(row, "•") {
 			t.Fatalf("parent row %d has no source badge: %q", index, row)
+		}
+		if !strings.HasPrefix(row, "›    • "+tracks[index].Artist) {
+			t.Fatalf("parent row %d source badge is not at the start: %q", index, row)
 		}
 		m.mode = modeDetails
 		if got := strings.Join(m.detailsLines(), "\n"); !strings.Contains(got, "Audio source: "+want) {
@@ -320,7 +323,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 		t.Fatal("expanded track did not produce a variant row")
 	}
 	variantRow := stripStyles(m.renderRow(m.rows[variantIndex], false, 80))
-	if strings.Contains(variantRow, "●") {
+	if strings.Contains(variantRow, "•") {
 		t.Fatalf("variant row gained source badge: %q", variantRow)
 	}
 
@@ -339,14 +342,14 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 			raw := rowModel.renderRow(rowModel.rows[0], true, 80)
 			badge := rowModel.selectedSourceBadge(test.track)
 			separator := rowModel.theme.selected.Render(" ")
-			before, after, found := strings.Cut(raw, separator+badge)
+			before, after, found := strings.Cut(raw, separator+badge+separator)
 			if !found || !strings.Contains(before, selectedBackground) || !strings.Contains(after, selectedBackground) {
 				t.Fatalf("selected row does not keep background around badge: %q", raw)
 			}
 			if !strings.Contains(separator, selectedBackground) {
 				t.Fatalf("selected badge separator has no selected background: %q", separator)
 			}
-			if badge == rowModel.theme.selected.Render("●") {
+			if badge == rowModel.theme.selected.Render("•") {
 				t.Fatalf("selected %s badge uses the ordinary selected foreground", test.name)
 			}
 			if got := ansi.StringWidth(raw); got != 80 {
@@ -369,7 +372,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	if !strings.Contains(localSelected, localModel.selectedSourceBadge(tracks[1])) {
 		t.Fatalf("selected local badge is not using its contrasting foreground: %q", localSelected)
 	}
-	if strings.Contains(localSelected, localModel.theme.selected.Render("●")) {
+	if strings.Contains(localSelected, localModel.theme.selected.Render("•")) {
 		t.Fatalf("selected local badge still uses the ordinary selected foreground: %q", localSelected)
 	}
 
@@ -377,8 +380,9 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	queuedModel.queued[tracks[0].Variants[0].ID] = tracks[0].Variants[0]
 	queuedModel.queueOrder = []string{tracks[0].Variants[0].ID}
 	queuedRaw := queuedModel.renderRow(queuedModel.rows[0], true, 80)
-	if !strings.Contains(stripStyles(queuedRaw), "●") || strings.Count(stripStyles(queuedRaw), "●") < 2 {
-		t.Fatalf("selected row does not retain both queue and source dots: %q", stripStyles(queuedRaw))
+	queuedText := stripStyles(queuedRaw)
+	if !strings.Contains(queuedText, "•") || !strings.Contains(queuedText, "●") {
+		t.Fatalf("selected row does not retain both queue and source dots: %q", queuedText)
 	}
 	if !strings.Contains(queuedRaw, queuedModel.theme.selected.Render("● ")) {
 		t.Fatalf("selected row lost queued indicator: %q", queuedRaw)
@@ -386,7 +390,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 
 	long := New([]library.Track{{Artist: "Artist", Title: strings.Repeat("Long title ", 12), SpotifyURI: "spotify:track:long", Variants: []library.Variant{{ID: "long-video", Filename: "long.mkv", Category: library.MusicVideo}}}})
 	longRow := stripStyles(long.renderRow(long.rows[0], false, 40))
-	if !strings.Contains(longRow, "●") {
+	if !strings.Contains(longRow, "•") {
 		t.Fatalf("narrow parent row lost source badge: %q", longRow)
 	}
 	if width := ansi.StringWidth(longRow); width > 40 {

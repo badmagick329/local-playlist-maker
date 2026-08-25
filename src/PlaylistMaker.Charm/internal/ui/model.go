@@ -1814,14 +1814,12 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 		if queued != "  " {
 			selectedQueued = selectedText("● ")
 		}
-		selectedLeftPrefix := selectedText(expansion+" ") + selectedQueued + selectedText(track.Artist) + selectedText("  —  ") + selectedText(track.Title)
-		selectedBadge := m.theme.selected.Render(" ") + m.selectedSourceBadge(track)
+		selectedLeftPrefix := selectedText(expansion+" ") + selectedQueued + selectedText(" ") + m.selectedSourceBadge(track) + selectedText(" ") + selectedText(track.Artist) + selectedText("  —  ") + selectedText(track.Title)
 		selectedRight := selectedText(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
-		return joinAlignedWithSuffixFill(selectedLeftPrefix, selectedBadge, selectedRight, width, m.theme.selected)
+		return joinAlignedWithSuffixFill(selectedLeftPrefix, "", selectedRight, width, m.theme.selected)
 	}
-	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
-	badge := " " + m.sourceBadge(track)
-	line := joinAlignedWithSuffix(leftPrefix, badge, right, width)
+	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + " " + m.sourceBadge(track) + " " + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
+	line := joinAligned(leftPrefix, right, width)
 	return line
 }
 
@@ -1833,7 +1831,7 @@ func (m Model) sourceBadge(track library.Track) string {
 	case trackSourceLocal:
 		style = m.theme.localAudio
 	}
-	return style.Render("●")
+	return style.Render("•")
 }
 
 func (m Model) selectedSourceBadge(track library.Track) string {
@@ -1844,7 +1842,7 @@ func (m Model) selectedSourceBadge(track library.Track) string {
 	case trackSourceLocal:
 		color = "#245A91"
 	}
-	return m.theme.selected.Foreground(lipgloss.Color(color)).Render("●")
+	return m.theme.selected.Foreground(lipgloss.Color(color)).Render("•")
 }
 
 func (m Model) parentRowDate(track library.Track) string {
