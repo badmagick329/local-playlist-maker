@@ -1,6 +1,6 @@
 # PlaylistMaker Charm
 
-Charm plays audible video through mpv. Spotify Connect is the preferred muted tracking player, with foobar2000 as the local fallback.
+Charm plays audible video through mpv. Spotify Connect is the preferred tracking player, with foobar2000 as the local fallback.
 
 Copy `sample_config.yaml` to the ignored `config.yaml`, then run:
 
@@ -8,7 +8,9 @@ Copy `sample_config.yaml` to the ignored `config.yaml`, then run:
 .\scripts\run-charm.ps1
 ```
 
-Tracks and video relationships live in the app-managed media catalogue. Press `u` to link videos to catalogue tracks. Press `U` to authenticate with Spotify and review missing Spotify links. Spotify is contacted only for authentication, link updates, playback preflight, or recovery of a previous muted session.
+Tracks and video relationships live in the app-managed media catalogue. Press `u` to link videos to catalogue tracks. Press `U` to authenticate with Spotify and review missing Spotify links. Spotify is contacted only for authentication, link updates, playback preflight, or recovery of a previous session.
+
+See [Spotify setup](SPOTIFY_SETUP.md) for the short dashboard, configuration, login, and linking guide.
 
 Playback prefers Spotify when a track has a Spotify URI. If Spotify is unavailable, a track with an existing local FLAC uses foobar2000. An item with neither source is rejected before mpv starts unless the launcher includes:
 
