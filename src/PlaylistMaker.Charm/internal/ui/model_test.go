@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/library"
@@ -265,6 +266,79 @@ func TestParentRowsShowTheActiveEligibleDateSortValue(t *testing.T) {
 		if got := stripStyles(m.renderRow(m.rows[0], false, 120)); !strings.Contains(got, test.want) {
 			t.Fatalf("%s parent row = %q, want %s", test.sort, got, test.want)
 		}
+	}
+}
+
+func TestClassifyTrackSourcePrefersSpotifyThenLocal(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		track  library.Track
+		wanted trackSource
+	}{
+		{name: "Spotify and local", track: library.Track{SpotifyURI: "spotify:track:one", LocalAudioPath: "song.flac"}, wanted: trackSourceSpotify},
+		{name: "Spotify", track: library.Track{SpotifyURI: "spotify:track:one"}, wanted: trackSourceSpotify},
+		{name: "local", track: library.Track{LocalAudioPath: "song.flac"}, wanted: trackSourceLocal},
+		{name: "video only", track: library.Track{}, wanted: trackSourceVideoOnly},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := classifyTrackSource(test.track); got != test.wanted {
+				t.Fatalf("source = %d, want %d", got, test.wanted)
+			}
+		})
+	}
+}
+
+func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
+	tracks := []library.Track{
+		{ID: "spotify", Artist: "Spotify", Title: "Track", SpotifyURI: "spotify:track:one", Variants: []library.Variant{{ID: "spotify-video", Filename: "spotify.mkv", Category: library.MusicVideo}}},
+		{ID: "local", Artist: "Local", Title: "Track", LocalAudioPath: "song.flac", Variants: []library.Variant{{ID: "local-video", Filename: "local.mkv", Category: library.MusicVideo}}},
+		{ID: "video", Artist: "Video", Title: "Only", Variants: []library.Variant{{ID: "video-only", Filename: "video.mkv", Category: library.MusicVideo}}},
+	}
+	for index, want := range []string{"Spotify", "Local", "Video only"} {
+		m := New([]library.Track{tracks[index]})
+		row := stripStyles(m.renderRow(m.rows[0], false, 80))
+		if !strings.Contains(row, "●") {
+			t.Fatalf("parent row %d has no source badge: %q", index, row)
+		}
+		m.mode = modeDetails
+		if got := strings.Join(m.detailsLines(), "\n"); !strings.Contains(got, "Audio source: "+want) {
+			t.Fatalf("details %d = %q, want %s", index, got, want)
+		}
+	}
+
+	m := New(tracks)
+	m.expanded[tracks[0].ID] = true
+	m.rebuildRows()
+	variantIndex := -1
+	for index, current := range m.rows {
+		if current.isVariant() {
+			variantIndex = index
+			break
+		}
+	}
+	if variantIndex < 0 {
+		t.Fatal("expanded track did not produce a variant row")
+	}
+	variantRow := stripStyles(m.renderRow(m.rows[variantIndex], false, 80))
+	if strings.Contains(variantRow, "●") {
+		t.Fatalf("variant row gained source badge: %q", variantRow)
+	}
+
+	selected := stripStyles(m.renderRow(m.rows[0], true, 40))
+	if !strings.Contains(selected, "●") {
+		t.Fatalf("selected parent row lost source badge: %q", selected)
+	}
+	if width := ansi.StringWidth(selected); width > 40 {
+		t.Fatalf("selected parent row width = %d, want <= 40", width)
+	}
+
+	long := New([]library.Track{{Artist: "Artist", Title: strings.Repeat("Long title ", 12), SpotifyURI: "spotify:track:long", Variants: []library.Variant{{ID: "long-video", Filename: "long.mkv", Category: library.MusicVideo}}}})
+	longRow := stripStyles(long.renderRow(long.rows[0], false, 40))
+	if !strings.Contains(longRow, "●") {
+		t.Fatalf("narrow parent row lost source badge: %q", longRow)
+	}
+	if width := ansi.StringWidth(longRow); width > 40 {
+		t.Fatalf("narrow parent row width = %d, want <= 40", width)
 	}
 }
 

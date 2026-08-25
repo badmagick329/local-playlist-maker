@@ -8,6 +8,9 @@ type theme struct {
 	muted        lipgloss.Style
 	selected     lipgloss.Style
 	queued       lipgloss.Style
+	spotify      lipgloss.Style
+	localAudio   lipgloss.Style
+	videoOnly    lipgloss.Style
 	variant      lipgloss.Style
 	bar          lipgloss.Style
 	overlay      lipgloss.Style
@@ -22,6 +25,9 @@ func newTheme() theme {
 		muted:        lipgloss.NewStyle().Foreground(lipgloss.Color("#74798A")),
 		selected:     lipgloss.NewStyle().Foreground(lipgloss.Color("#10131F")).Background(lipgloss.Color("#8BD5FF")),
 		queued:       lipgloss.NewStyle().Foreground(lipgloss.Color("#F5C2E7")).Bold(true),
+		spotify:      lipgloss.NewStyle().Foreground(lipgloss.Color("#1DB954")),
+		localAudio:   lipgloss.NewStyle().Foreground(lipgloss.Color("#8BD5FF")),
+		videoOnly:    lipgloss.NewStyle().Foreground(lipgloss.Color("#74798A")),
 		variant:      lipgloss.NewStyle().Foreground(lipgloss.Color("#A6ADC8")),
 		bar:          lipgloss.NewStyle().Foreground(lipgloss.Color("#CDD6F4")).Background(lipgloss.Color("#25283A")),
 		overlay:      lipgloss.NewStyle().Border(lipgloss.RoundedBorder()).BorderForeground(lipgloss.Color("#55D6BE")).Padding(1, 2).Background(lipgloss.Color("#202231")),

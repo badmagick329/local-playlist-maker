@@ -23,6 +23,24 @@ import (
 
 type mode int
 
+type trackSource int
+
+const (
+	trackSourceSpotify trackSource = iota
+	trackSourceLocal
+	trackSourceVideoOnly
+)
+
+func classifyTrackSource(track library.Track) trackSource {
+	if track.SpotifyURI != "" {
+		return trackSourceSpotify
+	}
+	if track.LocalAudioPath != "" {
+		return trackSourceLocal
+	}
+	return trackSourceVideoOnly
+}
+
 const (
 	modeNavigate mode = iota
 	modeSearch
@@ -1788,14 +1806,32 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 			break
 		}
 	}
-	left := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
+	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
+	badge := " " + m.sourceBadge(track)
 	eligibleCount := len(library.EligibleVariants(track, m.currentQuery()))
 	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
-	line := joinAligned(left, right, width)
+	line := joinAlignedWithSuffix(leftPrefix, badge, right, width)
 	if selected {
-		return m.theme.selected.Width(width).Render(stripStyles(line))
+		selectedLine := m.theme.selected.Width(width).Render(stripStyles(line))
+		badgeIndex := strings.LastIndex(selectedLine, "●")
+		if badgeIndex >= 0 {
+			badge := m.sourceBadge(track)
+			return selectedLine[:badgeIndex] + badge + selectedLine[badgeIndex+len("●"):]
+		}
+		return selectedLine
 	}
 	return line
+}
+
+func (m Model) sourceBadge(track library.Track) string {
+	style := m.theme.videoOnly
+	switch classifyTrackSource(track) {
+	case trackSourceSpotify:
+		style = m.theme.spotify
+	case trackSourceLocal:
+		style = m.theme.localAudio
+	}
+	return style.Render("●")
 }
 
 func (m Model) parentRowDate(track library.Track) string {
@@ -2110,11 +2146,22 @@ func (m Model) detailsLines() []string {
 	track := m.filtered[current.trackIndex]
 	if current.isVariant() {
 		variant := track.Variants[current.variantIndex]
-		return append([]string{"Video: " + variant.Filename, "Video path: " + variant.VideoPath, "Track ID: " + track.ID, "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Category: " + string(variant.Category), "Video date: " + variant.DateLabel, "Modified: " + variant.ModifiedAt.UTC().Format(time.RFC3339), queueState(m.queuedID(variant.ID) != "")}, historyLines(variant.History)...)
+		return append([]string{"Video: " + variant.Filename, "Video path: " + variant.VideoPath, "Track ID: " + track.ID, "Audio source: " + trackSourceLabel(classifyTrackSource(track)), "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Category: " + string(variant.Category), "Video date: " + variant.DateLabel, "Modified: " + variant.ModifiedAt.UTC().Format(time.RFC3339), queueState(m.queuedID(variant.ID) != "")}, historyLines(variant.History)...)
 	}
 	eligible := len(library.EligibleVariants(track, m.currentQuery()))
-	lines := []string{"Artist: " + track.Artist, "Title: " + track.Title, "Track ID: " + track.ID, "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Release: " + emptyAny(track.ReleaseDateLabel), fmt.Sprintf("Variants: %d total • %d eligible", len(track.Variants), eligible), queueState(m.trackQueued(track))}
+	lines := []string{"Artist: " + track.Artist, "Title: " + track.Title, "Track ID: " + track.ID, "Audio source: " + trackSourceLabel(classifyTrackSource(track)), "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Release: " + emptyAny(track.ReleaseDateLabel), fmt.Sprintf("Variants: %d total • %d eligible", len(track.Variants), eligible), queueState(m.trackQueued(track))}
 	return append(lines, historyLines(track.History)...)
+}
+
+func trackSourceLabel(source trackSource) string {
+	switch source {
+	case trackSourceSpotify:
+		return "Spotify"
+	case trackSourceLocal:
+		return "Local"
+	default:
+		return "Video only"
+	}
 }
 
 func (m Model) trackQueued(track library.Track) bool {
@@ -2180,6 +2227,16 @@ func joinAligned(left, right string, width int) string {
 		leftWidth = lipgloss.Width(left)
 	}
 	return left + strings.Repeat(" ", max(width-leftWidth-rightWidth, 1)) + right
+}
+
+func joinAlignedWithSuffix(prefix, suffix, right string, width int) string {
+	rightWidth := lipgloss.Width(right)
+	availableLeft := max(width-rightWidth-2, 1)
+	suffixWidth := lipgloss.Width(suffix)
+	if lipgloss.Width(prefix)+suffixWidth > availableLeft {
+		prefix = truncateANSI(prefix, max(availableLeft-suffixWidth, 1))
+	}
+	return joinAligned(prefix+suffix, right, width)
 }
 
 func truncate(value string, width int) string {
