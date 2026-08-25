@@ -1806,20 +1806,30 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 			break
 		}
 	}
-	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
-	badge := " " + m.sourceBadge(track)
 	eligibleCount := len(library.EligibleVariants(track, m.currentQuery()))
 	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
-	line := joinAlignedWithSuffix(leftPrefix, badge, right, width)
 	if selected {
-		selectedLine := m.theme.selected.Width(width).Render(stripStyles(line))
-		badgeIndex := strings.LastIndex(selectedLine, "●")
-		if badgeIndex >= 0 {
-			badge := m.sourceBadge(track)
-			return selectedLine[:badgeIndex] + badge + selectedLine[badgeIndex+len("●"):]
+		selectedText := func(style lipgloss.Style, value string) string {
+			return style.Inherit(m.theme.selected).Render(value)
 		}
-		return selectedLine
+		selectedQueued := selectedText(m.theme.selected, "  ")
+		if queued != "  " {
+			selectedQueued = m.theme.queued.Inherit(m.theme.selected).Render("● ")
+		}
+		selectedBadgeStyle := m.theme.videoOnly
+		if classifyTrackSource(track) == trackSourceSpotify {
+			selectedBadgeStyle = m.theme.spotify
+		} else if classifyTrackSource(track) == trackSourceLocal {
+			selectedBadgeStyle = m.theme.localAudioSelected
+		}
+		selectedLeftPrefix := selectedText(m.theme.muted, expansion+" ") + selectedQueued + selectedText(m.theme.accent, track.Artist) + selectedText(m.theme.muted, "  —  ") + selectedText(m.theme.title, track.Title)
+		selectedBadge := " " + selectedBadgeStyle.Inherit(m.theme.selected).Render("●")
+		selectedRight := selectedText(m.theme.muted, fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
+		return joinAlignedWithSuffixFill(selectedLeftPrefix, selectedBadge, selectedRight, width, m.theme.selected)
 	}
+	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
+	badge := " " + m.sourceBadge(track)
+	line := joinAlignedWithSuffix(leftPrefix, badge, right, width)
 	return line
 }
 
@@ -2230,13 +2240,30 @@ func joinAligned(left, right string, width int) string {
 }
 
 func joinAlignedWithSuffix(prefix, suffix, right string, width int) string {
+	return joinAlignedWithSuffixFillInternal(prefix, suffix, right, width, nil)
+}
+
+func joinAlignedWithSuffixFill(prefix, suffix, right string, width int, fill lipgloss.Style) string {
+	return joinAlignedWithSuffixFillInternal(prefix, suffix, right, width, &fill)
+}
+
+func joinAlignedWithSuffixFillInternal(prefix, suffix, right string, width int, fill *lipgloss.Style) string {
 	rightWidth := lipgloss.Width(right)
 	availableLeft := max(width-rightWidth-2, 1)
 	suffixWidth := lipgloss.Width(suffix)
 	if lipgloss.Width(prefix)+suffixWidth > availableLeft {
 		prefix = truncateANSI(prefix, max(availableLeft-suffixWidth, 1))
 	}
-	return joinAligned(prefix+suffix, right, width)
+	left := prefix + suffix
+	leftWidth := lipgloss.Width(left)
+	if rightWidth >= width-8 {
+		return truncate(left, width)
+	}
+	gap := strings.Repeat(" ", max(width-leftWidth-rightWidth, 1))
+	if fill != nil {
+		gap = fill.Render(gap)
+	}
+	return left + gap + right
 }
 
 func truncate(value string, width int) string {

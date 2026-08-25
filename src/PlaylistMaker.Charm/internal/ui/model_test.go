@@ -9,6 +9,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
@@ -324,12 +325,53 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 		t.Fatalf("variant row gained source badge: %q", variantRow)
 	}
 
-	selected := stripStyles(m.renderRow(m.rows[0], true, 40))
-	if !strings.Contains(selected, "●") {
-		t.Fatalf("selected parent row lost source badge: %q", selected)
+	selectedBackground := ";48;2;139;213;255m"
+	selectedCases := []struct {
+		name       string
+		track      library.Track
+		badgeStyle lipgloss.Style
+	}{
+		{name: "Spotify", track: tracks[0], badgeStyle: m.theme.spotify},
+		{name: "Local", track: tracks[1], badgeStyle: m.theme.localAudioSelected},
+		{name: "Video only", track: tracks[2], badgeStyle: m.theme.videoOnly},
 	}
-	if width := ansi.StringWidth(selected); width > 40 {
-		t.Fatalf("selected parent row width = %d, want <= 40", width)
+	for _, test := range selectedCases {
+		t.Run("selected "+test.name, func(t *testing.T) {
+			rowModel := New([]library.Track{test.track})
+			raw := rowModel.renderRow(rowModel.rows[0], true, 80)
+			badge := " " + test.badgeStyle.Inherit(rowModel.theme.selected).Render("●")
+			before, after, found := strings.Cut(raw, badge)
+			if !found || !strings.Contains(before, selectedBackground) || !strings.Contains(after, selectedBackground) {
+				t.Fatalf("selected row does not keep background around badge: %q", raw)
+			}
+			if got := ansi.StringWidth(raw); got != 80 {
+				t.Fatalf("selected row width = %d, want 80", got)
+			}
+			unselected := rowModel.renderRow(rowModel.rows[0], false, 80)
+			if got := ansi.StringWidth(unselected); got != 80 {
+				t.Fatalf("unselected row width = %d, want 80", got)
+			}
+		})
+	}
+
+	localModel := New([]library.Track{tracks[1]})
+	localSelected := localModel.renderRow(localModel.rows[0], true, 80)
+	if !strings.Contains(localSelected, localModel.theme.localAudioSelected.Inherit(localModel.theme.selected).Render("●")) {
+		t.Fatalf("selected local badge is not using its contrasting foreground: %q", localSelected)
+	}
+	if strings.Contains(localSelected, localModel.theme.localAudio.Inherit(localModel.theme.selected).Render("●")) {
+		t.Fatalf("selected local badge still uses the light selected-background colour: %q", localSelected)
+	}
+
+	queuedModel := New([]library.Track{tracks[0]})
+	queuedModel.queued[tracks[0].Variants[0].ID] = tracks[0].Variants[0]
+	queuedModel.queueOrder = []string{tracks[0].Variants[0].ID}
+	queuedRaw := queuedModel.renderRow(queuedModel.rows[0], true, 80)
+	if !strings.Contains(stripStyles(queuedRaw), "●") || strings.Count(stripStyles(queuedRaw), "●") < 2 {
+		t.Fatalf("selected row does not retain both queue and source dots: %q", stripStyles(queuedRaw))
+	}
+	if !strings.Contains(queuedRaw, queuedModel.theme.queued.Inherit(queuedModel.theme.selected).Render("● ")) {
+		t.Fatalf("selected row lost queued indicator: %q", queuedRaw)
 	}
 
 	long := New([]library.Track{{Artist: "Artist", Title: strings.Repeat("Long title ", 12), SpotifyURI: "spotify:track:long", Variants: []library.Variant{{ID: "long-video", Filename: "long.mkv", Category: library.MusicVideo}}}})
