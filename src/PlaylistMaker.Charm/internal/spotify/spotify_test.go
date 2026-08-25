@@ -84,15 +84,15 @@ func TestClientRefreshesOnceOnExpiredAccessAndPersistsToken(t *testing.T) {
 	}
 }
 
-func TestPlayerRequiresUniqueDeviceAndRestoresVolume(t *testing.T) {
+func TestPlayerUsesUniqueDeviceWithoutVolumeMutation(t *testing.T) {
 	requests := []string{}
 	duplicate := false
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests = append(requests, request.Method+" "+request.URL.String())
 		if request.URL.Path == "/me/player/devices" {
-			devices := []map[string]any{{"id": "one", "name": "Living Room", "is_restricted": false, "supports_volume": true, "volume_percent": 37}}
+			devices := []map[string]any{{"id": "one", "name": "Living Room", "type": "Computer", "is_restricted": false}}
 			if duplicate {
-				devices = append(devices, map[string]any{"id": "two", "name": "living room", "is_restricted": false, "supports_volume": true, "volume_percent": 20})
+				devices = append(devices, map[string]any{"id": "two", "name": "living room", "type": "Speaker", "is_restricted": false})
 			}
 			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": devices})
 			return
@@ -114,15 +114,42 @@ func TestPlayerRequiresUniqueDeviceAndRestoresVolume(t *testing.T) {
 		t.Fatal(err)
 	}
 	joined := strings.Join(requests, "\n")
-	if !strings.Contains(joined, "volume_percent=0") || !strings.Contains(joined, "volume_percent=37") || !strings.Contains(joined, "/play") || !strings.Contains(joined, "/pause") {
+	if strings.Contains(joined, "volume") || !strings.Contains(joined, "/play") || !strings.Contains(joined, "/pause") {
 		t.Fatalf("Spotify session requests:\n%s", joined)
+	}
+	if len(requests) != 3 || !strings.Contains(requests[0], "/me/player/devices") || !strings.Contains(requests[1], "/me/player/play") || !strings.Contains(requests[2], "/me/player/pause") {
+		t.Fatalf("unexpected Spotify request order: %#v", requests)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {
 		t.Fatal("active state remained after restoration")
 	}
 	duplicate = true
-	if err := (&Player{Client: client, StatePath: state}).Preflight(context.Background(), "Living Room"); err == nil || !strings.Contains(err.Error(), "matched 2") {
+	if err := (&Player{Client: client, StatePath: state}).Preflight(context.Background(), "Living Room"); err == nil || !strings.Contains(err.Error(), "matched 2") || !strings.Contains(err.Error(), "Speaker") {
 		t.Fatalf("duplicate device error = %v", err)
+	}
+}
+
+func TestPlayerCloseDoesNotPauseBeforePlayAttempt(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.URL.Path)
+		if request.URL.Path == "/me/player/devices" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "one", "name": "Room", "is_restricted": false}}})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	player := &Player{Client: client, StatePath: filepath.Join(t.TempDir(), "state")}
+	if err := player.Preflight(context.Background(), "Room"); err != nil {
+		t.Fatal(err)
+	}
+	if err := player.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if len(requests) != 1 || requests[0] != "/me/player/devices" {
+		t.Fatalf("close mutated Spotify before play: %#v", requests)
 	}
 }
 
@@ -146,7 +173,7 @@ func TestPlaybackRateLimitReturnsImmediatelyWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestRecoverLeavesActiveStateAndRestoresStaleState(t *testing.T) {
+func TestRecoverLeavesActiveStateAndPausesStaleState(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		requests++
@@ -154,7 +181,7 @@ func TestRecoverLeavesActiveStateAndRestoresStaleState(t *testing.T) {
 	}))
 	defer server.Close()
 	statePath := filepath.Join(t.TempDir(), "active.json")
-	state, _ := json.Marshal(ActiveState{SessionID: "session", HelperPID: 42, DeviceID: "device", OriginalVolume: 37})
+	state, _ := json.Marshal(ActiveState{SessionID: "session", HelperPID: 42, DeviceID: "device"})
 	if err := os.WriteFile(statePath, state, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -168,7 +195,7 @@ func TestRecoverLeavesActiveStateAndRestoresStaleState(t *testing.T) {
 	if err := Recover(context.Background(), client, statePath, func(int) bool { return false }); err != nil {
 		t.Fatal(err)
 	}
-	if requests != 2 {
+	if requests != 1 {
 		t.Fatalf("stale recovery requests = %d", requests)
 	}
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
@@ -192,14 +219,28 @@ func TestRecoverHandlesMissingAndPreservesMalformedState(t *testing.T) {
 	}
 }
 
-func TestPlayerRejectsDeviceWithoutVolumeSupport(t *testing.T) {
+func TestPlayerAcceptsDeviceWithoutVolumeInformation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "one", "name": "Room", "supports_volume": false, "volume_percent": 20}}})
+		_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "one", "name": "Room", "type": "Computer", "is_restricted": false}}})
 	}))
 	defer server.Close()
 	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
-	if err := (&Player{Client: client, StatePath: filepath.Join(t.TempDir(), "state")}).Preflight(context.Background(), "room"); err == nil {
-		t.Fatal("unsupported volume device was accepted")
+	if err := (&Player{Client: client, StatePath: filepath.Join(t.TempDir(), "state")}).Preflight(context.Background(), "room"); err != nil {
+		t.Fatalf("device without volume information was rejected: %v", err)
+	}
+}
+
+func TestSpotifyPlayErrorIncludesMessageWithoutSecrets(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		writer.Header().Set("Content-Type", "application/json")
+		writer.WriteHeader(http.StatusForbidden)
+		_, _ = writer.Write([]byte(`{"error":{"status":403,"message":"Player command failed for secret-device using token","reason":"PREMIUM_ACCOUNT_REQUIRED"}}`))
+	}))
+	defer server.Close()
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	err := client.Play(context.Background(), "secret-device", "spotify:track:one")
+	if err == nil || !strings.Contains(err.Error(), "Spotify play failed: 403 Forbidden: Player command failed for [device] using [token]") || !strings.Contains(err.Error(), "PREMIUM_ACCOUNT_REQUIRED") || strings.Contains(err.Error(), "secret-device") || strings.Contains(err.Error(), "using token") {
+		t.Fatalf("play error = %v", err)
 	}
 }
 

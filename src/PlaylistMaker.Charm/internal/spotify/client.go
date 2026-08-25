@@ -33,11 +33,10 @@ func (e *RateLimitError) Error() string {
 }
 
 type Device struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Restricted     bool   `json:"is_restricted"`
-	SupportsVolume bool   `json:"supports_volume"`
-	VolumePercent  *int   `json:"volume_percent"`
+	ID         string `json:"id"`
+	Name       string `json:"name"`
+	Type       string `json:"type"`
+	Restricted bool   `json:"is_restricted"`
 }
 
 type Track struct {
@@ -63,11 +62,6 @@ func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 		return nil, err
 	}
 	return payload.Devices, nil
-}
-
-func (c *Client) SetVolume(ctx context.Context, deviceID string, percent int) error {
-	path := "/me/player/volume?device_id=" + url.QueryEscape(deviceID) + "&volume_percent=" + strconv.Itoa(percent)
-	return c.do(ctx, http.MethodPut, path, nil, nil)
 }
 
 func (c *Client) Play(ctx context.Context, deviceID, uri string) error {
@@ -157,7 +151,7 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 			return &RateLimitError{RetryAfter: delay, Valid: valid, Value: value}
 		}
 		if response.StatusCode/100 != 2 {
-			return fmt.Errorf("Spotify API returned %s", response.Status)
+			return spotifyResponseError(method, path, response, contents, access)
 		}
 		if output != nil && len(contents) > 0 {
 			if err := json.Unmarshal(contents, output); err != nil {
@@ -165,6 +159,52 @@ func (c *Client) do(ctx context.Context, method, path string, body any, output a
 			}
 		}
 		return nil
+	}
+}
+
+func spotifyResponseError(method, path string, response *http.Response, contents []byte, access string) error {
+	operation := spotifyOperation(method, path)
+	detail := response.Status
+	var payload struct {
+		Error struct {
+			Status  int    `json:"status"`
+			Message string `json:"message"`
+			Reason  string `json:"reason"`
+		} `json:"error"`
+	}
+	if json.Unmarshal(contents, &payload) == nil {
+		if payload.Error.Message != "" {
+			detail = response.Status + ": " + payload.Error.Message
+		}
+		if payload.Error.Reason != "" {
+			detail += " (reason: " + payload.Error.Reason + ")"
+		}
+	}
+	if parsed, err := url.Parse(path); err == nil {
+		if deviceID := parsed.Query().Get("device_id"); deviceID != "" {
+			detail = strings.ReplaceAll(detail, deviceID, "[device]")
+		}
+	}
+	if access != "" {
+		detail = strings.ReplaceAll(detail, access, "[token]")
+	}
+	return fmt.Errorf("Spotify %s failed: %s", operation, detail)
+}
+
+func spotifyOperation(method, path string) string {
+	switch {
+	case method == http.MethodPut && strings.HasPrefix(path, "/me/player/play"):
+		return "play"
+	case method == http.MethodPut && strings.HasPrefix(path, "/me/player/pause"):
+		return "pause"
+	case method == http.MethodGet && strings.HasPrefix(path, "/me/player/devices"):
+		return "list devices"
+	case method == http.MethodGet && strings.HasPrefix(path, "/tracks/"):
+		return "track lookup"
+	case method == http.MethodGet && strings.HasPrefix(path, "/search"):
+		return "search"
+	default:
+		return "API request"
 	}
 }
 

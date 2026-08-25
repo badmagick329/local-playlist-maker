@@ -12,20 +12,19 @@ import (
 )
 
 type ActiveState struct {
-	SessionID      string `json:"sessionId"`
-	HelperPID      int    `json:"helperPid"`
-	DeviceID       string `json:"deviceId"`
-	OriginalVolume int    `json:"originalVolume"`
+	SessionID string `json:"sessionId"`
+	HelperPID int    `json:"helperPid"`
+	DeviceID  string `json:"deviceId"`
 }
 
 type Player struct {
-	Client         *Client
-	StatePath      string
-	SessionID      string
-	HelperPID      int
-	deviceID       string
-	originalVolume int
-	prepared       bool
+	Client    *Client
+	StatePath string
+	SessionID string
+	HelperPID int
+	deviceID  string
+	prepared  bool
+	attempted bool
 }
 
 func (p *Player) Preflight(ctx context.Context, deviceName string) error {
@@ -43,20 +42,16 @@ func (p *Player) Preflight(ctx context.Context, deviceName string) error {
 		}
 	}
 	if len(matches) != 1 {
-		return fmt.Errorf("Spotify device name %q matched %d devices", deviceName, len(matches))
+		return fmt.Errorf("Spotify device name %q matched %d devices; available devices: %s", deviceName, len(matches), deviceSummary(devices))
 	}
 	device := matches[0]
-	if device.ID == "" || device.Restricted || !device.SupportsVolume || device.VolumePercent == nil {
-		return fmt.Errorf("Spotify device %q does not support volume control", deviceName)
+	if device.ID == "" {
+		return fmt.Errorf("Spotify device %q has no device ID", deviceName)
 	}
-	p.deviceID, p.originalVolume, p.prepared = device.ID, *device.VolumePercent, true
-	if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID, OriginalVolume: p.originalVolume}); err != nil {
-		return err
+	if device.Restricted {
+		return fmt.Errorf("Spotify device %q is restricted", deviceName)
 	}
-	if err := p.Client.SetVolume(ctx, p.deviceID, 0); err != nil {
-		_ = os.Remove(p.StatePath)
-		return err
-	}
+	p.deviceID, p.prepared = device.ID, true
 	return nil
 }
 
@@ -64,32 +59,34 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 	if !p.prepared {
 		return fmt.Errorf("Spotify player was not preflighted")
 	}
-	if err := p.Client.Pause(ctx, p.deviceID); err != nil {
+	if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID}); err != nil {
 		return err
 	}
+	p.attempted = true
 	return p.Client.Play(ctx, p.deviceID, track.SpotifyURI)
 }
 
 func (p *Player) Stop(ctx context.Context) error {
-	if !p.prepared {
+	if !p.prepared || !p.attempted {
 		return nil
 	}
 	return p.Client.Pause(ctx, p.deviceID)
 }
 
 func (p *Player) Close(ctx context.Context) error {
-	if !p.prepared {
+	if !p.prepared || !p.attempted {
 		return nil
 	}
-	first := p.Client.Pause(ctx, p.deviceID)
-	if err := p.Client.SetVolume(ctx, p.deviceID, p.originalVolume); first == nil {
-		first = err
+	if err := p.Client.Pause(ctx, p.deviceID); err != nil {
+		return err
 	}
-	if first == nil {
-		_ = os.Remove(p.StatePath)
+	if err := os.Remove(p.StatePath); err == nil || os.IsNotExist(err) {
 		p.prepared = false
+		p.attempted = false
+		return nil
+	} else {
+		return fmt.Errorf("remove Spotify active state: %w", err)
 	}
-	return first
 }
 
 func Recover(ctx context.Context, client *Client, statePath string, alive ...func(int) bool) error {
@@ -114,10 +111,27 @@ func Recover(ctx context.Context, client *Client, statePath string, alive ...fun
 	if err := client.Pause(ctx, state.DeviceID); err != nil {
 		return err
 	}
-	if err := client.SetVolume(ctx, state.DeviceID, state.OriginalVolume); err != nil {
-		return err
-	}
 	return os.Remove(statePath)
+}
+
+func deviceSummary(devices []Device) string {
+	if len(devices) == 0 {
+		return "none"
+	}
+	values := make([]string, 0, len(devices))
+	for _, device := range devices {
+		name := strings.TrimSpace(device.Name)
+		if name == "" {
+			name = "(unnamed)"
+		}
+		deviceType := strings.TrimSpace(device.Type)
+		if deviceType == "" {
+			values = append(values, name)
+			continue
+		}
+		values = append(values, fmt.Sprintf("%s (%s)", name, deviceType))
+	}
+	return strings.Join(values, ", ")
 }
 
 func (p *Player) writeState(state ActiveState) error {
