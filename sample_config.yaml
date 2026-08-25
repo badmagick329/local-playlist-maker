@@ -16,3 +16,18 @@ spotifyRedirectUri: ""
 playlistTxtFilePath: imports/queue.txt
 playbackHistoryEnabled: true
 playbackHistoryMinimumWatchedPercent: 50
+
+# Optional category presets. The list order assigns keys 0 through 4 in the
+# Categories view. Each preset uses either include or exclude, not both.
+# categoryPresets:
+#   - name: No remixes
+#     exclude:
+#       - Remix
+#   - name: Live
+#     include:
+#       - Band Live
+#       - Live Audio
+#   - name: No remixes or concerts
+#     exclude:
+#       - Remix
+#       - Concert

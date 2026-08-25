@@ -13,6 +13,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
+	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/updater"
 )
@@ -546,6 +547,59 @@ func TestCategoryChangesApplyImmediately(t *testing.T) {
 	}
 	if m.mode != modeCategories {
 		t.Fatal("category overlay unexpectedly closed")
+	}
+}
+
+func TestCategoryPresetsApplyByDigitAndPreserveSelection(t *testing.T) {
+	tracks := []library.Track{
+		{ID: "one", Artist: "One", Title: "One", Variants: []library.Variant{{ID: "one-video", Category: library.MusicVideo}}},
+		{ID: "two", Artist: "Two", Title: "Two", Variants: []library.Variant{{ID: "two-live", Category: library.BandLive}}},
+	}
+	presets := []config.CategoryPreset{
+		{Name: "Video only", Include: []library.Category{library.MusicVideo}},
+		{Name: "Live", Include: []library.Category{library.BandLive}},
+	}
+	m := New(tracks).WithCategoryPresets(presets)
+	m.cursor = 1
+	m = updateKey(t, m, "c")
+	m = updateKey(t, m, "1")
+	if m.mode != modeNavigate || m.status != "Category preset: Live" {
+		t.Fatalf("preset application state = mode %v status %q", m.mode, m.status)
+	}
+	if !m.enabled[library.BandLive] || m.enabled[library.MusicVideo] {
+		t.Fatalf("enabled categories = %#v", m.enabled)
+	}
+	if len(m.filtered) != 1 || m.filtered[0].ID != "two" {
+		t.Fatalf("filtered tracks = %#v", m.filtered)
+	}
+}
+
+func TestCategoryPresetExcludeEnablesCategoriesAddedToLibrary(t *testing.T) {
+	preset := config.CategoryPreset{Name: "No remix", Exclude: []library.Category{library.Remix}}
+	m := New(library.Generate(4, 8)).WithCategoryPresets([]config.CategoryPreset{preset})
+	m.applyCategoryPreset(0)
+	if m.enabled[library.Remix] || !m.enabled[library.Concert] || !m.categoryPresetActive(preset) {
+		t.Fatalf("exclude preset result = %#v", m.enabled)
+	}
+}
+
+func TestCategoriesOverlayShowsPresetsAndResponsiveFooter(t *testing.T) {
+	m := New(library.Generate(4, 8)).WithCategoryPresets([]config.CategoryPreset{{Name: "No remixes", Exclude: []library.Category{library.Remix}}})
+	m.mode = modeCategories
+	content := stripStyles(m.renderOverlay("", 40, 12))
+	if !strings.Contains(content, "0  No remixes") || !strings.Contains(content, "0-4 preset") {
+		t.Fatalf("categories overlay = %q", content)
+	}
+	for _, line := range strings.Split(content, "\n") {
+		if ansi.StringWidth(line) > 40 {
+			t.Fatalf("overlay line exceeds width: %q", line)
+		}
+	}
+}
+
+func TestHelpIncludesCategoryPresetShortcut(t *testing.T) {
+	if !strings.Contains(strings.Join(helpLines(), "\n"), "0-4  —  apply configured preset from Categories view") {
+		t.Fatal("help does not describe category presets")
 	}
 }
 

@@ -34,3 +34,20 @@ Run the Go checks from `src/PlaylistMaker.Charm`:
 go test ./...
 go vet ./...
 ```
+
+## Category presets
+
+`categoryPresets` is optional and supports up to five ordered presets. In the
+Categories view, list positions map to keys `0` through `4`. A preset with
+`include` enables only the listed categories; a preset with `exclude` enables
+every known category except those listed. Each preset must use exactly one of
+these fields.
+
+The exact category names are: `Music Video`, `Band Live`, `Performance`,
+`Choreography`, `Relay`, `Be Original`, `Fancam`, `Concert`, `Music Show`,
+`Remix`, and `Live Audio`.
+
+The development launcher reads `C:\code\csharp\PlaylistMaker\config.yaml`.
+Direct binary launches read `config.yaml` beside the executable unless
+`--config` supplies another path. The local `config.yaml` is ignored; use
+`sample_config.yaml` for the documented configuration shape.

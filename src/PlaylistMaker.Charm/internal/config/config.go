@@ -10,29 +10,37 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/pathid"
 )
 
+type CategoryPreset struct {
+	Name    string             `yaml:"name"`
+	Include []library.Category `yaml:"include"`
+	Exclude []library.Category `yaml:"exclude"`
+}
+
 type Config struct {
 	ConfigPath                           string
-	DataDirectory                        string   `yaml:"dataDirectory"`
-	MediaCatalogFile                     string   `yaml:"mediaCatalogFile"`
-	VideoDirectories                     []string `yaml:"videoDirectories"`
-	IgnoredVideoDirectories              []string `yaml:"ignoredVideoDirectories"`
-	AudioDirectories                     []string `yaml:"audioDirectories"`
-	FlacCacheFile                        string   `yaml:"flacCacheFile"`
-	PlaylistTemplate                     string   `yaml:"playlistTemplate"`
-	VideoPlaylistCommand                 []string `yaml:"videoPlaylistCommand"`
-	VideoPlaylistSuffix                  string   `yaml:"videoPlaylistSuffix"`
-	VideoSingleFileCommand               []string `yaml:"videoSingleFileCommand"`
-	LocalTrackingStartCommand            []string `yaml:"localTrackingStartCommand"`
-	LocalTrackingStopCommand             []string `yaml:"localTrackingStopCommand"`
-	SpotifyClientID                      string   `yaml:"spotifyClientId"`
-	SpotifyDeviceName                    string   `yaml:"spotifyDeviceName"`
-	SpotifyRedirectURI                   string   `yaml:"spotifyRedirectUri"`
-	PlaylistTxtFilePath                  string   `yaml:"playlistTxtFilePath"`
-	PlaybackHistoryEnabled               bool     `yaml:"playbackHistoryEnabled"`
-	PlaybackHistoryMinimumWatchedPercent int      `yaml:"playbackHistoryMinimumWatchedPercent"`
+	DataDirectory                        string           `yaml:"dataDirectory"`
+	MediaCatalogFile                     string           `yaml:"mediaCatalogFile"`
+	VideoDirectories                     []string         `yaml:"videoDirectories"`
+	IgnoredVideoDirectories              []string         `yaml:"ignoredVideoDirectories"`
+	AudioDirectories                     []string         `yaml:"audioDirectories"`
+	FlacCacheFile                        string           `yaml:"flacCacheFile"`
+	PlaylistTemplate                     string           `yaml:"playlistTemplate"`
+	VideoPlaylistCommand                 []string         `yaml:"videoPlaylistCommand"`
+	VideoPlaylistSuffix                  string           `yaml:"videoPlaylistSuffix"`
+	VideoSingleFileCommand               []string         `yaml:"videoSingleFileCommand"`
+	LocalTrackingStartCommand            []string         `yaml:"localTrackingStartCommand"`
+	LocalTrackingStopCommand             []string         `yaml:"localTrackingStopCommand"`
+	SpotifyClientID                      string           `yaml:"spotifyClientId"`
+	SpotifyDeviceName                    string           `yaml:"spotifyDeviceName"`
+	SpotifyRedirectURI                   string           `yaml:"spotifyRedirectUri"`
+	PlaylistTxtFilePath                  string           `yaml:"playlistTxtFilePath"`
+	PlaybackHistoryEnabled               bool             `yaml:"playbackHistoryEnabled"`
+	PlaybackHistoryMinimumWatchedPercent int              `yaml:"playbackHistoryMinimumWatchedPercent"`
+	CategoryPresets                      []CategoryPreset `yaml:"categoryPresets"`
 }
 
 func Load(configPath string) (Config, error) {
@@ -57,6 +65,9 @@ func Load(configPath string) (Config, error) {
 }
 
 func (c *Config) resolveAndValidate(configDirectory string) error {
+	if err := validateCategoryPresets(c.CategoryPresets); err != nil {
+		return err
+	}
 	if err := required("dataDirectory", c.DataDirectory); err != nil {
 		return err
 	}
@@ -139,6 +150,52 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 	}
 	if c.PlaybackHistoryMinimumWatchedPercent < 0 || c.PlaybackHistoryMinimumWatchedPercent > 100 {
 		return fmt.Errorf("playbackHistoryMinimumWatchedPercent must be between 0 and 100")
+	}
+	return nil
+}
+
+func validateCategoryPresets(presets []CategoryPreset) error {
+	if len(presets) > 5 {
+		return fmt.Errorf("categoryPresets allows at most five presets")
+	}
+	known := make(map[library.Category]bool, len(library.Categories))
+	for _, category := range library.Categories {
+		known[category] = true
+	}
+	names := make(map[string]bool, len(presets))
+	for index, preset := range presets {
+		name := strings.TrimSpace(preset.Name)
+		label := fmt.Sprintf("categoryPresets[%d]", index)
+		if name != "" {
+			label += " (" + name + ")"
+		}
+		if name == "" {
+			return fmt.Errorf("%s name must be non-empty", label)
+		}
+		key := strings.ToLower(name)
+		if names[key] {
+			return fmt.Errorf("%s name must be unique", label)
+		}
+		names[key] = true
+		if len(preset.Include) > 0 && len(preset.Exclude) > 0 {
+			return fmt.Errorf("%s must define either include or exclude, not both", label)
+		}
+		if len(preset.Include) == 0 && len(preset.Exclude) == 0 {
+			return fmt.Errorf("%s must define a non-empty include or exclude list", label)
+		}
+		seen := map[library.Category]bool{}
+		for field, categories := range map[string][]library.Category{"include": preset.Include, "exclude": preset.Exclude} {
+			for _, category := range categories {
+				if !known[category] {
+					return fmt.Errorf("%s %s contains unknown category %q", label, field, category)
+				}
+				if seen[category] {
+					return fmt.Errorf("%s %s contains duplicate category %q", label, field, category)
+				}
+				seen[category] = true
+			}
+		}
+		presets[index].Name = name
 	}
 	return nil
 }

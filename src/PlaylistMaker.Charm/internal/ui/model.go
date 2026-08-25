@@ -15,6 +15,7 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
+	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/pathid"
 	"playlistmaker/charm/internal/spotifylink"
@@ -190,6 +191,7 @@ type Model struct {
 	queued            map[string]library.Variant
 	queueOrder        []string
 	enabled           map[library.Category]bool
+	categoryPresets   []config.CategoryPreset
 	query             string
 	sort              library.Sort
 	trackDate         *library.DateRange
@@ -294,6 +296,11 @@ func (m Model) WithHistorySource(source HistorySource, watcher ...HistoryWatcher
 
 func (m Model) WithMappingUpdater(updater MappingUpdater) Model {
 	m.mappingUpdater = updater
+	return m
+}
+
+func (m Model) WithCategoryPresets(presets []config.CategoryPreset) Model {
+	m.categoryPresets = append([]config.CategoryPreset(nil), presets...)
 	return m
 }
 
@@ -1142,7 +1149,7 @@ func (m *Model) clampOverlayState() {
 	m.helpOffset = min(max(m.helpOffset, 0), m.helpMaxOffset())
 	switch m.mode {
 	case modeCategories:
-		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Categories)-1)
+		m.overlayCursor = min(max(m.overlayCursor, 0), max(len(m.categoryPresets)+len(library.Categories)-1, 0))
 	case modeSort:
 		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Sorts)-1)
 	case modeQueue:
@@ -1459,19 +1466,79 @@ func (m Model) handleSearchKey(key tea.KeyPressMsg) Model {
 }
 
 func (m Model) handleCategoryKey(key tea.KeyPressMsg) Model {
+	presetCount := len(m.categoryPresets)
+	categoryCount := len(library.Categories)
+	total := presetCount + categoryCount
+	if key.Text >= "0" && key.Text <= "4" {
+		index := int(key.Text[0] - '0')
+		if index < presetCount {
+			m.applyCategoryPreset(index)
+		}
+		return m
+	}
 	switch key.String() {
 	case "j", "down", "ctrl+j":
-		m.overlayCursor = min(m.overlayCursor+1, len(library.Categories)-1)
+		m.overlayCursor = min(m.overlayCursor+1, total-1)
 	case "k", "up", "ctrl+k":
 		m.overlayCursor = max(m.overlayCursor-1, 0)
 	case "space", "enter":
-		category := library.Categories[m.overlayCursor]
+		if m.overlayCursor < presetCount {
+			m.applyCategoryPreset(m.overlayCursor)
+			return m
+		}
+		category := library.Categories[m.overlayCursor-presetCount]
 		m.enabled[category] = !m.enabled[category]
 		m.refreshResults()
 	case "c", "esc":
 		m.mode = modeNavigate
 	}
 	return m
+}
+
+func (m *Model) applyCategoryPreset(index int) {
+	if index < 0 || index >= len(m.categoryPresets) {
+		return
+	}
+	preset := m.categoryPresets[index]
+	enabled := make(map[library.Category]bool, len(library.Categories))
+	if len(preset.Include) > 0 {
+		for _, category := range preset.Include {
+			enabled[category] = true
+		}
+	} else {
+		for _, category := range library.Categories {
+			enabled[category] = true
+		}
+		for _, category := range preset.Exclude {
+			delete(enabled, category)
+		}
+	}
+	m.enabled = enabled
+	m.refreshResults()
+	m.mode = modeNavigate
+	m.status = "Category preset: " + preset.Name
+}
+
+func (m Model) categoryPresetActive(preset config.CategoryPreset) bool {
+	target := make(map[library.Category]bool, len(library.Categories))
+	if len(preset.Include) > 0 {
+		for _, category := range preset.Include {
+			target[category] = true
+		}
+	} else {
+		for _, category := range library.Categories {
+			target[category] = true
+		}
+		for _, category := range preset.Exclude {
+			delete(target, category)
+		}
+	}
+	for _, category := range library.Categories {
+		if m.enabled[category] != target[category] {
+			return false
+		}
+	}
+	return true
 }
 
 func (m Model) handleSortKey(key tea.KeyPressMsg) Model {
@@ -1893,19 +1960,37 @@ func (m Model) renderOverlay(base string, width, height int) string {
 	switch m.mode {
 	case modeCategories:
 		title = "Categories"
-		items := make([]string, 0, len(library.Categories))
+		items := make([]string, 0, len(m.categoryPresets)+len(library.Categories))
+		for index, preset := range m.categoryPresets {
+			prefix := "  "
+			if index == m.overlayCursor {
+				prefix = "› "
+			}
+			marker := " "
+			if m.categoryPresetActive(preset) {
+				marker = "●"
+			}
+			items = append(items, fmt.Sprintf("%s%s %d  %s", prefix, marker, index, preset.Name))
+		}
 		for index, category := range library.Categories {
 			check := "○"
 			if m.enabled[category] {
 				check = "●"
 			}
 			prefix := "  "
-			if index == m.overlayCursor {
+			if index+len(m.categoryPresets) == m.overlayCursor {
 				prefix = "› "
 			}
 			items = append(items, fmt.Sprintf("%s%s  %s", prefix, check, category))
 		}
-		lines = append(overlayWindow(items, m.overlayCursor, height), "", "j/k move  •  space/enter toggle  •  c/esc close")
+		footer := "j/k move  •  space/enter toggle  •  c/esc close"
+		if len(m.categoryPresets) > 0 {
+			footer = "j/k move  •  0-4 preset  •  space/enter apply/toggle  •  c/esc close"
+			if width < 60 {
+				footer = "0-4 preset  •  c close"
+			}
+		}
+		lines = append(overlayWindow(items, m.overlayCursor, height), "", footer)
 	case modeSort:
 		title = "Sort tracks"
 		items := make([]string, 0, len(library.Sorts))

@@ -151,6 +151,7 @@ func main() {
 
 	tracks := library.Generate(*trackCount, *variantCount)
 	var playback backend.PlaybackService
+	var categoryPresets []config.CategoryPreset
 	var updates *mappingUpdater
 	historyPath := ""
 	var bridgeClient *bridge.Client
@@ -174,6 +175,7 @@ func main() {
 			fmt.Fprintf(os.Stderr, "PlaylistMaker Go config failed: %v\n", err)
 			os.Exit(1)
 		}
+		categoryPresets = goConfig.CategoryPresets
 		if goConfig.SpotifyClientID != "" {
 			auth := &spotify.Auth{ClientID: goConfig.SpotifyClientID, RedirectURI: goConfig.SpotifyRedirectURI, TokenPath: filepath.Join(goConfig.DataDirectory, "spotify-auth.json")}
 			if err := spotify.Recover(context.Background(), &spotify.Client{Auth: auth}, filepath.Join(goConfig.DataDirectory, "spotify-active-session.json")); err != nil {
@@ -271,7 +273,7 @@ func main() {
 		return
 	}
 
-	model := ui.New(tracks, playback)
+	model := ui.New(tracks, playback).WithCategoryPresets(categoryPresets)
 	if *backendMode == "go" {
 		model = model.WithMappingUpdater(updates)
 		model = model.WithSpotifyUpdater(updates)

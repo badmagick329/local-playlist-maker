@@ -136,6 +136,50 @@ func TestLoadRequiresBothLocalTrackingCommands(t *testing.T) {
 	}
 }
 
+func TestLoadCategoryPresetsPreservesOrderAndValidatesCategories(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.yaml")
+	writeConfig(t, path, validConfig(`categoryPresets:
+  - name: No remixes
+    exclude: [Remix]
+  - name: Live
+    include: [Band Live, Live Audio]
+`))
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.CategoryPresets) != 2 || loaded.CategoryPresets[0].Name != "No remixes" || loaded.CategoryPresets[1].Name != "Live" {
+		t.Fatalf("presets = %#v", loaded.CategoryPresets)
+	}
+}
+
+func TestLoadCategoryPresetsValidation(t *testing.T) {
+	tests := []struct {
+		name  string
+		value string
+		want  string
+	}{
+		{"too many", "categoryPresets:\n" + strings.Repeat("  - name: preset\n    include: [Remix]\n", 6), "at most five"},
+		{"missing name", "categoryPresets:\n  - include: [Remix]\n", "name must be non-empty"},
+		{"duplicate names", "categoryPresets:\n  - name: Live\n    include: [Remix]\n  - name: live\n    include: [Concert]\n", "name must be unique"},
+		{"both fields", "categoryPresets:\n  - name: Invalid\n    include: [Remix]\n    exclude: [Concert]\n", "either include or exclude"},
+		{"neither field", "categoryPresets:\n  - name: Invalid\n", "non-empty include or exclude"},
+		{"empty list", "categoryPresets:\n  - name: Invalid\n    include: []\n", "non-empty include or exclude"},
+		{"unknown category", "categoryPresets:\n  - name: Invalid\n    include: [Unknown]\n", "unknown category"},
+		{"duplicate category", "categoryPresets:\n  - name: Invalid\n    exclude: [Remix, Remix]\n", "duplicate category"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			writeConfig(t, path, validConfig(test.value))
+			_, err := Load(path)
+			if err == nil || !strings.Contains(err.Error(), test.want) || !strings.Contains(err.Error(), "categoryPresets") {
+				t.Fatalf("error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
 func writeConfig(t *testing.T, path, contents string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
