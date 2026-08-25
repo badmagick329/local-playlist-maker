@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -266,6 +267,39 @@ func TestParentRowsShowTheActiveEligibleDateSortValue(t *testing.T) {
 		if got := stripStyles(m.renderRow(m.rows[0], false, 120)); !strings.Contains(got, test.want) {
 			t.Fatalf("%s parent row = %q, want %s", test.sort, got, test.want)
 		}
+	}
+}
+
+func TestParentRowsKeepDateAlignedAcrossCountWidths(t *testing.T) {
+	variants := func(count int) []library.Variant {
+		result := make([]library.Variant, count)
+		for index := range result {
+			result[index] = library.Variant{ID: fmt.Sprintf("video-%d", index), Filename: fmt.Sprintf("video-%d.mkv", index), Category: library.MusicVideo}
+		}
+		return result
+	}
+	tracks := []library.Track{
+		{ID: "one", Artist: "Artist One", Title: "One", ReleaseDateLabel: "2026-08-10", Variants: variants(1)},
+		{ID: "many", Artist: "Artist Many", Title: "Many", ReleaseDateLabel: "2026-08-10", Variants: variants(13)},
+	}
+	m := New(tracks)
+	m.sort = library.ReleaseNewest
+	m.refreshResults()
+	rows := map[string]string{}
+	for _, current := range m.rows {
+		if current.isVariant() {
+			continue
+		}
+		track := m.filtered[current.trackIndex]
+		rows[track.ID] = stripStyles(m.renderRow(current, false, 100))
+	}
+	for _, id := range []string{"one", "many"} {
+		if !strings.HasSuffix(rows[id], map[string]string{"one": "  1", "many": "  13"}[id]) {
+			t.Fatalf("row %s has unexpected count formatting: %q", id, rows[id])
+		}
+	}
+	if one, many := strings.Index(rows["one"], "2026-08-10"), strings.Index(rows["many"], "2026-08-10"); one != many {
+		t.Fatalf("date columns are misaligned: one=%d many=%d\n%s\n%s", one, many, rows["one"], rows["many"])
 	}
 }
 

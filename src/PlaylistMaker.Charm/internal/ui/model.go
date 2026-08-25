@@ -1807,7 +1807,8 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 		}
 	}
 	eligibleCount := len(library.EligibleVariants(track, m.currentQuery()))
-	right := m.theme.muted.Render(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
+	countWidth := m.parentRowCountWidth()
+	right := m.theme.muted.Render(formatParentRowRight(m.parentRowDate(track), eligibleCount, countWidth))
 	if selected {
 		selectedText := m.theme.selected.Render
 		selectedQueued := selectedText("  ")
@@ -1815,12 +1816,24 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 			selectedQueued = selectedText("● ")
 		}
 		selectedLeftPrefix := selectedText(expansion+" ") + selectedQueued + selectedText(" ") + m.selectedSourceBadge(track) + selectedText(" ") + selectedText(track.Artist) + selectedText("  —  ") + selectedText(track.Title)
-		selectedRight := selectedText(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
+		selectedRight := selectedText(formatParentRowRight(m.parentRowDate(track), eligibleCount, countWidth))
 		return joinAlignedWithSuffixFill(selectedLeftPrefix, "", selectedRight, width, m.theme.selected)
 	}
 	leftPrefix := m.theme.muted.Render(expansion+" ") + queued + " " + m.sourceBadge(track) + " " + m.theme.accent.Render(track.Artist) + m.theme.muted.Render("  —  ") + m.theme.title.Render(track.Title)
 	line := joinAligned(leftPrefix, right, width)
 	return line
+}
+
+func (m Model) parentRowCountWidth() int {
+	width := 1
+	for _, track := range m.filtered {
+		width = max(width, len(strconv.Itoa(len(library.EligibleVariants(track, m.currentQuery())))))
+	}
+	return width
+}
+
+func formatParentRowRight(date string, count, countWidth int) string {
+	return fmt.Sprintf("%s  %*d", date, countWidth, count)
 }
 
 func (m Model) sourceBadge(track library.Track) string {
