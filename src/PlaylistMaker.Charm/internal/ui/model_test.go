@@ -337,10 +337,14 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 		t.Run("selected "+test.name, func(t *testing.T) {
 			rowModel := New([]library.Track{test.track})
 			raw := rowModel.renderRow(rowModel.rows[0], true, 80)
-			badge := " " + rowModel.selectedSourceBadge(test.track)
-			before, after, found := strings.Cut(raw, badge)
+			badge := rowModel.selectedSourceBadge(test.track)
+			separator := rowModel.theme.selected.Render(" ")
+			before, after, found := strings.Cut(raw, separator+badge)
 			if !found || !strings.Contains(before, selectedBackground) || !strings.Contains(after, selectedBackground) {
 				t.Fatalf("selected row does not keep background around badge: %q", raw)
+			}
+			if !strings.Contains(separator, selectedBackground) {
+				t.Fatalf("selected badge separator has no selected background: %q", separator)
 			}
 			if badge == " "+rowModel.theme.selected.Render("●") {
 				t.Fatalf("selected %s badge uses the ordinary selected foreground", test.name)

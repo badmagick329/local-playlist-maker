@@ -1815,7 +1815,7 @@ func (m Model) renderRow(current row, selected bool, width int) string {
 			selectedQueued = selectedText("● ")
 		}
 		selectedLeftPrefix := selectedText(expansion+" ") + selectedQueued + selectedText(track.Artist) + selectedText("  —  ") + selectedText(track.Title)
-		selectedBadge := " " + m.selectedSourceBadge(track)
+		selectedBadge := m.theme.selected.Render(" ") + m.selectedSourceBadge(track)
 		selectedRight := selectedText(fmt.Sprintf("%s  %d", m.parentRowDate(track), eligibleCount))
 		return joinAlignedWithSuffixFill(selectedLeftPrefix, selectedBadge, selectedRight, width, m.theme.selected)
 	}
