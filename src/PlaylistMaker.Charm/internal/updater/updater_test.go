@@ -9,6 +9,7 @@ import (
 	"playlistmaker/charm/internal/catalog"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/metadata"
+	"playlistmaker/charm/internal/pathid"
 )
 
 func TestScanSuggestsCatalogueTrackAndPreservesIgnoredVideos(t *testing.T) {
@@ -43,6 +44,44 @@ func TestScanSuggestsCatalogueTrackAndPreservesIgnoredVideos(t *testing.T) {
 	items, err := service.Scan(context.Background())
 	if err != nil || len(items) != 1 || items[0].VideoPath != unmapped || items[0].AudioPath != "trk_song" {
 		t.Fatalf("scan = %#v, %v", items, err)
+	}
+}
+
+func TestScanFuzzySuggestsLongerCatalogueTitle(t *testing.T) {
+	root := t.TempDir()
+	videos := filepath.Join(root, "videos")
+	if err := os.MkdirAll(videos, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	video := filepath.Join(videos, "260826 aespa - Switchblade (Concert).mp4")
+	if err := os.WriteFile(video, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	audioPath := filepath.Join(root, "audio", "switchblade.flac")
+	otherAudioPath := filepath.Join(root, "audio", "other.flac")
+	catalogPath := filepath.Join(root, "data", "catalog.json")
+	media := catalog.New()
+	media.Tracks = []catalog.Track{
+		{ID: "trk_switchblade", Artist: "aespa", Title: "Switchblade", LocalAudioPath: audioPath},
+		{ID: "trk_other", Artist: "aespa", Title: "Another Song", LocalAudioPath: otherAudioPath},
+	}
+	if err := catalog.Write(catalogPath, media); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(root, "data", "cache.json")
+	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{
+		pathid.ComparisonKey(audioPath):      {FilePath: audioPath, Artist: "aespa", Title: "Switchblade (feat. Ty Dolla $ign)"},
+		pathid.ComparisonKey(otherAudioPath): {FilePath: otherAudioPath, Artist: "aespa", Title: "Another Song"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}
+	items, err := service.Scan(context.Background())
+	if err != nil || len(items) != 1 {
+		t.Fatalf("scan = %#v, %v", items, err)
+	}
+	if items[0].AudioPath != "trk_switchblade" || items[0].Reason != "Possible match" {
+		t.Fatalf("switchblade suggestion = %#v", items[0])
 	}
 }
 

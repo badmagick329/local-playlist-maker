@@ -408,7 +408,7 @@ func fuzzyMatch(videoTitle string, candidates []metadata.Entry) (metadata.Entry,
 	best := metadata.Entry{}
 	bestScore, tied := 0, false
 	for _, candidate := range candidates {
-		score, ok := library.FuzzyScore(videoTitle, candidate.Title)
+		score, ok := library.FuzzyScore(candidate.Title, videoTitle)
 		if !ok || score <= 0 {
 			continue
 		}
