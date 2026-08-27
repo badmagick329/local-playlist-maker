@@ -85,6 +85,54 @@ func TestScanFuzzySuggestsLongerCatalogueTitle(t *testing.T) {
 	}
 }
 
+func TestFuzzyMatchIsSymmetricAndRejectsAmbiguousTitles(t *testing.T) {
+	tests := []struct {
+		name       string
+		videoTitle string
+		candidates []metadata.Entry
+		wantPath   string
+		wantOK     bool
+	}{
+		{
+			name:       "video title is shorter",
+			videoTitle: "Switchblade",
+			candidates: []metadata.Entry{{FilePath: "long.flac", Artist: "aespa", Title: "Switchblade (feat. Ty Dolla $ign)"}},
+			wantPath:   "long.flac",
+			wantOK:     true,
+		},
+		{
+			name:       "video title is longer",
+			videoTitle: "Switchblade (feat. Ty Dolla $ign)",
+			candidates: []metadata.Entry{{FilePath: "short.flac", Artist: "aespa", Title: "Switchblade"}},
+			wantPath:   "short.flac",
+			wantOK:     true,
+		},
+		{
+			name:       "unrelated title",
+			videoTitle: "Switchblade",
+			candidates: []metadata.Entry{{FilePath: "other.flac", Artist: "aespa", Title: "Another Song"}},
+			wantOK:     false,
+		},
+		{
+			name:       "equal best matches are ambiguous",
+			videoTitle: "Switchblade",
+			candidates: []metadata.Entry{
+				{FilePath: "first.flac", Artist: "aespa", Title: "Switchblade (Live)"},
+				{FilePath: "second.flac", Artist: "aespa", Title: "Switchblade (Live)"},
+			},
+			wantOK: false,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, ok := fuzzyMatch(test.videoTitle, test.candidates)
+			if ok != test.wantOK || test.wantOK && got.FilePath != test.wantPath {
+				t.Fatalf("fuzzyMatch() = %#v, %v; want %q, %v", got, ok, test.wantPath, test.wantOK)
+			}
+		})
+	}
+}
+
 func TestCreateAddsVideoOnlyTrackAndConfirmLinksExistingTrack(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "catalog.json")
