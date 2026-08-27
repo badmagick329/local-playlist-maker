@@ -235,6 +235,7 @@ type Model struct {
 	spotifyScanning   bool
 	spotifyCancelling bool
 	spotifyProgress   spotifylink.ScanProgress
+	spotifyScanError  string
 	spotifyScan       *spotifyScanRunner
 	spotifyScanCancel context.CancelFunc
 	spotifyQuery      string
@@ -321,12 +322,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		m.spotifyScanCancel = nil
 		m.spotifyProgress = message.progress
 		if message.cancelled {
+			m.spotifyScanError = ""
 			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
 			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
 			m.status = fmt.Sprintf("Spotify scan cancelled after %d/%d; %d links saved; %d need review", message.progress.Current, message.progress.Total, message.result.AutoLinked, len(message.result.Items))
 			return m, nil
 		}
 		if message.err != nil {
+			m.spotifyScanError = message.err.Error()
 			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
 			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
 			if message.progress.Phase == "authenticating" {
@@ -337,6 +340,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 				m.status = "Spotify link scan failed: " + message.err.Error()
 			}
 		} else {
+			m.spotifyScanError = ""
 			m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = message.result.Items, 0, 0
 			m.spotifyDirty = m.spotifyDirty || message.result.AutoLinked > 0
 			m.status = fmt.Sprintf("%d Spotify links saved automatically; %d need review", message.result.AutoLinked, len(message.result.Items))
@@ -616,6 +620,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.mode, m.spotifyScanning, m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = modeSpotifyUpdate, true, nil, 0, 0
+		m.spotifyScanError = ""
 		m.status = "Starting Spotify link scan…"
 		return m.beginSpotifyScan()
 	}
@@ -937,6 +942,7 @@ func (m Model) handleSpotifyUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 	case "r":
 		m.spotifyScanning, m.spotifyItems, m.spotifyIndex, m.spotifyCandidate = true, nil, 0, 0
+		m.spotifyScanError = ""
 		m.status = "Starting Spotify link scan…"
 		return m.beginSpotifyScan()
 	case "enter":
@@ -2132,7 +2138,11 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		}
 		item, ok := m.currentSpotifyItem()
 		if !ok {
-			lines = []string{"All eligible catalogue tracks have Spotify links or are ignored", "", "r rescan • U/esc close"}
+			if m.spotifyScanError != "" {
+				lines = []string{"Spotify scan failed", m.spotifyScanError, "", "r rescan • U/esc close"}
+			} else {
+				lines = []string{"All eligible catalogue tracks have Spotify links or are ignored", "", "r rescan • U/esc close"}
+			}
 			break
 		}
 		lines = []string{fmt.Sprintf("%d of %d", m.spotifyIndex+1, len(m.spotifyItems)), "LOCAL TRACK", item.Artist + " — " + item.Title, "Release: " + emptyAny(item.ReleaseDate)}

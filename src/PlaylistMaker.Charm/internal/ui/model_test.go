@@ -15,6 +15,7 @@ import (
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
+	"playlistmaker/charm/internal/spotifylink"
 	"playlistmaker/charm/internal/updater"
 )
 
@@ -467,6 +468,45 @@ func TestMappingUpdateSummaryCountsOnlySuggestionsAndSkipIsTemporary(t *testing.
 	m = updateKey(t, m, "s")
 	if stub.ignores != 0 || len(m.mappingItems) != 2 || m.mappingIndex != 1 {
 		t.Fatalf("temporary skip = %#v", m)
+	}
+}
+
+func TestSpotifyScanErrorDoesNotRenderSuccessfulEmptyState(t *testing.T) {
+	m := New(library.Generate(1, 2))
+	m.mode = modeSpotifyUpdate
+	next, _ := m.Update(spotifyScanMsg{err: errors.New("search failed")})
+	m = next.(Model)
+	view := stripStyles(m.render())
+	if !strings.Contains(view, "Spotify scan failed") || strings.Contains(view, "All eligible catalogue tracks have Spotify links or are ignored") {
+		t.Fatalf("failed scan view = %q", view)
+	}
+	if !strings.Contains(view, "search failed") {
+		t.Fatalf("failed scan omitted error = %q", view)
+	}
+}
+
+func TestSpotifyScanSuccessClearsPreviousError(t *testing.T) {
+	m := New(library.Generate(1, 2))
+	m.mode = modeSpotifyUpdate
+	next, _ := m.Update(spotifyScanMsg{err: errors.New("search failed")})
+	m = next.(Model)
+	next, _ = m.Update(spotifyScanMsg{})
+	m = next.(Model)
+	view := stripStyles(m.render())
+	if !strings.Contains(view, "All eligible catalogue tracks have Spotify links or are ignored") || strings.Contains(view, "Spotify scan failed") {
+		t.Fatalf("successful scan view = %q", view)
+	}
+}
+
+func TestSpotifyScanErrorKeepsPartialReviewItems(t *testing.T) {
+	m := New(library.Generate(1, 2))
+	m.mode = modeSpotifyUpdate
+	result := spotifylink.ScanResult{Items: []spotifylink.Item{{Artist: "aespa", Title: "Switchblade"}}}
+	next, _ := m.Update(spotifyScanMsg{result: result, err: errors.New("search failed")})
+	m = next.(Model)
+	view := stripStyles(m.render())
+	if !strings.Contains(view, "aespa — Switchblade") || !strings.Contains(view, "LOCAL TRACK") {
+		t.Fatalf("partial failed scan view = %q", view)
 	}
 }
 
