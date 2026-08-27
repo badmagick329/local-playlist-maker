@@ -42,7 +42,9 @@ type mappingUpdater struct {
 	allowUntracked bool
 }
 
-func (u mappingUpdater) Scan(ctx context.Context) ([]updater.Item, error) { return u.service.Scan(ctx) }
+func (u mappingUpdater) Scan(ctx context.Context) (updater.ScanResult, error) {
+	return u.service.Scan(ctx)
+}
 func (u mappingUpdater) Ignored(ctx context.Context) ([]updater.Item, error) {
 	return u.service.Ignored(ctx)
 }

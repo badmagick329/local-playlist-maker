@@ -41,9 +41,9 @@ func TestScanSuggestsCatalogueTrackAndPreservesIgnoredVideos(t *testing.T) {
 	if err := service.Ignore(ignored); err != nil {
 		t.Fatal(err)
 	}
-	items, err := service.Scan(context.Background())
-	if err != nil || len(items) != 1 || items[0].VideoPath != unmapped || items[0].AudioPath != "trk_song" {
-		t.Fatalf("scan = %#v, %v", items, err)
+	result, err := service.Scan(context.Background())
+	if err != nil || len(result.Items) != 1 || result.Items[0].VideoPath != unmapped || result.Items[0].AudioPath != "trk_song" {
+		t.Fatalf("scan = %#v, %v", result, err)
 	}
 }
 
@@ -76,12 +76,105 @@ func TestScanFuzzySuggestsLongerCatalogueTitle(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}
-	items, err := service.Scan(context.Background())
-	if err != nil || len(items) != 1 {
-		t.Fatalf("scan = %#v, %v", items, err)
+	result, err := service.Scan(context.Background())
+	if err != nil || len(result.Items) != 1 {
+		t.Fatalf("scan = %#v, %v", result, err)
 	}
-	if items[0].AudioPath != "trk_switchblade" || items[0].Reason != "Possible match" {
-		t.Fatalf("switchblade suggestion = %#v", items[0])
+	if result.Items[0].AudioPath != "trk_switchblade" || result.Items[0].Reason != "Possible match" {
+		t.Fatalf("switchblade suggestion = %#v", result.Items[0])
+	}
+}
+
+func TestScanRemovesMissingManagedVideosAndKeepsExcludedMappings(t *testing.T) {
+	root := t.TempDir()
+	videos := filepath.Join(root, "videos")
+	ignored := filepath.Join(videos, "archive")
+	if err := os.MkdirAll(ignored, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	present := filepath.Join(videos, "240101 Present - Song.mkv")
+	newVideo := filepath.Join(videos, "240102 New - Song.mkv")
+	if err := os.WriteFile(present, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newVideo, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	catalogPath := filepath.Join(root, "data", "catalog.json")
+	media := catalog.New()
+	media.Tracks = []catalog.Track{
+		{ID: "trk_present", Artist: "Present", Title: "Song"},
+		{ID: "trk_missing", Artist: "Missing", Title: "Song"},
+		{ID: "trk_ignored", Artist: "Ignored", Title: "Song"},
+		{ID: "trk_outside", Artist: "Outside", Title: "Song"},
+	}
+	media.Videos = []catalog.Video{
+		{Path: present, TrackID: "trk_present"},
+		{Path: filepath.Join(videos, "240103 Missing - Song.mkv"), TrackID: "trk_missing"},
+		{Path: filepath.Join(ignored, "240104 Ignored - Song.mkv"), TrackID: "trk_ignored"},
+		{Path: filepath.Join(root, "other", "240105 Outside - Song.mkv"), TrackID: "trk_outside"},
+	}
+	if err := catalog.Write(catalogPath, media); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(root, "data", "cache.json")
+	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{}); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Config: config.Config{
+		DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath,
+		VideoDirectories: []string{videos}, IgnoredVideoDirectories: []string{ignored},
+	}}
+	result, err := service.Scan(context.Background())
+	if err != nil || result.Removed != 1 || len(result.Items) != 1 || result.Items[0].VideoPath != newVideo {
+		t.Fatalf("scan = %#v, %v", result, err)
+	}
+	loaded, err := catalog.Read(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(loaded.Tracks) != 4 || len(loaded.Videos) != 3 {
+		t.Fatalf("catalogue counts = %d tracks, %d videos", len(loaded.Tracks), len(loaded.Videos))
+	}
+	for _, video := range loaded.Videos {
+		if video.TrackID == "trk_missing" {
+			t.Fatal("managed missing mapping was retained")
+		}
+	}
+}
+
+func TestScanDoesNotPruneWhenVideoRootCannotBeRead(t *testing.T) {
+	root := t.TempDir()
+	catalogPath := filepath.Join(root, "data", "catalog.json")
+	missingVideo := filepath.Join(root, "videos", "240101 Missing - Song.mkv")
+	media := catalog.New()
+	media.Tracks = []catalog.Track{{ID: "trk_missing", Artist: "Missing", Title: "Song"}}
+	media.Videos = []catalog.Video{{Path: missingVideo, TrackID: "trk_missing"}}
+	if err := catalog.Write(catalogPath, media); err != nil {
+		t.Fatal(err)
+	}
+	cachePath := filepath.Join(root, "data", "cache.json")
+	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Config: config.Config{
+		DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath,
+		VideoDirectories: []string{filepath.Join(root, "videos")},
+	}}
+	result, err := service.Scan(context.Background())
+	if err == nil || result.Removed != 0 {
+		t.Fatalf("scan = %#v, %v", result, err)
+	}
+	after, err := os.ReadFile(catalogPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(after) != string(before) {
+		t.Fatal("catalogue changed after failed root scan")
 	}
 }
 

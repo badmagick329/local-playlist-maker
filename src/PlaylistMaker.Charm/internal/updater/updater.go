@@ -36,6 +36,11 @@ type Audio struct {
 	Title  string
 }
 
+type ScanResult struct {
+	Items   []Item
+	Removed int
+}
+
 type Service struct {
 	Config config.Config
 	Reader metadata.Reader
@@ -49,14 +54,14 @@ type scanIndex struct {
 	artist   map[string][]metadata.Entry
 }
 
-func (s Service) Scan(ctx context.Context) ([]Item, error) {
+func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
-		return nil, err
+		return ScanResult{}, err
 	}
 	ignoredPaths, err := ReadIgnored(s.IgnoredPath())
 	if err != nil {
-		return nil, err
+		return ScanResult{}, err
 	}
 	ignored := make(map[string]bool, len(ignoredPaths))
 	for _, path := range ignoredPaths {
@@ -64,10 +69,11 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 	}
 	cache, err := s.refreshAudioCache(ctx)
 	if err != nil {
-		return nil, err
+		return ScanResult{}, err
 	}
 	index := buildScanIndex(media, cache)
 	paths := []string{}
+	present := make(map[string]bool)
 	for _, root := range s.Config.VideoDirectories {
 		err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
@@ -79,13 +85,34 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 			if entry.IsDir() && excluded(path, s.Config.IgnoredVideoDirectories) {
 				return filepath.SkipDir
 			}
-			if !entry.IsDir() && supported(path) && !excluded(path, s.Config.IgnoredVideoDirectories) && !ignored[pathid.ComparisonKey(path)] && !index.mapped[pathid.ComparisonKey(path)] {
-				paths = append(paths, pathid.Normalize(path))
+			if !entry.IsDir() && !excluded(path, s.Config.IgnoredVideoDirectories) {
+				normalized := pathid.Normalize(path)
+				present[pathid.ComparisonKey(normalized)] = true
+				if supported(path) && !ignored[pathid.ComparisonKey(normalized)] && !index.mapped[pathid.ComparisonKey(normalized)] {
+					paths = append(paths, normalized)
+				}
 			}
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return ScanResult{}, err
+		}
+	}
+	removed := 0
+	keptVideos := media.Videos[:0]
+	for _, video := range media.Videos {
+		key := pathid.ComparisonKey(video.Path)
+		managed := within(video.Path, s.Config.VideoDirectories) && !excluded(video.Path, s.Config.IgnoredVideoDirectories)
+		if managed && !present[key] {
+			removed++
+			continue
+		}
+		keptVideos = append(keptVideos, video)
+	}
+	media.Videos = keptVideos
+	if removed > 0 {
+		if err := catalog.Write(s.Config.MediaCatalogFile, media); err != nil {
+			return ScanResult{}, err
 		}
 	}
 	sort.Slice(paths, func(i, j int) bool { return pathid.ComparisonKey(paths[i]) < pathid.ComparisonKey(paths[j]) })
@@ -133,7 +160,7 @@ func (s Service) Scan(ctx context.Context) ([]Item, error) {
 		}
 		items = append(items, item)
 	}
-	return items, nil
+	return ScanResult{Items: items, Removed: removed}, nil
 }
 
 func buildScanIndex(media catalog.Catalog, cache map[string]metadata.Entry) scanIndex {
@@ -314,7 +341,18 @@ func excluded(path string, directories []string) bool {
 	pathKey := strings.TrimRight(pathid.ComparisonKey(path), `\\/`)
 	for _, directory := range directories {
 		directoryKey := strings.TrimRight(pathid.ComparisonKey(directory), `\\/`)
-		if pathKey == directoryKey || strings.HasPrefix(pathKey, directoryKey+`\\`) || strings.HasPrefix(pathKey, directoryKey+`/`) {
+		if pathKey == directoryKey || strings.HasPrefix(pathKey, directoryKey+`\`) || strings.HasPrefix(pathKey, directoryKey+`/`) {
+			return true
+		}
+	}
+	return false
+}
+
+func within(path string, directories []string) bool {
+	pathKey := strings.TrimRight(pathid.ComparisonKey(path), `\\/`)
+	for _, directory := range directories {
+		directoryKey := strings.TrimRight(pathid.ComparisonKey(directory), `\\/`)
+		if pathKey == directoryKey || strings.HasPrefix(pathKey, directoryKey+`\`) || strings.HasPrefix(pathKey, directoryKey+`/`) {
 			return true
 		}
 	}

@@ -110,7 +110,7 @@ type HistoryWatcher interface {
 }
 
 type MappingUpdater interface {
-	Scan(context.Context) ([]updater.Item, error)
+	Scan(context.Context) (updater.ScanResult, error)
 	Ignored(context.Context) ([]updater.Item, error)
 	Search(context.Context, string) ([]updater.Audio, error)
 	Confirm(string, string) error
@@ -145,8 +145,8 @@ type historyRefreshMsg struct {
 type historyWatchChangedMsg struct{}
 type historyWatchClosedMsg struct{}
 type mappingScanMsg struct {
-	items []updater.Item
-	err   error
+	result updater.ScanResult
+	err    error
 }
 type mappingIgnoredMsg struct {
 	items []updater.Item
@@ -386,8 +386,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if message.err != nil {
 			m.status = "Mapping scan failed: " + message.err.Error()
 		} else {
-			m.mappingItems, m.mappingIndex, m.mappingIgnored = message.items, 0, false
-			m.status = mappingSummary(message.items)
+			m.mappingItems, m.mappingIndex, m.mappingIgnored = message.result.Items, 0, false
+			m.mappingDirty = m.mappingDirty || message.result.Removed > 0
+			m.status = mappingSummary(message.result.Items, message.result.Removed)
 		}
 		return m, nil
 	case mappingIgnoredMsg:
@@ -989,8 +990,8 @@ func (m Model) currentMappingItem() (updater.Item, bool) {
 func (m Model) mappingScanCmd() tea.Cmd {
 	service := m.mappingUpdater
 	return func() tea.Msg {
-		items, err := service.Scan(context.Background())
-		return mappingScanMsg{items: items, err: err}
+		result, err := service.Scan(context.Background())
+		return mappingScanMsg{result: result, err: err}
 	}
 }
 func (m Model) mappingIgnoredCmd() tea.Cmd {
@@ -1116,14 +1117,22 @@ func (m *Model) removeCurrentMappingItem() {
 	m.mappingIndex = min(m.mappingIndex, max(len(m.mappingItems)-1, 0))
 }
 
-func mappingSummary(items []updater.Item) string {
+func mappingSummary(items []updater.Item, removed ...int) string {
 	suggestions := 0
 	for _, item := range items {
 		if item.AudioPath != "" {
 			suggestions++
 		}
 	}
-	return fmt.Sprintf("%d unmapped videos • %d suggestions", len(items), suggestions)
+	summary := fmt.Sprintf("%d unmapped videos • %d suggestions", len(items), suggestions)
+	if len(removed) > 0 && removed[0] > 0 {
+		word := "videos"
+		if removed[0] == 1 {
+			word = "video"
+		}
+		summary = fmt.Sprintf("%d missing %s removed • %s", removed[0], word, summary)
+	}
+	return summary
 }
 
 func (m Model) handleHelpKey(key tea.KeyPressMsg) Model {

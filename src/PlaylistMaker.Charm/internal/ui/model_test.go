@@ -42,15 +42,16 @@ type mappingUpdaterStub struct {
 	ignored    []updater.Item
 	candidates []updater.Audio
 	tracks     []library.Track
+	removed    int
 	scanCalls  int
 	confirms   int
 	ignores    int
 	restores   int
 }
 
-func (s *mappingUpdaterStub) Scan(context.Context) ([]updater.Item, error) {
+func (s *mappingUpdaterStub) Scan(context.Context) (updater.ScanResult, error) {
 	s.scanCalls++
-	return s.items, nil
+	return updater.ScanResult{Items: s.items, Removed: s.removed}, nil
 }
 func (s *mappingUpdaterStub) Ignored(context.Context) ([]updater.Item, error) { return s.ignored, nil }
 func (s *mappingUpdaterStub) Search(context.Context, string) ([]updater.Audio, error) {
@@ -468,6 +469,18 @@ func TestMappingUpdateSummaryCountsOnlySuggestionsAndSkipIsTemporary(t *testing.
 	m = updateKey(t, m, "s")
 	if stub.ignores != 0 || len(m.mappingItems) != 2 || m.mappingIndex != 1 {
 		t.Fatalf("temporary skip = %#v", m)
+	}
+}
+
+func TestMappingScanRemovalMarksDirtyAndReportsCount(t *testing.T) {
+	stub := &mappingUpdaterStub{removed: 1, tracks: library.Generate(1, 2)}
+	m := finishMappingScan(t, New(library.Generate(1, 2)).WithMappingUpdater(stub))
+	if !m.mappingDirty || m.status != "1 missing video removed • 0 unmapped videos • 0 suggestions" {
+		t.Fatalf("mapping removal state = dirty %v status %q", m.mappingDirty, m.status)
+	}
+	next, command := m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	if next.(Model).mode != modeNavigate || command == nil {
+		t.Fatal("closing after removal did not request reload")
 	}
 }
 
