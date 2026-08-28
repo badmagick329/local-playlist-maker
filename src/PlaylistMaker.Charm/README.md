@@ -1,53 +1,43 @@
 # PlaylistMaker Charm
 
-Charm plays audible video through mpv. Spotify Connect is the preferred tracking player, with foobar2000 as the local fallback.
+This directory contains the only PlaylistMaker application: a native Go terminal UI built with Bubble Tea/Charm. The root [`README.md`](../../README.md) is the canonical setup and usage guide.
 
-Copy `sample_config.yaml` to the ignored `config.yaml`, then run:
+From the repository root, copy `sample_config.yaml` to the ignored `config.yaml`, configure the local paths and player commands, then launch:
 
 ```powershell
 .\scripts\run-charm.ps1
 ```
 
-Tracks and video relationships live in the app-managed media catalogue. Press `u` to link videos to catalogue tracks. Press `U` to authenticate with Spotify and review missing Spotify links. Spotify is contacted only for authentication, link updates, playback preflight, or recovery of a previous session.
-
-See [Spotify setup](SPOTIFY_SETUP.md) for the short dashboard, configuration, login, and linking guide.
-
-Playback prefers Spotify when a track has a Spotify URI. If Spotify is unavailable, a track with an existing local FLAC uses foobar2000. An item with neither source is rejected before mpv starts unless the launcher includes:
+From this directory, the application can be checked directly with `--config`:
 
 ```powershell
-.\scripts\run-charm.ps1 -AllowUntrackedPlayback
+go run ./cmd/playlistmaker-charm --config ../../config.yaml
 ```
 
-History can be disabled without disabling tracking:
+The main controls are `j`/`k` or arrows to move, `Space` to queue, `o` to play, `/` to search, `c` for categories, `s` for sorting, `f` for filters, `p` for playback options, `q` for the queue, `u` for video mappings, `U` for Spotify links, `R` for history refresh, and `?` for help.
+
+Playback prefers Spotify when a track has a Spotify URI, then uses a configured local FLAC player. `--allow-untracked-playback` permits mpv playback when neither source is available. `--disable-history` disables new playback-history sessions without disabling playback tracking. The bundled Lua logger is documented in [`mpv-scripts/README.md`](../../mpv-scripts/README.md).
+
+For old mapping data, set `mediaCatalogFile` in the local config and run:
 
 ```powershell
-.\scripts\run-charm.ps1 -DisableHistory
+.\scripts\run-charm.ps1 --migrate-mapping .\path\to\old-video-audio-map.json
 ```
 
-For the one-time mapping migration, first change the local config from `mappingFile` to `mediaCatalogFile`, then run the built executable with `--migrate-mapping` and the old mapping path. PlaylistMaker creates untouched `.pre-catalogue-backup` copies of the mapping and history files, writes stable track IDs into the catalogue and resolvable history events, and reports unresolved history entries.
+This migrates the old data format and updates resolvable history entries; no other executable is required. `--check` loads the catalogue read-only without launching players, creating sessions, or changing history.
 
-`--check` loads the catalogue without launching players, creating sessions, or changing history.
-
-Run the Go checks from `src/PlaylistMaker.Charm`:
+Run the Go checks from this directory:
 
 ```powershell
 go test ./...
 go vet ./...
+go build ./cmd/playlistmaker-charm
 ```
 
 ## Category presets
 
-`categoryPresets` is optional and supports up to five ordered presets. In the
-Categories view, list positions map to keys `0` through `4`. A preset with
-`include` enables only the listed categories; a preset with `exclude` enables
-every known category except those listed. Each preset must use exactly one of
-these fields.
+`categoryPresets` is optional and supports up to five ordered presets. In the Categories view, list positions map to keys `0` through `4`. A preset with `include` enables only the listed categories; a preset with `exclude` enables every known category except those listed. Each preset must use exactly one of these fields.
 
 The exact category names are: `Music Video`, `Band Live`, `Performance`,
 `Choreography`, `Relay`, `Be Original`, `Fancam`, `Concert`, `Music Show`,
 `Remix`, and `Live Audio`.
-
-The development launcher reads `config.yaml` from the repository root.
-Direct binary launches read `config.yaml` beside the executable unless
-`--config` supplies another path. The local `config.yaml` is ignored; use
-`sample_config.yaml` for the documented configuration shape.

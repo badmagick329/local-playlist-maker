@@ -1,69 +1,66 @@
 # PlaylistMaker
 
-PlaylistMaker launches a selected music-video playlist in mpv and the matching FLAC files in an audio player so the listens can still be scrobbled. Video-to-audio relationships come from the JSON mapping files configured in `config.yaml`.
-
-## Applications
-
-Two interfaces currently live side by side:
-
-- `PlaylistMaker.Console` is the original fzf interface and remains the legacy fallback.
-- `PlaylistMaker.Tui` is the full-screen, track-centred interface built with Terminal.Gui.
-
-Both use the same configuration, mappings, cache, playback history, and mpv logger.
+PlaylistMaker is a self-contained Go application with a Bubble Tea/Charm terminal interface. It selects music-video playlists for mpv and matching audio for Spotify Connect or foobar2000 so playback can be tracked.
 
 ## Setup
 
-1. Install the .NET 10 SDK. The legacy application remains on .NET 9, while the TUI requires .NET 10.
-2. Copy `sample_config.yaml` to the ignored local file `config.yaml` and fill in the paths for the machine.
-3. Build everything:
+Install Go 1.25.0 or newer. Copy `sample_config.yaml` to the ignored local file `config.yaml`, then set the video, audio, data, player, and optional Spotify paths and commands for the machine.
+
+The normal launcher builds a cached executable and passes the repository configuration:
 
 ```powershell
-dotnet build PlaylistMaker.sln
+.\scripts\run-charm.ps1
 ```
 
-Run the new interface from the repository root:
+The launcher also accepts `-DisableHistory`, `-AllowUntrackedPlayback`, and additional application arguments. To run directly, build from `src/PlaylistMaker.Charm` or use the Makefile:
 
 ```powershell
-.\scripts\run-tui.ps1
+make build
+make run ARGS="--check"
 ```
 
-The legacy interface remains available separately:
+## Controls
+
+The main controls are:
+
+- `j`/`k` or arrows move; `h`/`l` or `Enter` collapse or expand a track.
+- `Space` queues the current video; `o` plays the queue or highlighted media.
+- `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback options.
+- `q` opens the queue; `Shift+J`/`Shift+K` reorder; `Delete` removes; `C` clears.
+- `u` updates video mappings; `U` updates Spotify links; `R` refreshes history; `?` opens help; `Ctrl+Q` quits.
+
+## Playback tracking and history
+
+PlaylistMaker prefers Spotify when a track has a Spotify URI. Otherwise, a configured local FLAC can be opened in foobar2000. Without either source, playback is rejected unless `--allow-untracked-playback` is supplied. The application installs its bundled mpv Lua script automatically; see [`mpv-scripts/README.md`](mpv-scripts/README.md) for details.
+
+Playback history is enabled by `playbackHistoryEnabled` and can be disabled for a run with `--disable-history`. History is read from `data/play-history.jsonl`; PlaylistMaker-launched playback records a `started` event and a terminal event for the same lifecycle.
+
+## Legacy data migration
+
+`--migrate-mapping` converts an old video-to-audio mapping file into the current media catalogue and updates resolvable history entries. This supports old data formats; it does not require another executable.
 
 ```powershell
-dotnet run --project .\src\PlaylistMaker.Console\PlaylistMaker.csproj
+.\scripts\run-charm.ps1 --migrate-mapping .\path\to\old-video-audio-map.json
 ```
 
-## TUI workflow
+Set `mediaCatalogFile` in `config.yaml` before running the migration. The command reports migrated tracks, videos, updated history events, and unresolved history entries.
 
-- The TUI starts in navigation mode. Press `/` to enter search mode, type a fuzzy query normally, then press `Enter` or `Esc` to return to navigation mode.
-- Use arrows, `J`/`K`, or `Ctrl+J`/`Ctrl+K` to navigate. Use `Enter` or `L` to expand a track, `H` to collapse it, and `Space` to add or remove its selected video from the queue.
-- Press `C` to focus categories, use `J`/`K` and `Space` to change them, then press `C` or `Esc` to return to tracks.
-- Press `S` for the sort picker, `F` for date/category filters, `O` for playback options, and `Q` to focus or view the queue.
-- Press `:` for the searchable command palette. It contains every infrequent action previously exposed through the menu bar.
-- Use `Tab` to move between filters, results, details, and queue panes.
-- Use `Delete` and `Shift+J`/`Shift+K` to edit and reorder the queue without relying on `Alt` shortcuts.
-- Press `Ctrl+Enter` to launch the queue, `Ctrl+O` for playback options, `Ctrl+R` to reload mappings/history, and `F1` for help.
+## Read-only check
 
-Track rows keep artist/title on the left and pin quiet release-date and matching-video-count metadata to the right. Counts are shown as bare numbers, long names are truncated before the metadata, and queued or expanded variants use distinct colours.
-
-The initial filter shows official music videos only. `C` enables additional video categories, while `F` provides date filters and reset actions. On narrow terminals, filters, details, and the queue remain available through the same keyboard-driven overlays.
-
-## Playback history
-
-When playback history is enabled, the TUI shows play/skip totals, last-played time, and recent outcomes for tracks and individual video versions. Existing JSONL records are read without being rewritten; percentages are clamped for display and old stopped events at 90% or above are treated as completed.
-
-The application bundles its mpv Lua logger. If mpv's installed copy is missing or outdated, the TUI offers an explicit Install/Update action. It never overwrites the script silently. Manual installation instructions are in [`mpv-scripts/README.md`](mpv-scripts/README.md).
-
-Raw history remains in `data/play-history.jsonl`. PlaylistMaker-launched playback normally produces a `started` event followed by one terminal event for the same entry; these are one playback lifecycle, not duplicate plays.
-
-## Tests
+Load the configured catalogue and history without launching players or changing data:
 
 ```powershell
-dotnet test PlaylistMaker.sln
+.\scripts\run-charm.ps1 --check
 ```
 
-For a read-only startup check against the active mappings and history:
+## Go checks
+
+From `src/PlaylistMaker.Charm`:
 
 ```powershell
-dotnet run --project .\src\PlaylistMaker.Tui\PlaylistMaker.Tui.csproj -- --check
+go test ./...
+go vet ./...
+go build ./cmd/playlistmaker-charm
 ```
+
+The optional `categoryPresets` configuration supports up to five ordered presets. Each preset uses either `include` or `exclude`, and keys `0` through `4` select them in the Categories view. The exact category names are documented in [`src/PlaylistMaker.Charm/README.md`](src/PlaylistMaker.Charm/README.md).

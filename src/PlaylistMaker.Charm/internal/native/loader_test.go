@@ -133,7 +133,7 @@ func (fakeTagReader) Read(_ context.Context, path string) (metadata.Entry, error
 
 func copyFixture(t *testing.T) string {
 	t.Helper()
-	source, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "testdata", "charm-backend", "library-basic"))
+	source, err := filepath.Abs(filepath.Join("..", "..", "..", "..", "testdata", "library", "library-basic"))
 	if err != nil {
 		t.Fatal(err)
 	}

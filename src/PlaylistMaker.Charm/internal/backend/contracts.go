@@ -1,5 +1,5 @@
-// Package backend contains the small contracts used by the Charm UI.
-// Implementations may be the temporary C# bridge or native Go services.
+// Package backend contains the service contracts used by the Charm UI.
+// The application provides these services through its native Go implementation.
 package backend
 
 import (

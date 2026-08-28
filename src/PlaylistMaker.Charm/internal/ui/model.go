@@ -573,7 +573,7 @@ func (m Model) launchIDs(ids []string, queued bool) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.playback == nil {
-		m.status = "Playback is unavailable in synthetic spike mode"
+		m.status = "Playback is unavailable"
 		return m, nil
 	}
 	m.launching = true
@@ -1798,7 +1798,7 @@ func (m Model) View() tea.View {
 	m.stats.recordView(time.Since(started))
 	view := tea.NewView(content)
 	view.AltScreen = true
-	view.WindowTitle = "PlaylistMaker Charm performance spike"
+	view.WindowTitle = "PlaylistMaker"
 	return view
 }
 
@@ -1964,7 +1964,7 @@ func (m Model) renderFooter(width int) string {
 	}
 	status := m.status
 	if status == "" {
-		status = "Synthetic parity-scale library; no files or players are touched"
+		status = "Ready"
 	}
 	return m.theme.bar.Width(width).Render(joinAligned(left, right, width)) + "\n" + m.theme.muted.Render(truncate(status, width))
 }
