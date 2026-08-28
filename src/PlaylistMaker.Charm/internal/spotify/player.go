@@ -3,7 +3,9 @@ package spotify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -107,6 +109,20 @@ func Recover(ctx context.Context, client *Client, statePath string, alive ...fun
 	}
 	if state.HelperPID > 0 && isAlive(state.HelperPID) {
 		return nil
+	}
+	if client == nil {
+		return fmt.Errorf("Spotify client is unavailable")
+	}
+	playback, err := client.CurrentPlayback(ctx)
+	if err != nil {
+		var responseErr *ResponseError
+		if errors.As(err, &responseErr) && responseErr.StatusCode == http.StatusNotFound {
+			return os.Remove(statePath)
+		}
+		return err
+	}
+	if !playback.IsPlaying || playback.Device.ID == "" || playback.Device.ID != state.DeviceID {
+		return os.Remove(statePath)
 	}
 	if err := client.Pause(ctx, state.DeviceID); err != nil {
 		return err

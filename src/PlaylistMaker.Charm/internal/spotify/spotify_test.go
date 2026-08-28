@@ -173,7 +173,7 @@ func TestPlaybackRateLimitReturnsImmediatelyWithoutRetry(t *testing.T) {
 	}
 }
 
-func TestRecoverLeavesActiveStateAndPausesStaleState(t *testing.T) {
+func TestRecoverLeavesActiveStateAndCleansInactiveState(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
 		requests++
@@ -200,6 +200,57 @@ func TestRecoverLeavesActiveStateAndPausesStaleState(t *testing.T) {
 	}
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatal("stale state remained")
+	}
+}
+
+func TestRecoverPausesOnlyMatchingPlayingDevice(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.URL.Path)
+		if request.URL.Path == "/me/player" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{"is_playing": true, "device": map[string]any{"id": "device"}})
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "active.json")
+	state, _ := json.Marshal(ActiveState{DeviceID: "device"})
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	if err := Recover(context.Background(), client, statePath, func(int) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(requests, ",") != "/me/player,/me/player/pause" {
+		t.Fatalf("recovery requests = %v", requests)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatal("recovered state remained")
+	}
+}
+
+func TestRecoverCleansMissingSavedDevice(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Path == "/me/player" {
+			writer.WriteHeader(http.StatusNotFound)
+			return
+		}
+		writer.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "active.json")
+	state, _ := json.Marshal(ActiveState{DeviceID: "missing"})
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	if err := Recover(context.Background(), client, statePath, func(int) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatal("missing-device state remained")
 	}
 }
 

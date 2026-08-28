@@ -178,7 +178,7 @@ func main() {
 			os.Exit(1)
 		}
 		categoryPresets = goConfig.CategoryPresets
-		if goConfig.SpotifyClientID != "" {
+		if goConfig.SpotifyClientID != "" && !*check {
 			auth := &spotify.Auth{ClientID: goConfig.SpotifyClientID, RedirectURI: goConfig.SpotifyRedirectURI, TokenPath: filepath.Join(goConfig.DataDirectory, "spotify-auth.json")}
 			if err := spotify.Recover(context.Background(), &spotify.Client{Auth: auth}, filepath.Join(goConfig.DataDirectory, "spotify-active-session.json")); err != nil {
 				fmt.Fprintf(os.Stderr, "PlaylistMaker Spotify recovery failed: %v\n", err)

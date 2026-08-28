@@ -25,6 +25,13 @@ type RateLimitError struct {
 	Value      string
 }
 
+type ResponseError struct {
+	StatusCode int
+	Message    string
+}
+
+func (e *ResponseError) Error() string { return e.Message }
+
 func (e *RateLimitError) Error() string {
 	if !e.Valid {
 		return fmt.Sprintf("Spotify API rate limited request with invalid Retry-After %q", e.Value)
@@ -70,6 +77,21 @@ func (c *Client) Play(ctx context.Context, deviceID, uri string) error {
 
 func (c *Client) Pause(ctx context.Context, deviceID string) error {
 	return c.do(ctx, http.MethodPut, "/me/player/pause?device_id="+url.QueryEscape(deviceID), nil, nil)
+}
+
+type PlaybackState struct {
+	IsPlaying bool `json:"is_playing"`
+	Device    struct {
+		ID string `json:"id"`
+	} `json:"device"`
+}
+
+func (c *Client) CurrentPlayback(ctx context.Context) (PlaybackState, error) {
+	var state PlaybackState
+	if err := c.do(ctx, http.MethodGet, "/me/player", nil, &state); err != nil {
+		return PlaybackState{}, err
+	}
+	return state, nil
 }
 
 func (c *Client) Search(ctx context.Context, query string, limit int) ([]Track, error) {
@@ -188,7 +210,7 @@ func spotifyResponseError(method, path string, response *http.Response, contents
 	if access != "" {
 		detail = strings.ReplaceAll(detail, access, "[token]")
 	}
-	return fmt.Errorf("Spotify %s failed: %s", operation, detail)
+	return &ResponseError{StatusCode: response.StatusCode, Message: fmt.Sprintf("Spotify %s failed: %s", operation, detail)}
 }
 
 func spotifyOperation(method, path string) string {
@@ -199,6 +221,8 @@ func spotifyOperation(method, path string) string {
 		return "pause"
 	case method == http.MethodGet && strings.HasPrefix(path, "/me/player/devices"):
 		return "list devices"
+	case method == http.MethodGet && strings.HasPrefix(path, "/me/player"):
+		return "get playback state"
 	case method == http.MethodGet && strings.HasPrefix(path, "/tracks/"):
 		return "track lookup"
 	case method == http.MethodGet && strings.HasPrefix(path, "/search"):
