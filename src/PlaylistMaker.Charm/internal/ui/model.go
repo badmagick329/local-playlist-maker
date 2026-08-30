@@ -16,6 +16,7 @@ import (
 
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/config"
+	"playlistmaker/charm/internal/lastfm"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/pathid"
 	"playlistmaker/charm/internal/spotifylink"
@@ -56,6 +57,8 @@ const (
 	modeMappingPicker
 	modeSpotifyUpdate
 	modeSpotifySearch
+	modeLastFM
+	modeLastFMMix
 )
 
 func (m mode) String() string {
@@ -84,6 +87,10 @@ func (m mode) String() string {
 		return "SPOTIFY LINKS"
 	case modeSpotifySearch:
 		return "SPOTIFY SEARCH"
+	case modeLastFM:
+		return "LAST.FM"
+	case modeLastFMMix:
+		return "PERIOD MIX"
 	default:
 		return "NAV"
 	}
@@ -127,6 +134,16 @@ type SpotifyUpdater interface {
 	SpotifyConfirm(context.Context, string, string) error
 	SpotifyIgnore(string) error
 	Reload(context.Context) ([]library.Track, PlaybackLauncher, error)
+}
+
+type LastFMService interface {
+	Status() lastfm.Status
+	Sync(context.Context, []library.Track, bool, func(lastfm.SyncProgress)) (lastfm.SyncResult, error)
+	Attach([]library.Track) []library.Track
+	BuildMix(lastfm.MixRequest) (lastfm.MixResult, error)
+	ExportReview([]library.Track, time.Time) (string, error)
+	ImportDecisions([]library.Track) (lastfm.ImportResult, error)
+	ResetAgentDecisions([]library.Track) error
 }
 
 type playbackResultMsg struct {
@@ -182,6 +199,18 @@ type spotifyValidateMsg struct {
 	err  error
 }
 type spotifySaveMsg struct{ err error }
+type lastfmProgressMsg struct{ progress lastfm.SyncProgress }
+type lastfmSyncMsg struct {
+	result    lastfm.SyncResult
+	err       error
+	cancelled bool
+}
+type lastfmActionMsg struct {
+	action   string
+	path     string
+	imported lastfm.ImportResult
+	err      error
+}
 
 type Model struct {
 	all               []library.Track
@@ -240,6 +269,22 @@ type Model struct {
 	spotifyScanCancel context.CancelFunc
 	spotifyQuery      string
 	spotifyDirty      bool
+	lastfm            LastFMService
+	lastfmStatus      lastfm.Status
+	lastfmProgress    lastfm.SyncProgress
+	lastfmRunning     bool
+	lastfmCancelling  bool
+	lastfmRunner      *lastfmSyncRunner
+	lastfmCancel      context.CancelFunc
+	lastfmMixDraft    [4]string
+	lastfmMixMethod   lastfm.MixMethod
+	lastfmQueueAction lastfm.QueueAction
+	lastfmResetArmed  bool
+}
+
+type lastfmSyncRunner struct {
+	updates chan lastfmProgressMsg
+	done    chan lastfmSyncMsg
 }
 
 type spotifyScanRunner struct {
@@ -310,11 +355,60 @@ func (m Model) WithSpotifyUpdater(updater SpotifyUpdater) Model {
 	return m
 }
 
+func (m Model) WithLastFM(service LastFMService) Model {
+	m.lastfm = service
+	if service != nil {
+		m.lastfmStatus = service.Status()
+		m.all = service.Attach(m.all)
+		m.refreshResults()
+	}
+	return m
+}
+
 func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	started := time.Now()
 	defer func() { m.stats.recordUpdate(time.Since(started)) }()
 
 	switch message := message.(type) {
+	case lastfmProgressMsg:
+		if m.lastfmRunning {
+			m.lastfmProgress = message.progress
+			return m, m.waitLastFMSyncCmd()
+		}
+		return m, nil
+	case lastfmSyncMsg:
+		m.lastfmRunning, m.lastfmCancelling, m.lastfmRunner, m.lastfmCancel = false, false, nil, nil
+		if message.cancelled {
+			m.status = "Last.fm operation cancelled; saved progress will resume next time"
+		} else if message.err != nil {
+			m.status = "Last.fm sync failed: " + message.err.Error() + " Run the same sync action to resume."
+		} else {
+			m.all = m.lastfm.Attach(m.all)
+			m.refreshResults()
+			m.status = fmt.Sprintf("Last.fm sync complete: %d scrobbles, %d matched, %d unresolved", message.result.Scrobbles, message.result.Matched, message.result.Unresolved)
+		}
+		m.lastfmStatus = m.lastfm.Status()
+		return m, nil
+	case lastfmActionMsg:
+		if message.err != nil {
+			m.status = "Last.fm " + message.action + " failed: " + message.err.Error()
+		} else {
+			switch message.action {
+			case "export":
+				m.status = "Last.fm review exported to " + message.path
+			case "import":
+				m.all = m.lastfm.Attach(m.all)
+				m.refreshResults()
+				m.status = fmt.Sprintf("Last.fm decisions: %d matched, %d no-match, %d needs-human, %d missing, %d invalid", message.imported.Matched, message.imported.NoMatch, message.imported.NeedsHuman, message.imported.Missing, message.imported.Invalid)
+			case "reset":
+				m.all = m.lastfm.Attach(m.all)
+				m.refreshResults()
+				m.status = "Last.fm agent decisions reset"
+			}
+		}
+		m.lastfmStatus = m.lastfm.Status()
+		m.lastfmResetArmed = false
+		return m, nil
 	case spotifyScanMsg:
 		m.spotifyScanning = false
 		m.spotifyCancelling = false
@@ -496,6 +590,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 			if m.spotifyScanCancel != nil {
 				m.spotifyScanCancel()
 			}
+			if m.lastfmCancel != nil {
+				m.lastfmCancel()
+			}
 			m.closeHistoryWatcher()
 			return m, tea.Quit
 		}
@@ -530,6 +627,10 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleSpotifyUpdateKey(key)
 	case modeSpotifySearch:
 		return m.handleSpotifySearchKey(key)
+	case modeLastFM:
+		return m.handleLastFMKey(key)
+	case modeLastFMMix:
+		return m.handleLastFMMixKey(key)
 	default:
 		return m.handleNavigationKey(key)
 	}
@@ -624,6 +725,15 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.spotifyScanError = ""
 		m.status = "Starting Spotify link scan…"
 		return m.beginSpotifyScan()
+	}
+	if key.Text == "L" {
+		if m.lastfm == nil {
+			m.status = "Last.fm is unavailable"
+			return m, nil
+		}
+		m.mode, m.overlayCursor, m.lastfmResetArmed = modeLastFM, 0, false
+		m.lastfmStatus = m.lastfm.Status()
+		return m, nil
 	}
 
 	switch key.String() {
@@ -1812,7 +1922,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker || m.mode == modeSpotifyUpdate || m.mode == modeSpotifySearch {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker || m.mode == modeSpotifyUpdate || m.mode == modeSpotifySearch || m.mode == modeLastFM || m.mode == modeLastFMMix {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -2169,6 +2279,68 @@ func (m Model) renderOverlay(base string, width, height int) string {
 	case modeSpotifySearch:
 		title = "Search Spotify"
 		lines = []string{"Query or Spotify track URL/URI:", m.spotifyQuery + "▏", "", "enter validate/search • / or esc cancel"}
+	case modeLastFM:
+		title = "Last.fm history"
+		if m.lastfmRunning {
+			if m.lastfmCancelling {
+				lines = []string{"Cancelling Last.fm operation…", "", "Please wait"}
+			} else if m.lastfmProgress.Phase == "spotify" {
+				lines = []string{"Enriching Spotify evidence", fmt.Sprintf("Track %d of %d", m.lastfmProgress.SpotifyCurrent, m.lastfmProgress.SpotifyTotal), "", "Esc cancel"}
+			} else {
+				operation := "Fetching Last.fm scrobbles"
+				if m.lastfmProgress.Resumed {
+					operation = "Resuming Last.fm scrobbles"
+				}
+				lines = []string{operation, fmt.Sprintf("Page %d of %d", m.lastfmProgress.PagesFetched, m.lastfmProgress.TotalPages), fmt.Sprintf("Checkpointed: %d", m.lastfmProgress.Scrobbles), "", "Esc cancel"}
+			}
+			break
+		}
+		configured := "disabled"
+		if m.lastfmStatus.Configured {
+			configured = "configured"
+		}
+		evidence := "incomplete"
+		if m.lastfmStatus.SpotifyComplete {
+			evidence = "complete"
+		}
+		rangeLabel := "none"
+		if m.lastfmStatus.FirstPlayedAtUTC != nil && m.lastfmStatus.LastPlayedAtUTC != nil {
+			rangeLabel = m.lastfmStatus.FirstPlayedAtUTC.Format("2006-01-02") + " to " + m.lastfmStatus.LastPlayedAtUTC.Format("2006-01-02")
+		}
+		syncLabel := "never"
+		if m.lastfmStatus.LastSyncUTC != nil {
+			syncLabel = m.lastfmStatus.LastSyncUTC.Format(time.RFC3339)
+		}
+		actions := []string{fmt.Sprintf("%s Sync new plays", cursorMark(m.overlayCursor, 0)), fmt.Sprintf("%s Rebuild full history", cursorMark(m.overlayCursor, 1)), fmt.Sprintf("%s Build period mix", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Export unresolved matches", cursorMark(m.overlayCursor, 3)), fmt.Sprintf("%s Import agent decisions", cursorMark(m.overlayCursor, 4)), fmt.Sprintf("%s Reset agent decisions", cursorMark(m.overlayCursor, 5))}
+		if height < 20 {
+			summary := fmt.Sprintf("%d scrobbles • %d matched • %d unresolved", m.lastfmStatus.Scrobbles, m.lastfmStatus.Matched, m.lastfmStatus.Unresolved)
+			if m.lastfmStatus.CheckpointPages > 0 {
+				summary = fmt.Sprintf("Resume saved: page %d of %d", m.lastfmStatus.CheckpointPages, m.lastfmStatus.CheckpointTotal)
+			}
+			if m.lastfmStatus.Error != "" {
+				summary = "Cache error: " + m.lastfmStatus.Error
+			}
+			lines = []string{summary}
+			lines = append(lines, overlayWindow(actions, m.overlayCursor, height)...)
+			lines = append(lines, "", "enter activate • L/esc close")
+		} else {
+			lines = []string{"Last.fm: " + configured, fmt.Sprintf("Cached scrobbles: %d", m.lastfmStatus.Scrobbles), "Cached range: " + rangeLabel, fmt.Sprintf("Matched identities: %d", m.lastfmStatus.Matched), fmt.Sprintf("Unresolved identities: %d", m.lastfmStatus.Unresolved), "Last successful sync: " + syncLabel, "Spotify evidence: " + evidence, ""}
+			if m.lastfmStatus.CheckpointPages > 0 {
+				lines = append(lines, fmt.Sprintf("Saved sync checkpoint: page %d of %d", m.lastfmStatus.CheckpointPages, m.lastfmStatus.CheckpointTotal), "")
+			}
+			lines = append(lines, actions...)
+			if m.lastfmStatus.Error != "" {
+				lines = append(lines, m.theme.warning.Render("Cache error: "+m.lastfmStatus.Error))
+			}
+			lines = append(lines, "", "j/k move • enter activate • L/esc close")
+		}
+	case modeLastFMMix:
+		title = "Build Last.fm period mix"
+		secondaryPercent := m.lastfmMixDraft[2]
+		if strings.TrimSpace(m.lastfmMixDraft[1]) == "" {
+			secondaryPercent = "disabled"
+		}
+		lines = []string{fmt.Sprintf("%s Primary period: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.lastfmMixDraft[0])), fmt.Sprintf("%s Secondary period: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.lastfmMixDraft[1])), fmt.Sprintf("%s Secondary percentage: %s", cursorMark(m.overlayCursor, 2), secondaryPercent), fmt.Sprintf("%s Track count: %s", cursorMark(m.overlayCursor, 3), m.lastfmMixDraft[3]), fmt.Sprintf("%s Selection method: %s", cursorMark(m.overlayCursor, 4), m.lastfmMixMethod), fmt.Sprintf("%s Queue action: %s", cursorMark(m.overlayCursor, 5), m.lastfmQueueAction), fmt.Sprintf("%s Build", cursorMark(m.overlayCursor, 6)), "", "dates: YYYY or START..END • h/l choices • r reset • esc cancel"}
 	}
 
 	overlayWidth := min(max(width*2/3, 28), min(88, width))
@@ -2278,6 +2450,9 @@ func (m Model) detailsLines() []string {
 	}
 	eligible := len(library.EligibleVariants(track, m.currentQuery()))
 	lines := []string{"Artist: " + track.Artist, "Title: " + track.Title, "Track ID: " + track.ID, "Audio source: " + trackSourceLabel(classifyTrackSource(track)), "Local audio: " + availability(track.LocalAudioPath != ""), "Spotify link: " + availability(track.SpotifyURI != ""), "Release: " + emptyAny(track.ReleaseDateLabel), fmt.Sprintf("Variants: %d total • %d eligible", len(track.Variants), eligible), queueState(m.trackQueued(track))}
+	if track.LastFM.PlayedCount > 0 {
+		lines = append(lines, fmt.Sprintf("Last.fm plays: %d", track.LastFM.PlayedCount), "Last.fm first play: "+track.LastFM.FirstPlayedAtUTC.UTC().Format(time.RFC3339), "Last.fm last play: "+track.LastFM.LastPlayedAtUTC.UTC().Format(time.RFC3339))
+	}
 	return append(lines, historyLines(track.History)...)
 }
 

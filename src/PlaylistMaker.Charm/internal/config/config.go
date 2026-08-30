@@ -37,6 +37,8 @@ type Config struct {
 	SpotifyClientID                      string           `yaml:"spotifyClientId"`
 	SpotifyDeviceName                    string           `yaml:"spotifyDeviceName"`
 	SpotifyRedirectURI                   string           `yaml:"spotifyRedirectUri"`
+	LastFMUsername                       string           `yaml:"lastfmUsername"`
+	LastFMAPIKey                         string           `yaml:"lastfmApiKey"`
 	PlaylistTxtFilePath                  string           `yaml:"playlistTxtFilePath"`
 	PlaybackHistoryEnabled               bool             `yaml:"playbackHistoryEnabled"`
 	PlaybackHistoryMinimumWatchedPercent int              `yaml:"playbackHistoryMinimumWatchedPercent"`
@@ -145,6 +147,14 @@ func (c *Config) resolveAndValidate(configDirectory string) error {
 			return err
 		}
 		if err := required("spotifyRedirectUri", c.SpotifyRedirectURI); err != nil {
+			return err
+		}
+	}
+	if c.LastFMUsername != "" || c.LastFMAPIKey != "" {
+		if err := required("lastfmUsername", c.LastFMUsername); err != nil {
+			return err
+		}
+		if err := required("lastfmApiKey", c.LastFMAPIKey); err != nil {
 			return err
 		}
 	}

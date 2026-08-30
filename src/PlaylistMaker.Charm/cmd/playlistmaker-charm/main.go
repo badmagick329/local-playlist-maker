@@ -14,6 +14,7 @@ import (
 	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/history"
 	"playlistmaker/charm/internal/historywatch"
+	"playlistmaker/charm/internal/lastfm"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/migration"
 	"playlistmaker/charm/internal/native"
@@ -38,6 +39,7 @@ type mappingUpdater struct {
 	historyService history.Service
 	historyEnabled bool
 	allowUntracked bool
+	lastfmService  *lastfm.Service
 }
 
 func (u mappingUpdater) Scan(ctx context.Context) (updater.ScanResult, error) {
@@ -86,6 +88,12 @@ func (u mappingUpdater) Reload(ctx context.Context) ([]library.Track, ui.Playbac
 		return nil, nil, err
 	}
 	tracks := history.Attach(snapshot.Tracks, index)
+	if u.lastfmService != nil {
+		tracks, err = u.lastfmService.RefreshCatalogue(tracks)
+		if err != nil {
+			return nil, nil, err
+		}
+	}
 	return tracks, nativeplayback.Service{Tracks: tracks, Config: u.config, History: &u.historyService, HistoryEnabled: u.historyEnabled, AllowUntracked: u.allowUntracked}, nil
 }
 
@@ -194,19 +202,40 @@ func main() {
 	var playback backend.PlaybackService = nativeplayback.Service{Tracks: tracks, Config: goConfig, History: &historyService, HistoryEnabled: loggingEnabled, AllowUntracked: *allowUntracked}
 	spotifyAuth := &spotify.Auth{ClientID: goConfig.SpotifyClientID, RedirectURI: goConfig.SpotifyRedirectURI, TokenPath: filepath.Join(goConfig.DataDirectory, "spotify-auth.json")}
 	spotifyClient := &spotify.Client{Auth: spotifyAuth}
-	updates := &mappingUpdater{service: updater.Service{Config: goConfig}, spotifyService: spotifylink.Service{CatalogPath: goConfig.MediaCatalogFile, CachePath: goConfig.FlacCacheFile, Auth: spotifyAuth, Client: spotifyClient}, config: goConfig, historyService: historyService, historyEnabled: loggingEnabled, allowUntracked: *allowUntracked}
+	lastfmService := &lastfm.Service{DataDirectory: goConfig.DataDirectory, Username: goConfig.LastFMUsername, APIKey: goConfig.LastFMAPIKey, Client: &lastfm.Client{}}
+	if goConfig.SpotifyClientID != "" {
+		lastfmService.Spotify = spotifyClient
+	}
+	if attached, loadErr := lastfmService.Load(tracks); loadErr != nil {
+		fmt.Fprintf(os.Stderr, "PlaylistMaker Last.fm cache unavailable: %v\n", loadErr)
+	} else {
+		tracks = attached
+		if !*check {
+			if refreshed, refreshErr := lastfmService.RefreshCatalogue(tracks); refreshErr != nil {
+				fmt.Fprintf(os.Stderr, "PlaylistMaker Last.fm matching save failed: %v\n", refreshErr)
+			} else {
+				tracks = refreshed
+			}
+		}
+		playback = nativeplayback.Service{Tracks: tracks, Config: goConfig, History: &historyService, HistoryEnabled: loggingEnabled, AllowUntracked: *allowUntracked}
+	}
+	updates := &mappingUpdater{service: updater.Service{Config: goConfig}, spotifyService: spotifylink.Service{CatalogPath: goConfig.MediaCatalogFile, CachePath: goConfig.FlacCacheFile, Auth: spotifyAuth, Client: spotifyClient}, config: goConfig, historyService: historyService, historyEnabled: loggingEnabled, allowUntracked: *allowUntracked, lastfmService: lastfmService}
 	if *check {
 		variants := 0
 		for _, track := range tracks {
 			variants += len(track.Variants)
 		}
 		fmt.Printf("Tracks: %d\nVideos: %d\nPlayback connected: %t\nHistory logging enabled: %t\n", len(tracks), variants, playback != nil, loggingEnabled)
+		if status := lastfmService.Status(); status.Scrobbles > 0 {
+			fmt.Printf("Last.fm scrobbles: %d\nLast.fm matched: %d\nLast.fm unresolved: %d\n", status.Scrobbles, status.Matched, status.Unresolved)
+		}
 		return
 	}
 
 	model := ui.New(tracks, playback).WithCategoryPresets(categoryPresets)
 	model = model.WithMappingUpdater(updates)
 	model = model.WithSpotifyUpdater(updates)
+	model = model.WithLastFM(lastfmService)
 	watcher, err := historywatch.New(historyPath, 250*time.Millisecond)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "PlaylistMaker history watch unavailable: %v\n", err)

@@ -27,13 +27,19 @@ The main controls are:
 - `Space` queues the current video; `o` plays the queue or highlighted media.
 - `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback options.
 - `q` opens the queue; `Shift+J`/`Shift+K` reorder; `Delete` removes; `C` clears.
-- `u` updates video mappings; `U` updates Spotify links; `R` refreshes history; `?` opens help; `Ctrl+Q` quits.
+- `u` updates video mappings; `U` updates Spotify links; `R` refreshes local history; uppercase `L` opens Last.fm history and period mixes; `?` opens help; `Ctrl+Q` quits.
 
 ## Playback tracking and history
 
 PlaylistMaker prefers Spotify when a track has a Spotify URI. Otherwise, a configured local FLAC can be opened in foobar2000. Without either source, playback is rejected unless `--allow-untracked-playback` is supplied. The application installs its bundled mpv Lua script automatically; see [`mpv-scripts/README.md`](mpv-scripts/README.md) for details.
 
 Playback history is enabled by `playbackHistoryEnabled` and can be disabled for a run with `--disable-history`. History is read from `data/play-history.jsonl`; PlaylistMaker-launched playback records a `started` event and a terminal event for the same lifecycle.
+
+## Last.fm history
+
+Set `lastfmUsername` and `lastfmApiKey` to import completed scrobbles. PlaylistMaker caches the history for offline use, matches exact artist and title identities to catalogue tracks, and builds queues from one or two listening periods. It never writes to Last.fm and keeps these events separate from local playback history.
+
+Unresolved identities can be exported for an external matching agent and imported through the Last.fm screen. See [`src/PlaylistMaker.Charm/LASTFM_SETUP.md`](src/PlaylistMaker.Charm/LASTFM_SETUP.md) for setup, sync behavior, period dates, and the review workflow.
 
 ## Legacy data migration
 

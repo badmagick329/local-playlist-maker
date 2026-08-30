@@ -39,6 +39,12 @@ obj/
 **/tracking-sessions/
 **/tracking-diagnostics.jsonl
 **/play-history.jsonl
+**/lastfm-scrobbles.jsonl
+**/lastfm-matches.json
+**/lastfm-sync-checkpoint.json
+**/lastfm-sync-checkpoint.jsonl
+**/spotify-track-cache.json
+**/lastfm-review/
 **/flac-cache.json
 **/flac_cache.json
 

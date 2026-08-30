@@ -136,6 +136,34 @@ func TestLoadRequiresBothLocalTrackingCommands(t *testing.T) {
 	}
 }
 
+func TestLoadLastFMConfiguration(t *testing.T) {
+	tests := []struct{ name, extra, want string }{
+		{"disabled", "", ""},
+		{"complete", "lastfmUsername: listener\nlastfmApiKey: secret\n", ""},
+		{"username only", "lastfmUsername: listener\n", "lastfmApiKey"},
+		{"key only", "lastfmApiKey: secret\n", "lastfmUsername"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.yaml")
+			writeConfig(t, path, validConfig(test.extra))
+			loaded, err := Load(path)
+			if test.want != "" {
+				if err == nil || !strings.Contains(err.Error(), test.want) {
+					t.Fatalf("error = %v, want %s", err, test.want)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if test.name == "complete" && (loaded.LastFMUsername != "listener" || loaded.LastFMAPIKey != "secret") {
+				t.Fatalf("Last.fm config = %#v", loaded)
+			}
+		})
+	}
+}
+
 func TestLoadCategoryPresetsPreservesOrderAndValidatesCategories(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.yaml")
 	writeConfig(t, path, validConfig(`categoryPresets:

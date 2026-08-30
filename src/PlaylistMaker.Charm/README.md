@@ -14,7 +14,9 @@ From this directory, the application can be checked directly with `--config`:
 go run ./cmd/playlistmaker-charm --config ../../config.yaml
 ```
 
-The main controls are `j`/`k` or arrows to move, `Space` to queue, `o` to play, `/` to search, `c` for categories, `s` for sorting, `f` for filters, `p` for playback options, `q` for the queue, `u` for video mappings, `U` for Spotify links, `R` for history refresh, and `?` for help.
+The main controls are `j`/`k` or arrows to move, `Space` to queue, `o` to play, `/` to search, `c` for categories, `s` for sorting, `f` for filters, `p` for playback options, `q` for the queue, `u` for video mappings, `U` for Spotify links, `R` for history refresh, uppercase `L` for Last.fm history, and `?` for help.
+
+Last.fm setup and the external-agent review workflow are documented in [`LASTFM_SETUP.md`](LASTFM_SETUP.md).
 
 Playback prefers Spotify when a track has a Spotify URI, then uses a configured local FLAC player. `--allow-untracked-playback` permits mpv playback when neither source is available. `--disable-history` disables new playback-history sessions without disabling playback tracking. The bundled Lua logger is documented in [`mpv-scripts/README.md`](../../mpv-scripts/README.md).
 

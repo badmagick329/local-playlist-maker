@@ -13,6 +13,8 @@ localTrackingStopCommand: ["foobar2000.exe", "/stop"]
 spotifyClientId: ""
 spotifyDeviceName: ""
 spotifyRedirectUri: ""
+lastfmUsername: ""
+lastfmApiKey: ""
 playlistTxtFilePath: imports/queue.txt
 playbackHistoryEnabled: true
 playbackHistoryMinimumWatchedPercent: 50

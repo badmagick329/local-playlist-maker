@@ -2,7 +2,6 @@ package spotifylink
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -343,28 +342,5 @@ var libraryFuzzy = func(left, right string) (int, bool) {
 func normalize(value string) string { return videoname.Normalize(value) }
 
 func retryRateLimit[T any](ctx context.Context, wait func(context.Context, time.Duration) error, operation func() (T, error)) (T, error) {
-	value, err := operation()
-	var rateLimit *spotify.RateLimitError
-	if err == nil || !errors.As(err, &rateLimit) || !rateLimit.Valid || rateLimit.RetryAfter > 30*time.Second {
-		return value, err
-	}
-	if wait == nil {
-		wait = waitContext
-	}
-	if err := wait(ctx, rateLimit.RetryAfter); err != nil {
-		var zero T
-		return zero, err
-	}
-	return operation()
-}
-
-func waitContext(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return spotify.RetryRateLimit(ctx, wait, operation)
 }

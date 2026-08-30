@@ -67,6 +67,13 @@ type Track struct {
 	SearchTextByCategory map[Category]string
 	NewestVideoDate      time.Time
 	History              History
+	LastFM               LastFMSummary
+}
+
+type LastFMSummary struct {
+	PlayedCount      int
+	FirstPlayedAtUTC *time.Time
+	LastPlayedAtUTC  *time.Time
 }
 
 type History struct {
