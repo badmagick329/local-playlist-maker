@@ -71,7 +71,7 @@ func (u mappingUpdater) SpotifyConfirm(ctx context.Context, trackID, uri string)
 	if err != nil {
 		return err
 	}
-	return u.spotifyService.Confirm(trackID, validated.URI)
+	return u.spotifyService.Confirm(trackID, validated)
 }
 func (u mappingUpdater) SpotifyIgnore(trackID string) error {
 	return u.spotifyService.Ignore(trackID)

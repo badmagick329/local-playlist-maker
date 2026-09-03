@@ -81,7 +81,7 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 	}
 	total := 0
 	for _, track := range media.Tracks {
-		if track.SpotifyURI == "" && !track.SpotifyIgnored {
+		if !track.SpotifyIgnored && (track.SpotifyURI == "" || track.ReleaseDate == "") {
 			total++
 		}
 	}
@@ -109,12 +109,30 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 	}
 	for index := range media.Tracks {
 		track := &media.Tracks[index]
-		if track.SpotifyURI != "" || track.SpotifyIgnored {
+		if track.SpotifyIgnored || track.SpotifyURI != "" && track.ReleaseDate != "" {
 			continue
 		}
 		current++
 		if report != nil {
 			report(ScanProgress{Phase: "scanning", Current: current, Total: total, AutoLinked: result.AutoLinked, ReviewCount: len(result.Items), Artist: track.Artist, Title: track.Title})
+		}
+		if track.SpotifyURI != "" {
+			value, err := retryRateLimit(ctx, s.Wait, func() (spotify.Track, error) {
+				return s.Client.Track(ctx, track.SpotifyURI)
+			})
+			if err != nil {
+				return fail(err)
+			}
+			if value.Album.ReleaseDate != "" {
+				track.ReleaseDate = value.Album.ReleaseDate
+				dirty++
+				if dirty >= 25 {
+					if err := flush(); err != nil {
+						return result, err
+					}
+				}
+			}
+			continue
 		}
 		cached := cache[pathid.ComparisonKey(track.LocalAudioPath)]
 		item := Item{TrackID: track.ID, Artist: track.Artist, Title: track.Title, Album: cached.Album, ReleaseDate: track.ReleaseDate}
@@ -127,7 +145,7 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 			}
 			item.Candidates = candidates(matches)
 			if len(item.Candidates) == 1 {
-				track.SpotifyURI = item.Candidates[0].URI
+				applySpotifyCandidate(track, item.Candidates[0])
 				result.AutoLinked++
 				dirty++
 				if dirty >= 25 {
@@ -151,7 +169,7 @@ func (s Service) ScanWithProgress(ctx context.Context, report func(ScanProgress)
 		}
 		exact := exactMatches(track.Artist, track.Title, matches)
 		if len(exact) == 1 {
-			track.SpotifyURI = exact[0].URI
+			applySpotifyCandidate(track, exact[0])
 			result.AutoLinked++
 			dirty++
 			if dirty >= 25 {
@@ -199,7 +217,7 @@ func (s Service) Validate(ctx context.Context, value string) (Candidate, error) 
 	return candidate(track), nil
 }
 
-func (s Service) Confirm(trackID, spotifyURI string) error {
+func (s Service) Confirm(trackID string, candidate Candidate) error {
 	media, err := catalog.Read(s.CatalogPath)
 	if err != nil {
 		return err
@@ -207,7 +225,7 @@ func (s Service) Confirm(trackID, spotifyURI string) error {
 	found := false
 	for index := range media.Tracks {
 		if media.Tracks[index].ID == trackID {
-			media.Tracks[index].SpotifyURI, media.Tracks[index].SpotifyIgnored = spotifyURI, false
+			applySpotifyCandidate(&media.Tracks[index], candidate)
 			found = true
 			break
 		}
@@ -216,6 +234,13 @@ func (s Service) Confirm(trackID, spotifyURI string) error {
 		return fmt.Errorf("catalogue track %q no longer exists", trackID)
 	}
 	return catalog.Write(s.CatalogPath, media)
+}
+
+func applySpotifyCandidate(track *catalog.Track, candidate Candidate) {
+	track.SpotifyURI, track.SpotifyIgnored = candidate.URI, false
+	if track.ReleaseDate == "" {
+		track.ReleaseDate = candidate.ReleaseDate
+	}
 }
 
 func (s Service) Ignore(trackID string) error {

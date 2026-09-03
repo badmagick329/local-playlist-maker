@@ -63,6 +63,9 @@ func TestScanAutoSavesOnlyUniqueExactMatch(t *testing.T) {
 		if track.Title == "Ambiguous" && track.SpotifyURI != "" {
 			t.Fatal("ambiguous match was saved automatically")
 		}
+		if track.Title == "Unique" && track.ReleaseDate != "2024" {
+			t.Fatalf("Spotify release date was not saved: %#v", track)
+		}
 	}
 }
 
@@ -96,8 +99,12 @@ func TestConfirmAndIgnorePersistLinkDecisions(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := Service{CatalogPath: path}
-	if err := service.Confirm("trk_one", "spotify:track:one"); err != nil {
+	if err := service.Confirm("trk_one", Candidate{URI: "spotify:track:one", ReleaseDate: "2024-05-06"}); err != nil {
 		t.Fatal(err)
+	}
+	linked, _ := catalog.Read(path)
+	if linked.Tracks[0].ReleaseDate != "2024-05-06" {
+		t.Fatalf("confirmed release date = %q", linked.Tracks[0].ReleaseDate)
 	}
 	if err := service.Ignore("trk_one"); err != nil {
 		t.Fatal(err)
@@ -105,6 +112,35 @@ func TestConfirmAndIgnorePersistLinkDecisions(t *testing.T) {
 	loaded, _ := catalog.Read(path)
 	if loaded.Tracks[0].SpotifyURI != "" || !loaded.Tracks[0].SpotifyIgnored {
 		t.Fatalf("persisted decision = %#v", loaded.Tracks[0])
+	}
+}
+
+func TestScanBackfillsReleaseDateForExistingSpotifyLink(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if !strings.Contains(request.URL.Path, "/tracks/existing") {
+			t.Fatalf("track request path = %q", request.URL.Path)
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"uri": "spotify:track:existing", "name": "Title", "artists": []map[string]any{{"name": "Artist"}},
+			"album": map[string]any{"name": "Album", "release_date": "2026-08-31"},
+		})
+	}))
+	defer server.Close()
+	root := t.TempDir()
+	catalogPath := filepath.Join(root, "catalog.json")
+	media := catalog.New()
+	media.Tracks = []catalog.Track{{ID: "trk_existing", Artist: "Artist", Title: "Title", SpotifyURI: "spotify:track:existing"}}
+	if err := catalog.Write(catalogPath, media); err != nil {
+		t.Fatal(err)
+	}
+	auth := linkingAuth(t, server)
+	service := Service{CatalogPath: catalogPath, CachePath: filepath.Join(root, "cache.json"), Auth: auth, Client: &spotify.Client{Auth: auth, HTTP: server.Client(), APIBase: server.URL}}
+	if _, err := service.Scan(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	loaded, _ := catalog.Read(catalogPath)
+	if loaded.Tracks[0].ReleaseDate != "2026-08-31" {
+		t.Fatalf("backfilled release date = %q", loaded.Tracks[0].ReleaseDate)
 	}
 }
 
@@ -184,7 +220,7 @@ func TestScanCheckpointsBeforeAPIErrorAndRescanSkipsSavedTracks(t *testing.T) {
 		}
 		query, _ := url.QueryUnescape(request.URL.Query().Get("q"))
 		title := strings.TrimSuffix(strings.TrimPrefix(query[strings.Index(query, "track:")+6:], `"`), `"`)
-		_ = json.NewEncoder(writer).Encode(map[string]any{"tracks": map[string]any{"items": []map[string]any{{"uri": "spotify:track:" + title, "name": title, "artists": []map[string]any{{"name": "Artist"}}, "album": map[string]any{"name": "Album"}}}}})
+		_ = json.NewEncoder(writer).Encode(map[string]any{"tracks": map[string]any{"items": []map[string]any{{"uri": "spotify:track:" + title, "name": title, "artists": []map[string]any{{"name": "Artist"}}, "album": map[string]any{"name": "Album", "release_date": "2024"}}}}})
 	}))
 	defer server.Close()
 	root := t.TempDir()
