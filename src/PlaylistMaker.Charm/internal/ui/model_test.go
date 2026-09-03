@@ -923,6 +923,28 @@ func BenchmarkNavigationAndRenderParityScale(b *testing.B) {
 	}
 }
 
+func TestMappingPickerTreatsJKAsSearchText(t *testing.T) {
+	m := Model{
+		mode:              modeMappingPicker,
+		mappingCandidates: []updater.Audio{{Path: "one"}, {Path: "two"}},
+	}
+	next, command := m.handleMappingPickerKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
+	m = next.(Model)
+	if m.mappingQuery != "k" || m.mappingCursor != 0 || command == nil {
+		t.Fatalf("plain k query = %q, cursor = %d, command = %v", m.mappingQuery, m.mappingCursor, command)
+	}
+	next, _ = m.handleMappingPickerKey(tea.KeyPressMsg{Code: 'j', Mod: tea.ModCtrl})
+	m = next.(Model)
+	if m.mappingCursor != 1 {
+		t.Fatalf("ctrl+j cursor = %d", m.mappingCursor)
+	}
+	next, _ = m.handleMappingPickerKey(tea.KeyPressMsg{Code: tea.KeyUp})
+	m = next.(Model)
+	if m.mappingCursor != 0 {
+		t.Fatalf("up cursor = %d", m.mappingCursor)
+	}
+}
+
 func updateKey(t *testing.T, m Model, key string) Model {
 	t.Helper()
 	message := tea.KeyPressMsg{}

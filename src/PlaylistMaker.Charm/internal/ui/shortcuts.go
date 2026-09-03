@@ -68,7 +68,7 @@ func footerHint(current mode, width int) string {
 			hint = "enter confirm  •  / choose audio  •  s skip  •  i ignore  •  I ignored  •  r rescan  •  u/esc close"
 		}
 	case modeMappingPicker:
-		hint = "type search  •  j/k move  •  enter choose  •  / or esc cancel"
+		hint = "type search  •  ctrl+j/k or arrows move  •  enter choose  •  / or esc cancel"
 	case modeSpotifyUpdate:
 		hint = "h/l candidate  •  enter confirm  •  / search or paste  •  s skip  •  i ignore  •  U/esc close"
 	case modeSpotifySearch:

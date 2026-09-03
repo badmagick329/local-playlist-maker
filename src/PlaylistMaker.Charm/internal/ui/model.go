@@ -983,9 +983,9 @@ func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	case "esc", "/":
 		m.mode = modeMappingUpdate
 		return m, nil
-	case "j", "down":
+	case "down", "ctrl+j":
 		m.mappingCursor = min(m.mappingCursor+1, max(len(m.mappingCandidates)-1, 0))
-	case "k", "up":
+	case "up", "ctrl+k":
 		m.mappingCursor = max(m.mappingCursor-1, 0)
 	case "enter":
 		item, ok := m.currentMappingItem()

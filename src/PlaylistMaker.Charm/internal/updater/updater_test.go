@@ -85,6 +85,38 @@ func TestScanFuzzySuggestsLongerCatalogueTitle(t *testing.T) {
 	}
 }
 
+func TestScanKeepsUniqueUnclaimedLocalAudioSuggestion(t *testing.T) {
+	root := t.TempDir()
+	videos := filepath.Join(root, "videos")
+	if err := os.MkdirAll(videos, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	video := filepath.Join(videos, "260831 Girls Generation - Skibidi.mkv")
+	if err := os.WriteFile(video, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	audioPath := filepath.Join(root, "01 Skibidi.flac")
+	catalogPath := filepath.Join(root, "data", "catalog.json")
+	cachePath := filepath.Join(root, "data", "cache.json")
+	if err := catalog.Write(catalogPath, catalog.New()); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{
+		pathid.ComparisonKey(audioPath): {FilePath: audioPath, Artist: "Girls' Generation-HRS", Title: "Skibidi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}
+	result, err := service.Scan(context.Background())
+	if err != nil || len(result.Items) != 1 {
+		t.Fatalf("scan = %#v, %v", result, err)
+	}
+	item := result.Items[0]
+	if item.AudioPath != audioPath || item.AudioTitle != "Skibidi" || item.Reason != "Possible match" {
+		t.Fatalf("suggestion = %#v", item)
+	}
+}
+
 func TestScanRemovesMissingManagedVideosAndKeepsExcludedMappings(t *testing.T) {
 	root := t.TempDir()
 	videos := filepath.Join(root, "videos")
@@ -253,14 +285,55 @@ func TestCreateAddsVideoOnlyTrackAndConfirmLinksExistingTrack(t *testing.T) {
 }
 
 func TestSearchReturnsCatalogueTracksInsteadOfAudioPaths(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "catalog.json")
+	root := t.TempDir()
+	path := filepath.Join(root, "catalog.json")
+	cachePath := filepath.Join(root, "cache.json")
 	media := catalog.New()
-	media.Tracks = []catalog.Track{{ID: "trk_one", Artist: "Artist", Title: "One"}, {ID: "trk_two", Artist: "Other", Title: "Two"}}
+	claimed := filepath.Join(root, "claimed.flac")
+	available := filepath.Join(root, "skibidi.flac")
+	media.Tracks = []catalog.Track{{ID: "trk_one", Artist: "Artist", Title: "One", LocalAudioPath: claimed}, {ID: "trk_two", Artist: "Other", Title: "Two"}}
 	if err := catalog.Write(path, media); err != nil {
 		t.Fatal(err)
 	}
-	items, err := (Service{Config: config.Config{MediaCatalogFile: path}}).Search(context.Background(), "artist one")
+	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{
+		pathid.ComparisonKey(claimed):   {FilePath: claimed, Artist: "Artist", Title: "One"},
+		pathid.ComparisonKey(available): {FilePath: available, Artist: "Girls' Generation-HRS", Title: "Skibidi"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Config: config.Config{MediaCatalogFile: path, FlacCacheFile: cachePath}}
+	items, err := service.Search(context.Background(), "artist one")
 	if err != nil || len(items) != 1 || items[0].Path != "trk_one" {
 		t.Fatalf("search = %#v, %v", items, err)
+	}
+	items, err = service.Search(context.Background(), "sibidi")
+	if err != nil || len(items) != 1 || items[0].Path != available {
+		t.Fatalf("fuzzy local search = %#v, %v", items, err)
+	}
+}
+
+func TestConfirmCreatesTrackForUnclaimedLocalAudio(t *testing.T) {
+	root := t.TempDir()
+	catalogPath := filepath.Join(root, "catalog.json")
+	cachePath := filepath.Join(root, "cache.json")
+	audioPath := filepath.Join(root, "skibidi.flac")
+	if err := catalog.Write(catalogPath, catalog.New()); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{
+		pathid.ComparisonKey(audioPath): {FilePath: audioPath, Artist: "Girls' Generation-HRS", Title: "Skibidi", Date: "2026-08-31"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	service := Service{Config: config.Config{MediaCatalogFile: catalogPath, FlacCacheFile: cachePath}}
+	if err := service.Confirm("260831 Girls Generation - Skibidi.mkv", audioPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := catalog.Read(catalogPath)
+	if err != nil || len(loaded.Tracks) != 1 || len(loaded.Videos) != 1 {
+		t.Fatalf("catalogue = %#v, %v", loaded, err)
+	}
+	if loaded.Tracks[0].LocalAudioPath != audioPath || loaded.Videos[0].TrackID != loaded.Tracks[0].ID {
+		t.Fatalf("local track was not linked: %#v", loaded)
 	}
 }

@@ -155,8 +155,6 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		}
 		if track, ok := trackByAudio[pathid.ComparisonKey(item.AudioPath)]; ok {
 			item.AudioPath, item.AudioArtist, item.AudioTitle = track.ID, track.Artist, track.Title
-		} else if item.AudioPath != "" && !strings.HasPrefix(item.AudioPath, "trk_") {
-			item.AudioPath, item.AudioArtist, item.AudioTitle, item.Reason = "", "", "", ""
 		}
 		items = append(items, item)
 	}
@@ -388,23 +386,82 @@ func (s Service) Search(ctx context.Context, query string) ([]Audio, error) {
 	if err != nil {
 		return nil, err
 	}
-	needle := normalize(query)
-	result := []Audio{}
+	cache, err := metadata.ReadCache(s.Config.FlacCacheFile)
+	if err != nil {
+		return nil, err
+	}
+	type scoredAudio struct {
+		audio Audio
+		score int
+	}
+	claimed := make(map[string]bool, len(media.Tracks))
+	matches := []scoredAudio{}
+	add := func(audio Audio) {
+		score, ok := library.FuzzyScore(audio.Artist+" "+audio.Title, query)
+		if strings.TrimSpace(query) != "" && !ok {
+			return
+		}
+		matches = append(matches, scoredAudio{audio: audio, score: score})
+	}
 	for _, track := range media.Tracks {
-		if needle == "" || strings.Contains(normalize(track.Artist+" "+track.Title), needle) {
-			result = append(result, Audio{Path: track.ID, Artist: track.Artist, Title: track.Title})
+		if track.LocalAudioPath != "" {
+			claimed[pathid.ComparisonKey(track.LocalAudioPath)] = true
+		}
+		add(Audio{Path: track.ID, Artist: track.Artist, Title: track.Title})
+	}
+	for key, entry := range cache {
+		if !claimed[key] {
+			add(Audio{Path: entry.FilePath, Artist: entry.Artist, Title: entry.Title})
 		}
 	}
-	sort.Slice(result, func(i, j int) bool {
-		return result[i].Path < result[j].Path
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].score != matches[j].score {
+			return matches[i].score > matches[j].score
+		}
+		left := normalize(matches[i].audio.Artist + " " + matches[i].audio.Title)
+		right := normalize(matches[j].audio.Artist + " " + matches[j].audio.Title)
+		if left != right {
+			return left < right
+		}
+		return pathid.ComparisonKey(matches[i].audio.Path) < pathid.ComparisonKey(matches[j].audio.Path)
 	})
+	result := make([]Audio, len(matches))
+	for index := range matches {
+		result[index] = matches[index].audio
+	}
 	return result, nil
 }
 
-func (s Service) Confirm(videoPath, trackID string) error {
+func (s Service) Confirm(videoPath, selection string) error {
 	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
 		return err
+	}
+	trackID := selection
+	if _, ok := media.Track(trackID); !ok {
+		cache, readErr := metadata.ReadCache(s.Config.FlacCacheFile)
+		if readErr != nil {
+			return readErr
+		}
+		entry, found := cache[pathid.ComparisonKey(selection)]
+		if !found {
+			return fmt.Errorf("unknown local track %q", selection)
+		}
+		matchedTrack := false
+		for _, track := range media.Tracks {
+			if pathid.ComparisonKey(track.LocalAudioPath) == pathid.ComparisonKey(entry.FilePath) {
+				trackID = track.ID
+				matchedTrack = true
+				break
+			}
+		}
+		if !matchedTrack {
+			trackID, err = catalog.NewTrackID()
+			if err != nil {
+				return err
+			}
+			media.Tracks = append(media.Tracks, catalog.Track{ID: trackID, Artist: entry.Artist, Title: entry.Title, ReleaseDate: entry.Date, LocalAudioPath: entry.FilePath})
+		}
 	}
 	if err := media.LinkVideo(videoPath, trackID); err != nil {
 		return err
