@@ -74,7 +74,7 @@ func RecoverStale(_ context.Context, dataDirectory string, alive func(int) bool)
 		}
 		for _, event := range events {
 			switch event.Event {
-			case "file-loaded":
+			case "file-loaded", "playback-repeat":
 				addPosition(&manifest.LoadedPositions, event.PlaylistPosition)
 			case "end-file":
 				addPosition(&manifest.TerminalPositions, event.PlaylistPosition)

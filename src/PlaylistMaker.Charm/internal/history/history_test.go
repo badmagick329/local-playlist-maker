@@ -8,6 +8,22 @@ import (
 	"time"
 )
 
+func TestReadCountsSeparatePlaythroughsOfSameEntry(t *testing.T) {
+	path := filepath.Join(t.TempDir(), HistoryFileName)
+	for _, playID := range []string{"first", "second", "second"} {
+		if err := Append(path, Event{Event: "completed", SessionID: "session", EntryID: "entry", PlayID: playID, TrackID: "track", EndReason: "eof"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	index, err := Read(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := index.Tracks["track"].Played; got != 2 {
+		t.Fatalf("plays = %d, want 2", got)
+	}
+}
+
 func TestReadNormalizesLatestTerminalEvents(t *testing.T) {
 	path := filepath.Join(t.TempDir(), HistoryFileName)
 	contents := strings.Join([]string{

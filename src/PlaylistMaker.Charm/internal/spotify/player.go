@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"playlistmaker/charm/internal/tracking"
 )
@@ -20,13 +21,18 @@ type ActiveState struct {
 }
 
 type Player struct {
-	Client    *Client
-	StatePath string
-	SessionID string
-	HelperPID int
-	deviceID  string
-	prepared  bool
-	attempted bool
+	Client         *Client
+	StatePath      string
+	SessionID      string
+	HelperPID      int
+	deviceID       string
+	prepared       bool
+	attempted      bool
+	trackURI       string
+	requestedTrack Track
+	startedAt      time.Time
+	nextCheck      time.Time
+	observed       bool
 }
 
 func (p *Player) Preflight(ctx context.Context, deviceName string) error {
@@ -61,11 +67,102 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 	if !p.prepared {
 		return fmt.Errorf("Spotify player was not preflighted")
 	}
+	if p.requestedTrack.URI != track.SpotifyURI {
+		requested, err := p.Client.Track(ctx, track.SpotifyURI)
+		if err != nil {
+			return err
+		}
+		p.requestedTrack = requested
+	}
 	if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID}); err != nil {
 		return err
 	}
 	p.attempted = true
-	return p.Client.Play(ctx, p.deviceID, track.SpotifyURI)
+	// The session queue owns repetitions; inherited Spotify repeat would prevent
+	// a play from finishing and hold every later video in the tracking queue.
+	if err := p.Client.DisableRepeat(ctx, p.deviceID); err != nil {
+		return err
+	}
+	if err := p.Client.Play(ctx, p.deviceID, track.SpotifyURI); err != nil {
+		return err
+	}
+	p.trackURI, p.startedAt, p.nextCheck, p.observed = track.SpotifyURI, time.Now(), time.Time{}, false
+	return nil
+}
+
+// Finished uses Spotify's actual state so a short video cannot truncate its
+// tracking song. The first matching playback must be observed before accepting
+// an idle response, since Connect can briefly return the previous play's state.
+func (p *Player) Finished(ctx context.Context) (bool, error) {
+	now := time.Now()
+	if now.Before(p.nextCheck) {
+		return false, nil
+	}
+	p.nextCheck = now.Add(time.Second)
+	state, err := p.Client.CurrentPlayback(ctx)
+	if err != nil {
+		p.nextCheck = now.Add(5 * time.Second)
+		var limited *RateLimitError
+		if errors.As(err, &limited) && limited.Valid {
+			p.nextCheck = now.Add(limited.RetryAfter)
+			return false, nil
+		}
+		return false, err
+	}
+	matching := state.Device.ID == p.deviceID && state.Item != nil && p.matchesTrack(*state.Item)
+	if !p.observed {
+		if !matching || !state.IsPlaying || time.Duration(state.ProgressMS)*time.Millisecond > now.Sub(p.startedAt)+2*time.Second {
+			if now.Sub(p.startedAt) > 15*time.Second {
+				p.nextCheck = now.Add(5 * time.Second)
+				return false, fmt.Errorf("waiting for Spotify to confirm the requested tracking song; keep Spotify open")
+			}
+			return false, nil
+		}
+		p.observed = true
+		p.trackURI = state.Item.URI
+	}
+	if !matching || !state.IsPlaying {
+		return true, nil
+	}
+	remaining := time.Duration(state.Item.DurationMS-state.ProgressMS) * time.Millisecond
+	if remaining > time.Second {
+		p.nextCheck = now.Add(min(remaining+250*time.Millisecond, 5*time.Second))
+	}
+	return false, nil
+}
+
+// Connect can play another release of the requested song without linked_from
+// metadata. Match Spotify's canonical title and full artist credits in that case;
+// use the playing release's duration, never the requested release's duration.
+func (p *Player) matchesTrack(actual Track) bool {
+	if actual.URI == p.trackURI {
+		return true
+	}
+	if p.observed {
+		return false
+	}
+	expected := p.requestedTrack
+	if expected.Name == "" || len(expected.Artists) == 0 || !strings.EqualFold(normalizeReleaseTitle(expected.Name), normalizeReleaseTitle(actual.Name)) || len(expected.Artists) != len(actual.Artists) {
+		return false
+	}
+	for i, artist := range expected.Artists {
+		if !strings.EqualFold(artist.Name, actual.Artists[i].Name) {
+			return false
+		}
+	}
+	return true
+}
+
+// Releases can use typographic apostrophes (including a prime) for the same
+// title. Preserve words and version labels so different mixes remain distinct.
+func normalizeReleaseTitle(title string) string {
+	return strings.Map(func(r rune) rune {
+		switch r {
+		case '‘', '’', '′', 'ʼ', '＇':
+			return '\''
+		}
+		return r
+	}, title)
 }
 
 func (p *Player) Stop(ctx context.Context) error {

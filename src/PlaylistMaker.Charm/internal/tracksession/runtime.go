@@ -12,6 +12,7 @@ import (
 type SpotifyPlayer interface {
 	tracking.Player
 	Preflight(context.Context, string) error
+	Finished(context.Context) (bool, error)
 }
 
 type Runtime struct {

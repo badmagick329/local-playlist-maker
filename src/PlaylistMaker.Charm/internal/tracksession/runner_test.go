@@ -4,11 +4,45 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"playlistmaker/charm/internal/tracking"
 )
+
+func TestRunnerRestartsRepeatedTrackAndDeduplicatesEvents(t *testing.T) {
+	manifestPath, manifest, err := Create(t.TempDir(), []Entry{{VideoPath: "one.mkv", Track: tracking.Track{TrackID: "one", SpotifyURI: "spotify:track:one"}}}, false, false, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.MPVProcessID = 123
+	if err := WriteManifest(manifestPath, manifest); err != nil {
+		t.Fatal(err)
+	}
+	events := strings.Join([]string{
+		`{"eventId":"1","event":"file-loaded","playlistPosition":0}`,
+		`{"eventId":"2","event":"playback-repeat","playlistPosition":0}`,
+		`{"eventId":"2","event":"playback-repeat","playlistPosition":0}`,
+		`{"eventId":"3","event":"end-file","playlistPosition":0,"endReason":"eof"}`,
+		`{"eventId":"4","event":"file-loaded","playlistPosition":0}`,
+		`{"eventId":"5","event":"end-file","playlistPosition":0,"endReason":"eof"}`,
+		`{"eventId":"6","event":"shutdown"}`,
+	}, "\n") + "\n"
+	if err := os.WriteFile(manifest.EventPath, []byte(events), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spotify := &fakeSpotify{}
+	runner := Runner{Runtime: &Runtime{Spotify: spotify}, Poll: time.Millisecond, IsAlive: func(int) bool { return true }}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := runner.Run(ctx, manifestPath); err != nil {
+		t.Fatal(err)
+	}
+	if len(spotify.Started) != 3 {
+		t.Fatalf("Spotify starts = %d, want 3", len(spotify.Started))
+	}
+}
 
 func TestRunnerTerminatesMPVAfterDisallowedUntrackedFallback(t *testing.T) {
 	directory := t.TempDir()

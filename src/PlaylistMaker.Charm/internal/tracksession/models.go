@@ -46,6 +46,7 @@ type Event struct {
 	EventAtUTC       time.Time `json:"eventAtUtc"`
 	PlaylistPosition int       `json:"playlistPosition,omitempty"`
 	EndReason        string    `json:"endReason,omitempty"`
+	Completed        bool      `json:"completed,omitempty"`
 }
 
 type Ready struct {

@@ -1,4 +1,4 @@
--- playlistmaker-history-version: 4
+-- playlistmaker-history-version: 7
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
@@ -45,7 +45,7 @@ local function append_json(path, value)
     file:close()
 end
 
-local function emit_session_event(name, position, reason)
+local function emit_session_event(name, position, reason, completed)
     event_sequence = event_sequence + 1
     append_json(config.event_path, {
         eventId = manifest.sessionId .. ":" .. tostring(event_sequence),
@@ -53,6 +53,7 @@ local function emit_session_event(name, position, reason)
         eventAtUtc = utc_now(),
         playlistPosition = position,
         endReason = reason,
+        completed = completed,
     })
 end
 
@@ -67,6 +68,7 @@ local function write_history(name, entry, fields)
         eventAtUtc = utc_now(),
         sessionId = manifest.sessionId,
         entryId = entry.entryId,
+        playId = active and active.play_id,
         playlistPosition = entry.playlistPosition,
         playlistSize = #manifest.entries,
         selectionSource = "charm-tui",
@@ -131,17 +133,40 @@ local function finish_active(reason)
     })
     terminal_entries[active.entry.entryId] = true
     active = nil
+    return counted
 end
 
-mp.register_event("file-loaded", function()
+local function start_play(name)
     local position = mp.get_property_number("playlist-pos", -1)
     local entry = manifest.entries[position + 1]
     if not entry then return end
     terminal_entries[entry.entryId] = nil
     local duration, raw, start = playback_duration()
     active = {entry = entry, watched_seconds = 0, last_tick = mp.get_time(), duration = duration, raw = raw, start = start}
-    emit_session_event("file-loaded", position, nil)
+    emit_session_event(name, position, nil)
+    active.play_id = manifest.sessionId .. ":" .. tostring(event_sequence)
     write_history("started", entry, {durationSeconds = duration, rawDurationSeconds = raw, demuxerStartSeconds = start})
+end
+
+mp.register_event("file-loaded", function()
+    start_play("file-loaded")
+end)
+
+-- Single-file loops seek instead of loading a file. Recognize the end-to-start
+-- wrap so the tracking player and history both get a separate playthrough.
+mp.observe_property("time-pos", "number", function(_, position)
+    if not active or not position then return end
+    local previous = active.position
+    active.position = position
+    local duration = active.duration
+    local looping = mp.get_property("loop-file", "no") ~= "no"
+    if not looping or not previous or not duration or duration <= 0 then return end
+    local margin = math.min(1, duration / 4)
+    if previous >= duration - margin and position <= margin and previous > position then
+        finish_active("eof")
+        start_play("playback-repeat")
+        active.position = position
+    end
 end)
 mp.add_periodic_timer(0.25, function()
     if not active then return end
@@ -155,13 +180,13 @@ end)
 mp.register_event("end-file", function(event)
     local position = active and active.entry.playlistPosition or mp.get_property_number("playlist-pos", -1)
     local reason = event.reason or "unknown"
-    finish_active(reason)
-    emit_session_event("end-file", position, reason)
+    local completed = finish_active(reason)
+    emit_session_event("end-file", position, reason, completed)
 end)
 
 mp.register_event("shutdown", function()
-    finish_active("quit")
-    emit_session_event("shutdown", -1, "quit")
+    local completed = finish_active("quit")
+    emit_session_event("shutdown", -1, "quit", completed)
     for _, entry in ipairs(manifest.entries) do
         if not terminal_entries[entry.entryId] then
             write_history("not_started", entry, {endReason = "mpv-shutdown-before-file-loaded", countedAsPlayed = false})

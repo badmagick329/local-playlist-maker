@@ -21,6 +21,7 @@ type Event struct {
 	EventAtUTC       time.Time `json:"eventAtUtc"`
 	SessionID        string    `json:"sessionId"`
 	EntryID          string    `json:"entryId"`
+	PlayID           string    `json:"playId,omitempty"`
 	PlaylistPosition int       `json:"playlistPosition"`
 	PlaylistSize     int       `json:"playlistSize"`
 	SelectionSource  string    `json:"selectionSource"`
@@ -77,7 +78,7 @@ func Read(path string) (Index, error) {
 		if !isTerminal(event.Event) || event.SessionID == "" || event.EntryID == "" {
 			continue
 		}
-		key := event.SessionID + "\x00" + event.EntryID
+		key := event.SessionID + "\x00" + event.EntryID + "\x00" + event.PlayID
 		if current, ok := terminal[key]; !ok || !event.EventAtUTC.Before(current.EventAtUTC) {
 			terminal[key] = event
 		}

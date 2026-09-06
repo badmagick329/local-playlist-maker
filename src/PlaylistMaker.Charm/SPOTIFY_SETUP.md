@@ -68,7 +68,11 @@ Keep the configured Spotify device open, queue a linked video, and play it. Play
 1. Leave Spotify at whatever volume you want (mute it manually if you want silent tracking).
 2. Start the linked Spotify track from the beginning.
 3. Play the video's audible sound through mpv.
-4. Pause Spotify when playback ends. PlaylistMaker does not change or restore Spotify volume.
+4. Let the Spotify song finish when its video reaches the end, then start the next queued tracking play. Videos continue while Spotify catches up, and completed plays finish even after mpv closes.
+
+Each video play, including a loop of the same video, has its own tracking queue entry. Skipping a video removes that occurrence if it is queued, or pauses it if Spotify is playing it. It does not interrupt an earlier video's song that is still finishing. Spotify repeat is turned off because PlaylistMaker handles repetitions itself. PlaylistMaker does not change or restore Spotify volume.
+
+Closing a video after at least 50% watched lets Spotify finish that song. This uses the configured playback history minimum watched percentage. Reaching the video's end also qualifies, even when the performance is shorter than the Spotify song. A separately launched video's tracking waits for the previous song to finish. Earlier closes remain skips.
 
 If Spotify is unavailable, PlaylistMaker uses the configured foobar source when local audio exists.
 

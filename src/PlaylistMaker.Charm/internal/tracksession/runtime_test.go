@@ -18,6 +18,7 @@ type fakeSpotify struct {
 }
 
 func (f *fakeSpotify) Preflight(context.Context, string) error { return f.preflight }
+func (f *fakeSpotify) Finished(context.Context) (bool, error)  { return true, nil }
 
 func TestRuntimePrefersSpotifyAndDisablesItAfterFailure(t *testing.T) {
 	spotify := &fakeSpotify{}

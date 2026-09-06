@@ -79,9 +79,15 @@ func (c *Client) Pause(ctx context.Context, deviceID string) error {
 	return c.do(ctx, http.MethodPut, "/me/player/pause?device_id="+url.QueryEscape(deviceID), nil, nil)
 }
 
+func (c *Client) DisableRepeat(ctx context.Context, deviceID string) error {
+	return c.do(ctx, http.MethodPut, "/me/player/repeat?state=off&device_id="+url.QueryEscape(deviceID), nil, nil)
+}
+
 type PlaybackState struct {
-	IsPlaying bool `json:"is_playing"`
-	Device    struct {
+	IsPlaying  bool   `json:"is_playing"`
+	ProgressMS int    `json:"progress_ms"`
+	Item       *Track `json:"item"`
+	Device     struct {
 		ID string `json:"id"`
 	} `json:"device"`
 }
