@@ -3,11 +3,43 @@ package spotify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"playlistmaker/charm/internal/tracking"
 	"testing"
 	"time"
 )
+
+func TestPlaybackDeadlineCannotBeExtendedByPollingBackoff(t *testing.T) {
+	for _, observed := range []bool{false, true} {
+		p := &Player{observed: observed, startedAt: time.Now().Add(-31 * time.Second), completionDeadline: time.Now().Add(-time.Second), nextCheck: time.Now().Add(time.Hour), lastPlayback: "Skibidi (Performance Video)"}
+		done, err := p.Finished(context.Background())
+		var failure *tracking.PlaybackFailure
+		if done || !errors.As(err, &failure) {
+			t.Fatalf("deadline retained session: %v %v", done, err)
+		}
+	}
+}
+
+func TestCloseDoesNotPauseUnrelatedPlayback(t *testing.T) {
+	pauses := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPut {
+			pauses++
+			return
+		}
+		_, _ = w.Write([]byte(`{"is_playing":true,"device":{"id":"device"},"item":{"uri":"spotify:track:unrelated"}}`))
+	}))
+	defer server.Close()
+	p := &Player{Client: &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}, prepared: true, attempted: true, deviceID: "device", trackURI: "spotify:track:requested", StatePath: t.TempDir() + "/state.json"}
+	if err := p.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if pauses != 0 {
+		t.Fatal("cleanup paused unrelated playback")
+	}
+}
 
 func TestFinishedRecognizesSaucinReleaseAndReleasesQueue(t *testing.T) {
 	var expected Track

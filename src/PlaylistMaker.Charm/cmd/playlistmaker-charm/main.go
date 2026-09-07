@@ -235,7 +235,7 @@ func main() {
 		return
 	}
 
-	model := ui.New(tracks, playback).WithCategoryPresets(categoryPresets)
+	model := ui.New(tracks, playback).WithCategoryPresets(categoryPresets).WithTrackingErrors(filepath.Join(goConfig.DataDirectory, "tracking-error.txt"))
 	model = model.WithMappingUpdater(updates)
 	model = model.WithSpotifyUpdater(updates)
 	model = model.WithLastFM(lastfmService)

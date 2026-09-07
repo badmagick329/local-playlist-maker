@@ -76,6 +76,8 @@ Closing a video after at least 50% watched lets Spotify finish that song. This u
 
 If Spotify is unavailable, PlaylistMaker uses the configured foobar source when local audio exists.
 
+Spotify must confirm a new play within 30 seconds. Once confirmed, completion must arrive within the remaining song duration plus 60 seconds. Network requests are bounded, and polling backoff cannot extend those deadlines. A timeout fails tracking, releases the session lock, and displays a tracking error in PlaylistMaker. If the video is still running, it is stopped rather than continuing silently without tracking. This does not claim that Last.fm saved the failed play. Cleanup only pauses matching playback on the selected device.
+
 ## Quick fixes
 
 - **Spotify login rejects the callback:** confirm the dashboard and `config.yaml` both use `http://127.0.0.1:43827/callback` exactly.

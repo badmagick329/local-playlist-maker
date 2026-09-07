@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"slices"
 	"strconv"
 	"strings"
@@ -213,73 +214,76 @@ type lastfmActionMsg struct {
 }
 
 type Model struct {
-	all               []library.Track
-	filtered          []library.Track
-	rows              []row
-	expanded          map[string]bool
-	queued            map[string]library.Variant
-	queueOrder        []string
-	enabled           map[library.Category]bool
-	categoryPresets   []config.CategoryPreset
-	query             string
-	sort              library.Sort
-	trackDate         *library.DateRange
-	videoDate         *library.DateRange
-	mode              mode
-	cursor            int
-	overlayCursor     int
-	waitingForG       bool
-	width             int
-	height            int
-	status            string
-	theme             theme
-	stats             *latencyStats
-	playback          PlaybackLauncher
-	historySource     HistorySource
-	historyWatcher    HistoryWatcher
-	historyRefreshing bool
-	historyPending    bool
-	playbackOptions   backend.PlaybackOptions
-	draftOptions      backend.PlaybackOptions
-	filterDraft       [2]string
-	optionEdit        string
-	optionEditField   int
-	optionError       string
-	helpOffset        int
-	detailsOffset     int
-	launching         bool
-	mappingUpdater    MappingUpdater
-	mappingItems      []updater.Item
-	mappingIndex      int
-	mappingScanning   bool
-	mappingIgnored    bool
-	mappingQuery      string
-	mappingCandidates []updater.Audio
-	mappingCursor     int
-	mappingDirty      bool
-	spotifyUpdater    SpotifyUpdater
-	spotifyItems      []spotifylink.Item
-	spotifyIndex      int
-	spotifyCandidate  int
-	spotifyScanning   bool
-	spotifyCancelling bool
-	spotifyProgress   spotifylink.ScanProgress
-	spotifyScanError  string
-	spotifyScan       *spotifyScanRunner
-	spotifyScanCancel context.CancelFunc
-	spotifyQuery      string
-	spotifyDirty      bool
-	lastfm            LastFMService
-	lastfmStatus      lastfm.Status
-	lastfmProgress    lastfm.SyncProgress
-	lastfmRunning     bool
-	lastfmCancelling  bool
-	lastfmRunner      *lastfmSyncRunner
-	lastfmCancel      context.CancelFunc
-	lastfmMixDraft    [4]string
-	lastfmMixMethod   lastfm.MixMethod
-	lastfmQueueAction lastfm.QueueAction
-	lastfmResetArmed  bool
+	trackingErrorPath  string
+	trackingErrorSince time.Time
+	trackingError      string
+	all                []library.Track
+	filtered           []library.Track
+	rows               []row
+	expanded           map[string]bool
+	queued             map[string]library.Variant
+	queueOrder         []string
+	enabled            map[library.Category]bool
+	categoryPresets    []config.CategoryPreset
+	query              string
+	sort               library.Sort
+	trackDate          *library.DateRange
+	videoDate          *library.DateRange
+	mode               mode
+	cursor             int
+	overlayCursor      int
+	waitingForG        bool
+	width              int
+	height             int
+	status             string
+	theme              theme
+	stats              *latencyStats
+	playback           PlaybackLauncher
+	historySource      HistorySource
+	historyWatcher     HistoryWatcher
+	historyRefreshing  bool
+	historyPending     bool
+	playbackOptions    backend.PlaybackOptions
+	draftOptions       backend.PlaybackOptions
+	filterDraft        [2]string
+	optionEdit         string
+	optionEditField    int
+	optionError        string
+	helpOffset         int
+	detailsOffset      int
+	launching          bool
+	mappingUpdater     MappingUpdater
+	mappingItems       []updater.Item
+	mappingIndex       int
+	mappingScanning    bool
+	mappingIgnored     bool
+	mappingQuery       string
+	mappingCandidates  []updater.Audio
+	mappingCursor      int
+	mappingDirty       bool
+	spotifyUpdater     SpotifyUpdater
+	spotifyItems       []spotifylink.Item
+	spotifyIndex       int
+	spotifyCandidate   int
+	spotifyScanning    bool
+	spotifyCancelling  bool
+	spotifyProgress    spotifylink.ScanProgress
+	spotifyScanError   string
+	spotifyScan        *spotifyScanRunner
+	spotifyScanCancel  context.CancelFunc
+	spotifyQuery       string
+	spotifyDirty       bool
+	lastfm             LastFMService
+	lastfmStatus       lastfm.Status
+	lastfmProgress     lastfm.SyncProgress
+	lastfmRunning      bool
+	lastfmCancelling   bool
+	lastfmRunner       *lastfmSyncRunner
+	lastfmCancel       context.CancelFunc
+	lastfmMixDraft     [4]string
+	lastfmMixMethod    lastfm.MixMethod
+	lastfmQueueAction  lastfm.QueueAction
+	lastfmResetArmed   bool
 }
 
 type lastfmSyncRunner struct {
@@ -320,13 +324,28 @@ func New(tracks []library.Track, playback ...PlaybackLauncher) Model {
 
 func (m Model) Init() tea.Cmd {
 	if m.historySource == nil {
-		return nil
+		return m.trackingErrorCmd()
 	}
-	commands := []tea.Cmd{m.startHistoryRefreshCmd(false)}
+	commands := []tea.Cmd{m.startHistoryRefreshCmd(false), m.trackingErrorCmd()}
 	if m.historyWatcher != nil {
 		commands = append(commands, m.waitForHistoryChangeCmd())
 	}
 	return tea.Batch(commands...)
+}
+
+type trackingErrorTick struct{}
+
+// Detached helpers cannot write to the TUI; surface their failures here.
+func (m Model) WithTrackingErrors(path string) Model {
+	m.trackingErrorPath, m.trackingErrorSince = path, time.Now()
+	return m
+}
+
+func (m Model) trackingErrorCmd() tea.Cmd {
+	if m.trackingErrorPath == "" {
+		return nil
+	}
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return trackingErrorTick{} })
 }
 
 func (m Model) WithHistorySource(source HistorySource, watcher ...HistoryWatcher) Model {
@@ -370,6 +389,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	defer func() { m.stats.recordUpdate(time.Since(started)) }()
 
 	switch message := message.(type) {
+	case trackingErrorTick:
+		if info, err := os.Stat(m.trackingErrorPath); err == nil && info.ModTime().After(m.trackingErrorSince) {
+			if contents, err := os.ReadFile(m.trackingErrorPath); err == nil {
+				m.trackingError = string(contents)
+				m.trackingErrorSince = info.ModTime()
+			}
+		}
+		return m, m.trackingErrorCmd()
 	case lastfmProgressMsg:
 		if m.lastfmRunning {
 			m.lastfmProgress = message.progress
@@ -2073,6 +2100,9 @@ func (m Model) renderFooter(width int) string {
 		right = fmt.Sprintf("update p95 %.2fms  view p95 %.2fms", milliseconds(stats.updateP95), milliseconds(stats.viewP95))
 	}
 	status := m.status
+	if m.trackingError != "" {
+		status = "TRACKING FAILED: " + m.trackingError
+	}
 	broken := 0
 	firstBroken := ""
 	for _, track := range m.all {

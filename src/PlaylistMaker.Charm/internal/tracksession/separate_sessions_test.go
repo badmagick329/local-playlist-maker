@@ -2,13 +2,53 @@ package tracksession
 
 import (
 	"context"
+	"errors"
 	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"playlistmaker/charm/internal/tracking"
 )
+
+func TestFailedDetachedSessionReleasesLockForNextSession(t *testing.T) {
+	dir := t.TempDir()
+	failure := &tracking.PlaybackFailure{Message: "Spotify returned an unexpected song"}
+	for _, fail := range []bool{true, false} {
+		path, manifest, err := Create(dir, []Entry{{VideoPath: "one.mkv", Track: tracking.Track{SpotifyURI: "spotify:track:one"}}}, false, false, "", 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		manifest.MPVProcessID = 123
+		if err := WriteManifest(path, manifest); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(manifest.EventPath, []byte("{\"eventId\":\"1\",\"event\":\"file-loaded\",\"playlistPosition\":0}\n{\"eventId\":\"2\",\"event\":\"end-file\",\"playlistPosition\":0,\"completed\":true}\n{\"eventId\":\"3\",\"event\":\"shutdown\"}\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		p := &controlledSpotify{finished: true}
+		if fail {
+			p.statusErr = failure
+		}
+		r := Runner{Runtime: &Runtime{Spotify: p}, Poll: time.Millisecond, IsAlive: func(int) bool { return true }}
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		err = r.Run(ctx, path)
+		cancel()
+		if fail && !errors.Is(err, failure) || !fail && err != nil {
+			t.Fatalf("session result: %v", err)
+		}
+		if _, err := os.Stat(manifest.LockPath); !os.IsNotExist(err) {
+			t.Fatalf("lock retained: %v", err)
+		}
+		if len(p.Started) != 1 {
+			t.Fatal("session never started")
+		}
+	}
+	if _, err := os.Stat(filepath.Join(dir, "tracking-error.txt")); err != nil {
+		t.Fatal("failure not exposed to UI", err)
+	}
+}
 
 type sessionSpotify struct {
 	fakeSpotify

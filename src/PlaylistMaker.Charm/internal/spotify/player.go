@@ -21,18 +21,20 @@ type ActiveState struct {
 }
 
 type Player struct {
-	Client         *Client
-	StatePath      string
-	SessionID      string
-	HelperPID      int
-	deviceID       string
-	prepared       bool
-	attempted      bool
-	trackURI       string
-	requestedTrack Track
-	startedAt      time.Time
-	nextCheck      time.Time
-	observed       bool
+	Client             *Client
+	StatePath          string
+	SessionID          string
+	HelperPID          int
+	deviceID           string
+	prepared           bool
+	attempted          bool
+	trackURI           string
+	requestedTrack     Track
+	startedAt          time.Time
+	nextCheck          time.Time
+	observed           bool
+	completionDeadline time.Time
+	lastPlayback       string
 }
 
 func (p *Player) Preflight(ctx context.Context, deviceName string) error {
@@ -87,6 +89,7 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 		return err
 	}
 	p.trackURI, p.startedAt, p.nextCheck, p.observed = track.SpotifyURI, time.Now(), time.Time{}, false
+	p.completionDeadline, p.lastPlayback = time.Time{}, "no playback response"
 	return nil
 }
 
@@ -95,6 +98,12 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 // an idle response, since Connect can briefly return the previous play's state.
 func (p *Player) Finished(ctx context.Context) (bool, error) {
 	now := time.Now()
+	// Check deadlines before polling backoff: a rate limit or offline device must
+	// not keep a detached session alive forever.
+	if !p.startedAt.IsZero() && ((!p.observed && now.Sub(p.startedAt) >= 30*time.Second) ||
+		(p.observed && !p.completionDeadline.IsZero() && now.After(p.completionDeadline))) {
+		return false, &tracking.PlaybackFailure{Message: fmt.Sprintf("Spotify tracking timed out: requested %q (%s); last response: %s", p.requestedTrack.Name, p.trackURI, p.lastPlayback)}
+	}
 	if now.Before(p.nextCheck) {
 		return false, nil
 	}
@@ -110,6 +119,10 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		return false, err
 	}
 	matching := state.Device.ID == p.deviceID && state.Item != nil && p.matchesTrack(*state.Item)
+	p.lastPlayback = fmt.Sprintf("playing=%t, device=%s, position=%dms", state.IsPlaying, state.Device.ID, state.ProgressMS)
+	if state.Item != nil {
+		p.lastPlayback += fmt.Sprintf(", track=%q (%s)", state.Item.Name, state.Item.URI)
+	}
 	if !p.observed {
 		if !matching || !state.IsPlaying || time.Duration(state.ProgressMS)*time.Millisecond > now.Sub(p.startedAt)+2*time.Second {
 			if now.Sub(p.startedAt) > 15*time.Second {
@@ -120,6 +133,7 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		}
 		p.observed = true
 		p.trackURI = state.Item.URI
+		p.completionDeadline = now.Add(time.Duration(max(0, state.Item.DurationMS-state.ProgressMS))*time.Millisecond + time.Minute)
 	}
 	if !matching || !state.IsPlaying {
 		return true, nil
@@ -169,6 +183,13 @@ func (p *Player) Stop(ctx context.Context) error {
 	if !p.prepared || !p.attempted {
 		return nil
 	}
+	state, err := p.Client.CurrentPlayback(ctx)
+	if err != nil {
+		return err
+	}
+	if !state.IsPlaying || state.Device.ID != p.deviceID || state.Item == nil || !p.matchesTrack(*state.Item) {
+		return nil
+	}
 	return p.Client.Pause(ctx, p.deviceID)
 }
 
@@ -176,13 +197,11 @@ func (p *Player) Close(ctx context.Context) error {
 	if !p.prepared || !p.attempted {
 		return nil
 	}
-	if err := p.Client.Pause(ctx, p.deviceID); err != nil {
-		return err
-	}
+	stopErr := p.Stop(ctx)
 	if err := os.Remove(p.StatePath); err == nil || os.IsNotExist(err) {
 		p.prepared = false
 		p.attempted = false
-		return nil
+		return stopErr
 	} else {
 		return fmt.Errorf("remove Spotify active state: %w", err)
 	}

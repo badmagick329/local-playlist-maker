@@ -89,6 +89,10 @@ func TestPlayerUsesUniqueDeviceWithoutVolumeMutation(t *testing.T) {
 	duplicate := false
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests = append(requests, request.Method+" "+request.URL.String())
+		if request.URL.Path == "/me/player" {
+			_, _ = writer.Write([]byte(`{"is_playing":true,"device":{"id":"one"},"item":{"uri":"spotify:track:abc"}}`))
+			return
+		}
 		if request.URL.Path == "/tracks/abc" {
 			_, _ = writer.Write([]byte(`{"uri":"spotify:track:abc","name":"Song","artists":[{"name":"Artist"}]}`))
 			return
@@ -121,7 +125,7 @@ func TestPlayerUsesUniqueDeviceWithoutVolumeMutation(t *testing.T) {
 	if strings.Contains(joined, "volume") || !strings.Contains(joined, "/play") || !strings.Contains(joined, "/pause") {
 		t.Fatalf("Spotify session requests:\n%s", joined)
 	}
-	if len(requests) != 5 || !strings.Contains(requests[0], "/me/player/devices") || !strings.Contains(requests[1], "/tracks/abc") || !strings.Contains(requests[2], "/me/player/repeat?state=off") || !strings.Contains(requests[3], "/me/player/play") || !strings.Contains(requests[4], "/me/player/pause") {
+	if len(requests) != 6 || !strings.Contains(requests[0], "/me/player/devices") || !strings.Contains(requests[1], "/tracks/abc") || !strings.Contains(requests[2], "/me/player/repeat?state=off") || !strings.Contains(requests[3], "/me/player/play") || !strings.Contains(requests[5], "/me/player/pause") {
 		t.Fatalf("unexpected Spotify request order: %#v", requests)
 	}
 	if _, err := os.Stat(state); !os.IsNotExist(err) {

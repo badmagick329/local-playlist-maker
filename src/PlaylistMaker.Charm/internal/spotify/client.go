@@ -135,6 +135,8 @@ func (c *Client) Track(ctx context.Context, uriOrURL string) (Track, error) {
 }
 
 func (c *Client) do(ctx context.Context, method, path string, body any, output any) error {
+	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
 	access, err := c.Auth.AccessToken(ctx, false)
 	if err != nil {
 		return err

@@ -17,6 +17,20 @@ type controlledSpotify struct {
 
 func (p *controlledSpotify) Finished(context.Context) (bool, error) { return p.finished, p.statusErr }
 
+func TestQueuePropagatesTerminalFailureInsteadOfWaitingForever(t *testing.T) {
+	failure := &tracking.PlaybackFailure{Message: "requested Skibidi; received Performance Video"}
+	p := &controlledSpotify{statusErr: failure}
+	r := &Runtime{Spotify: p, spotifyAvailable: true}
+	q := playQueue{runtime: r}
+	if err := q.load(context.Background(), "first", 0, tracking.Track{SpotifyURI: "spotify:track:song"}); err != nil {
+		t.Fatal(err)
+	}
+	q.end(context.Background(), "eof")
+	if err := q.tick(context.Background()); !errors.Is(err, failure) {
+		t.Fatalf("terminal failure swallowed: %v", err)
+	}
+}
+
 func TestQueueKeepsPlayOnStatusFailureAndResumesAfterRecovery(t *testing.T) {
 	ctx := context.Background()
 	spotify := &controlledSpotify{statusErr: errors.New("Spotify start is delayed")}

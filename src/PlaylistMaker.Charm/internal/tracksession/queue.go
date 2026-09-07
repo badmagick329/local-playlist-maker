@@ -2,6 +2,7 @@ package tracksession
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"playlistmaker/charm/internal/tracking"
@@ -62,6 +63,11 @@ func (q *playQueue) tick(ctx context.Context) error {
 	if q.active != nil && q.runtime.activeProvider == "spotify" {
 		finished, err := q.runtime.Spotify.Finished(ctx)
 		if err != nil {
+			var terminal *tracking.PlaybackFailure
+			if errors.As(err, &terminal) {
+				q.runtime.diagnose(q.active.position, q.active.track.TrackID, "spotify", "", err.Error())
+				return err
+			}
 			// A failed status read does not prove playback failed. Keep this play
 			// queued for confirmation rather than terminating mpv or losing its tail.
 			if q.statusError != err.Error() {

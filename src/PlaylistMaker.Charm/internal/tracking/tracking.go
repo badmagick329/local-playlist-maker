@@ -22,6 +22,11 @@ type Player interface {
 	Close(context.Context) error
 }
 
+// PlaybackFailure ends a failed attempt instead of retrying telemetry forever.
+type PlaybackFailure struct{ Message string }
+
+func (e *PlaybackFailure) Error() string { return e.Message }
+
 type Noop struct{}
 
 func (Noop) Start(context.Context, Track) error { return nil }

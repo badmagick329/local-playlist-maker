@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -24,11 +25,16 @@ type Runner struct {
 	Terminate  func(int) error
 }
 
-func (r Runner) Run(ctx context.Context, manifestPath string) error {
+func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 	manifest, err := ReadManifest(manifestPath)
 	if err != nil {
 		return err
 	}
+	defer func() {
+		if runErr != nil && !errors.Is(runErr, context.Canceled) {
+			_ = atomicWrite(filepath.Join(filepath.Dir(manifest.LockPath), "tracking-error.txt"), []byte(runErr.Error()), 0o600)
+		}
+	}()
 	lockErr := r.acquire(manifest)
 	if lockErr != nil && !errors.Is(lockErr, errSessionBusy) {
 		_ = WriteReady(manifest.ReadyPath, Ready{Error: lockErr.Error()})
@@ -69,7 +75,9 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 	}
 	defer func() {
 		if ownsLock {
-			r.Runtime.Close(context.Background())
+			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			r.Runtime.Close(closeCtx)
 		}
 	}()
 	poll := r.Poll
