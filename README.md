@@ -33,6 +33,8 @@ The main controls are:
 
 PlaylistMaker prefers Spotify when a track has a Spotify URI. Otherwise, a configured local FLAC can be opened in foobar2000. Without either source, playback is rejected unless `--allow-untracked-playback` is supplied. The application installs its bundled mpv Lua script automatically; see [`mpv-scripts/README.md`](mpv-scripts/README.md) for details.
 
+Broken local audio links produce a library warning and block affected playback until repaired, even if Spotify is linked. Intentionally absent local links are allowed. See [Spotify setup](src/PlaylistMaker.Charm/SPOTIFY_SETUP.md) for authentication, playback completion, and timeout behaviour.
+
 Playback history is enabled by `playbackHistoryEnabled` and can be disabled for a run with `--disable-history`. History is read from `data/play-history.jsonl`; PlaylistMaker-launched playback records a `started` event and a terminal event for the same lifecycle.
 
 ## Last.fm history
@@ -69,4 +71,13 @@ go vet ./...
 go build ./cmd/playlistmaker-charm
 ```
 
-The optional `categoryPresets` configuration supports up to five ordered presets. Each preset uses either `include` or `exclude`, and keys `0` through `4` select them in the Categories view. The exact category names are documented in [`src/PlaylistMaker.Charm/README.md`](src/PlaylistMaker.Charm/README.md).
+The mpv loop regression tests run a synthetic silent clip and skip when mpv is unavailable. A passing test suite with those tests skipped does not verify mpv event behaviour.
+
+## Documentation
+
+- [Architecture](ARCHITECTURE.md): catalogue identity, playback process ownership, and the two history stores.
+- [Category presets](src/PlaylistMaker.Charm/README.md#category-presets): configuration semantics and source of category names.
+- [Spotify setup](src/PlaylistMaker.Charm/SPOTIFY_SETUP.md) and [Last.fm history](src/PlaylistMaker.Charm/LASTFM_SETUP.md): integration guides.
+- [Portable fixtures](testdata/library/README.md): loader test data.
+
+Ignored `notes/` and `.ignore/` hold local plans, feedback, and handovers, including material from the former C# implementation. They are retained as historical context, not maintained documentation.

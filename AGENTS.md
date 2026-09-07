@@ -1,17 +1,7 @@
-## Coding
+# Repository guidance
 
-- Do not consider backward compatibility. Ignore legacy code/libraries
-- Do not introduce guarding, excessive testing, except where input cannot be trusted. For example, user input or another software's input
- 
-## Response Discipline
-
-Keep answers tightly scoped to the user's actual question.
-
-- Do not add extra framing, justification, or side commentary unless it directly answers the request.
-- Do not introduce cautions, alternatives, or edge-case advice unless the user asked for them or they are necessary to avoid a meaningful mistake.
-- Prefer short prose over bullets when the question is simple.
-- Do not pad responses with reasons why something is good, bad, or sensible unless the user explicitly asks for evaluation.
-- Optimize for directness: answer first, stop when the user's question has been satisfied.
-- Sacrifice grammar for concision.
-- No motivational fluff.
-
+- For catalogue, history, or playback changes, read [ARCHITECTURE.md](ARCHITECTURE.md) for identity and process boundaries.
+- Keep Last.fm imports separate from local playback history. PlaylistMaker does not submit scrobbles.
+- Edit the embedded mpv script under `src/PlaylistMaker.Charm/internal/mpvscript`; installed copies in the data directory are generated.
+- Keep machine configuration, media catalogues, credentials, and listening history out of commits. Use the portable fixtures for tests.
+- Use [README.md](README.md) for build and checks. For Spotify or Last.fm integration work, follow its linked setup guides. Ignored `notes/` and `.ignore/` contain historical task material, not current specifications.
