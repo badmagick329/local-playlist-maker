@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"playlistmaker/charm/internal/backend"
@@ -14,6 +15,17 @@ import (
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/tracksession"
 )
+
+func TestPlanReportsBrokenLocalLinkEvenWithSpotify(t *testing.T) {
+	tracks := testTracks(t, 1, 1)
+	tracks[0].SpotifyURI = "spotify:track:available"
+	tracks[0].LocalAudioPath = filepath.Join(t.TempDir(), "missing.flac")
+	service := configuredService(tracks)
+	_, err := service.Plan(variantIDs(tracks), backend.DefaultPlaybackOptions())
+	if err == nil || !strings.Contains(err.Error(), tracks[0].LocalAudioPath) {
+		t.Fatalf("broken link silently accepted: %v", err)
+	}
+}
 
 func TestPlanPreservesQueueOrderRepeatAndMaximum(t *testing.T) {
 	tracks := testTracks(t, 3, 1)

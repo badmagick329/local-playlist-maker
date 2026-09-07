@@ -34,8 +34,18 @@ func (l Loader) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
 		return backend.LibrarySnapshot{}, err
 	}
 	audioPaths := make([]string, 0, len(media.Tracks))
+	issues := map[string]string{}
 	for _, track := range media.Tracks {
 		if track.LocalAudioPath != "" {
+			info, statErr := os.Stat(track.LocalAudioPath)
+			if statErr != nil {
+				issues[track.ID] = fmt.Sprintf("Cannot access local audio %s: %v", track.LocalAudioPath, statErr)
+				continue
+			}
+			if info.IsDir() {
+				issues[track.ID] = "Local audio link points to a folder: " + track.LocalAudioPath
+				continue
+			}
 			audioPaths = append(audioPaths, track.LocalAudioPath)
 		}
 	}
@@ -52,7 +62,15 @@ func (l Loader) Load(ctx context.Context) (backend.LibrarySnapshot, error) {
 	if err != nil {
 		return backend.LibrarySnapshot{}, err
 	}
-	return buildLibrary(media, cache)
+	snapshot, err := buildLibrary(media, cache)
+	for i := range snapshot.Tracks {
+		track := &snapshot.Tracks[i]
+		track.LocalAudioIssue = issues[track.ID]
+		if track.LocalAudioIssue != "" {
+			snapshot.Warnings = append(snapshot.Warnings, track.Artist+" - "+track.Title+": "+track.LocalAudioIssue)
+		}
+	}
+	return snapshot, err
 }
 
 func buildLibrary(media catalog.Catalog, cache map[string]metadata.Entry) (backend.LibrarySnapshot, error) {

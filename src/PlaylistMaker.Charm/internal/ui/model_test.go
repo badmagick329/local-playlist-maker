@@ -19,6 +19,15 @@ import (
 	"playlistmaker/charm/internal/updater"
 )
 
+func TestBrokenLinkWarningSurvivesStatusChanges(t *testing.T) {
+	m := New([]library.Track{{Artist: "TWICE", Title: "I CAN'T STOP ME", LocalAudioIssue: "missing file"}})
+	m.status = "Queued a video"
+	footer := m.renderFooter(200)
+	if !strings.Contains(footer, "1 broken local audio link") || !strings.Contains(footer, "TWICE") {
+		t.Fatalf("warning hidden by normal status: %s", footer)
+	}
+}
+
 type playbackStub struct {
 	result  backend.PlaybackResult
 	err     error

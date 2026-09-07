@@ -199,6 +199,9 @@ func main() {
 		os.Exit(1)
 	}
 	tracks := history.Attach(nativeSnapshot.Tracks, index)
+	for _, warning := range nativeSnapshot.Warnings {
+		fmt.Fprintln(os.Stderr, "WARNING: "+warning)
+	}
 	var playback backend.PlaybackService = nativeplayback.Service{Tracks: tracks, Config: goConfig, History: &historyService, HistoryEnabled: loggingEnabled, AllowUntracked: *allowUntracked}
 	spotifyAuth := &spotify.Auth{ClientID: goConfig.SpotifyClientID, RedirectURI: goConfig.SpotifyRedirectURI, TokenPath: filepath.Join(goConfig.DataDirectory, "spotify-auth.json")}
 	spotifyClient := &spotify.Client{Auth: spotifyAuth}

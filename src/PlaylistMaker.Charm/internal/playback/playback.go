@@ -221,8 +221,12 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 			localPath = ""
 		}
 		if localPath != "" {
-			if _, err := os.Stat(localPath); err != nil {
-				localPath = ""
+			info, err := os.Stat(localPath)
+			if err != nil {
+				return nil, fmt.Errorf("broken local audio link for %s - %s: %s (%w); repair the link before playback", value.track.Artist, value.track.Title, localPath, err)
+			}
+			if info.IsDir() {
+				return nil, fmt.Errorf("local audio link points to a folder: %s; repair the link before playback", localPath)
 			}
 		}
 		if value.track.SpotifyURI == "" && localPath == "" && !s.AllowUntracked {

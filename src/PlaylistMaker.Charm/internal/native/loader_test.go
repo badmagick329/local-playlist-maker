@@ -47,6 +47,44 @@ func TestLoaderBuildsThePortableLibraryFixture(t *testing.T) {
 	}
 }
 
+func TestLoaderReportsBrokenCachedAudioAndClearsAfterRepair(t *testing.T) {
+	root := copyFixture(t)
+	cfg, err := config.Load(filepath.Join(root, "fixture.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	media, err := catalog.Read(cfg.MediaCatalogFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := media.Tracks[0].LocalAudioPath
+	for i := 1; i < len(media.Tracks); i++ {
+		media.Tracks[i].LocalAudioPath = ""
+	}
+	if err := catalog.Write(cfg.MediaCatalogFile, media); err != nil {
+		t.Fatal(err)
+	}
+	for _, readOnly := range []bool{false, true} {
+		snapshot, err := (Loader{Config: cfg, ReadOnly: readOnly}).Load(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(snapshot.Warnings) != 1 || !strings.Contains(snapshot.Warnings[0], path) {
+			t.Fatalf("missing cached audio was not reported: %v", snapshot.Warnings)
+		}
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("cached metadata already exists"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := (Loader{Config: cfg}).Load(context.Background())
+	if err != nil || len(snapshot.Warnings) != 0 {
+		t.Fatalf("repair did not clear warning: %v, %v", snapshot.Warnings, err)
+	}
+}
+
 func TestLoaderCompletesMappedAudioMissingFromCache(t *testing.T) {
 	root := copyFixture(t)
 	cache := filepath.Join(root, "data", "flac_cache.json")

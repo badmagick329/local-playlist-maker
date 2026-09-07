@@ -2073,6 +2073,19 @@ func (m Model) renderFooter(width int) string {
 		right = fmt.Sprintf("update p95 %.2fms  view p95 %.2fms", milliseconds(stats.updateP95), milliseconds(stats.viewP95))
 	}
 	status := m.status
+	broken := 0
+	firstBroken := ""
+	for _, track := range m.all {
+		if track.LocalAudioIssue != "" {
+			broken++
+			if firstBroken == "" {
+				firstBroken = track.Artist + " - " + track.Title
+			}
+		}
+	}
+	if broken > 0 {
+		status = fmt.Sprintf("WARNING: %d broken local audio link(s): %s. Repair local links. %s", broken, firstBroken, status)
+	}
 	if status == "" {
 		status = "Ready"
 	}

@@ -57,6 +57,7 @@ type Track struct {
 	Artist               string
 	Title                string
 	LocalAudioPath       string
+	LocalAudioIssue      string
 	SpotifyURI           string
 	SpotifyIgnored       bool
 	ReleaseDate          time.Time
