@@ -168,7 +168,17 @@ func (a QueueAction) String() string {
 	return "Replace"
 }
 
+type MixPreset int
+
+const (
+	PeriodMix MixPreset = iota
+	FamiliarUnseen
+	BalancedRotation
+)
+
 type MixRequest struct {
+	Preset             MixPreset
+	Now                time.Time
 	Tracks             []library.Track
 	Query              library.Query
 	Primary, Secondary *library.DateRange

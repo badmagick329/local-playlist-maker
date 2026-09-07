@@ -166,10 +166,6 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 		queued = queued[:0]
 		for _, trackID := range order {
 			values := groups[trackID]
-			if options.Shuffle {
-				queued = append(queued, values[s.random().Intn(len(values))])
-				continue
-			}
 			variants := make([]library.Variant, len(values))
 			for index := range values {
 				variants[index] = values[index].variant
@@ -184,34 +180,17 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 			}
 		}
 	}
+	// Limits count selected videos; repeats are consecutive occurrences of that selection.
+	if options.MaximumItems > 0 && len(queued) > options.MaximumItems {
+		queued = queued[:options.MaximumItems]
+	}
+	if options.Shuffle {
+		s.random().Shuffle(len(queued), func(i, j int) { queued[i], queued[j] = queued[j], queued[i] })
+	}
 	expanded := make([]indexed, 0, len(queued)*options.RepeatEach)
 	for _, value := range queued {
 		for range options.RepeatEach {
 			expanded = append(expanded, value)
-		}
-	}
-	if options.Shuffle {
-		s.random().Shuffle(len(expanded), func(i, j int) { expanded[i], expanded[j] = expanded[j], expanded[i] })
-	}
-	if options.MaximumItems > 0 && len(expanded) > options.MaximumItems {
-		if options.Shuffle {
-			expanded = expanded[:options.MaximumItems]
-		} else {
-			variants := make([]library.Variant, len(expanded))
-			for index := range expanded {
-				variants[index] = expanded[index].variant
-			}
-			keep := make([]bool, len(expanded))
-			for _, index := range library.RankVariantIndexes(variants, options.SelectionStrategy)[:options.MaximumItems] {
-				keep[index] = true
-			}
-			retained := expanded[:0]
-			for index, value := range expanded {
-				if keep[index] {
-					retained = append(retained, value)
-				}
-			}
-			expanded = retained
 		}
 	}
 	planned := make([]Item, len(expanded))

@@ -9,9 +9,9 @@ var shortcuts = []shortcut{
 	{"Views", "u", "update mappings"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
 	{"Views", "U", "update Spotify links"}, {"Spotify updates", "enter / search / skip / ignore", "confirm, find, defer, or persistently ignore a link"},
 	{"Views", "R", "refresh history"},
-	{"Views", "L", "Last.fm history, matching, and period mixes"},
+	{"Views", "L", "Last.fm sync and matching"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a", "all videos from current track"}, {"Queue", "A", "one video per filtered track"}, {"Queue", "Ctrl+A", "all videos from all filtered tracks"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
-	{"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or maximum"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / Esc", "reset / save / cancel"},
+	{"Options", "o / a", "play / add generated mix to queue"}, {"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or track count"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / Esc", "reset / activate / cancel"},
 	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / f / Esc", "apply / cancel"},
 	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
 	{"Playback", "o", "play queue or highlighted media"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
@@ -54,7 +54,7 @@ func footerHint(current mode, width int) string {
 	case modeQueue:
 		hint = "j/k move  •  shift+j/k reorder  •  delete/backspace/space remove  •  C clear  •  q/esc close"
 	case modePlaybackOptions:
-		hint = "j/k move  •  space toggle  •  h/l adjust  •  digits edit  •  r reset  •  enter save  •  p/esc cancel"
+		hint = "o play  •  a add mix  •  j/k move  •  h/l change  •  enter activate  •  esc cancel"
 	case modeFilters:
 		hint = "j/k move  •  type date/range  •  ctrl+u clear  •  r reset  •  enter apply  •  f/esc cancel"
 	case modeHelp:
@@ -75,8 +75,6 @@ func footerHint(current mode, width int) string {
 		hint = "type query or Spotify track URL/URI  •  enter submit  •  / or esc cancel"
 	case modeLastFM:
 		hint = "j/k move  •  enter activate  •  L/esc close"
-	case modeLastFMMix:
-		hint = "j/k fields  •  type values  •  h/l choices  •  enter build  •  esc cancel"
 	}
 	return truncate(hint, width)
 }

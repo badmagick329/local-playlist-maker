@@ -55,6 +55,24 @@ func TestOneVideoPerTrackUsesStableTrackID(t *testing.T) {
 	}
 }
 
+func TestLimitPrecedesConsecutiveRepeatsEvenWithShuffle(t *testing.T) {
+	tracks := testTracks(t, 4, 1)
+	service := configuredService(tracks)
+	service.Random = rand.New(rand.NewSource(7))
+	items, err := service.Plan(variantIDs(tracks), backend.PlaybackOptions{RepeatEach: 2, MaximumItems: 2, Shuffle: true})
+	if err != nil || len(items) != 4 {
+		t.Fatalf("plan: %v %v", items, err)
+	}
+	for i := 0; i < len(items); i += 2 {
+		if items[i].Track.TrackID != items[i+1].Track.TrackID {
+			t.Fatal("shuffle separated repeats")
+		}
+		if items[i].Track.TrackID != tracks[0].ID && items[i].Track.TrackID != tracks[1].ID {
+			t.Fatal("limit did not select first entries")
+		}
+	}
+}
+
 func TestShuffleUsesInjectedRandomSource(t *testing.T) {
 	tracks := testTracks(t, 4, 1)
 	queue := variantIDs(tracks)

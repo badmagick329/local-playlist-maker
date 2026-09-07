@@ -21,9 +21,23 @@ The integration is read-only. It never submits scrobbles and does not replace th
 
 ## Build a period mix
 
-Choose `Build period mix` from the Last.fm screen. The primary period accepts `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or `START..END`. Leave it blank to use all cached history. Add a secondary period and percentage to blend two periods.
+Press `p` and choose `Listening period` in the Mix row. The primary period accepts `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or `START..END`. Leave it blank to use all cached history. Add a secondary period and percentage to blend two periods.
 
 Date ranges include both endpoints and apply to scrobble timestamps. The builder only uses tracks in the current filtered view and videos allowed by the active category and date filters. It uses the current version-choice setting when it adds each track to the queue.
+
+## Playback presets and controls
+
+The `p` panel contains manual queue playback, Familiar songs/unseen performances, Balanced rotation, and listening-period mixes. Move with `j/k`, change choices with `h/l`, and use digits or Backspace for numbers. Period dates accept typed dates and ranges; `Ctrl+U` clears a date field. Press `o` or select Play to replace the queue with a generated mix and launch it, or press `a` or select Add to queue to append without repeating tracks already queued. Save settings remembers choices for this application session without building a queue. Escape cancels edits.
+
+Familiar songs/unseen performances requires at least three cached Last.fm plays and an eligible video with no counted local play. It never falls back to a watched video. Song selection is weighted by Last.fm play count.
+
+Balanced rotation targets 40% recent favourites, 40% older favourites, and 20% rarely played tracks. Recent favourites have at least two scrobbles in the last 30 days; older favourites have at least three overall and fewer than two in that window. The remaining tracks form the rare pool, including tracks without matched scrobbles. Favourites are weighted by recent or total plays respectively; rare tracks have equal weight. Empty pools contribute their slots to the other pools. Selection avoids consecutive artists within a pool when possible.
+
+Generated mixes select one video per track. Performances chooses that video, except the familiar/unseen preset fixes it to Unseen only. Track count limits the generated selection; fewer tracks are returned when the filters or history leave too few candidates. All mixes respect the current filtered library and eligible video categories and dates.
+
+Order defaults to Mix order for generated mixes. Explicitly choosing Shuffle changes the playback order. Manual queues offer Queue order or Shuffle, an optional One video per track setting, and Play first N, where zero means all. The manual limit takes the first selected entries before shuffling. Version choice resolves multiple queued performances when One video per track is enabled.
+
+Repeat each applies after selection, limiting and ordering. A count of 20 with repeat 2 produces up to 40 plays, with each pair consecutive. Generated queues contain concrete videos; changing Performances later does not replace them. The `o` shortcut plays the existing queue or highlighted media without generating another mix.
 
 ## Review unresolved matches
 

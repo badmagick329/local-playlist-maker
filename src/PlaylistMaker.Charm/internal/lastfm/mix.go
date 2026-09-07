@@ -36,10 +36,13 @@ func (s *Service) BuildMix(request MixRequest) (MixResult, error) {
 			excluded[id] = true
 		}
 	}
+	if request.Preset != PeriodMix {
+		return s.buildPreset(request, rng, excluded), nil
+	}
 	primary := s.periodCandidates(request.Tracks, request.Query, request.Primary, excluded)
 	secondaryCount := 0
 	if request.Secondary != nil {
-		secondaryCount = int(math.Round(float64(request.Count*request.SecondaryPercent) / 100))
+		secondaryCount = request.Count/100*request.SecondaryPercent + (request.Count%100*request.SecondaryPercent+50)/100
 	}
 	primaryCount := request.Count - secondaryCount
 	chosenP := selectCandidates(primary, primaryCount, request.Method, rng, excluded)

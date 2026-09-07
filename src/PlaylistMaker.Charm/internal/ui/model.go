@@ -59,7 +59,6 @@ const (
 	modeSpotifyUpdate
 	modeSpotifySearch
 	modeLastFM
-	modeLastFMMix
 )
 
 func (m mode) String() string {
@@ -90,8 +89,6 @@ func (m mode) String() string {
 		return "SPOTIFY SEARCH"
 	case modeLastFM:
 		return "LAST.FM"
-	case modeLastFMMix:
-		return "PERIOD MIX"
 	default:
 		return "NAV"
 	}
@@ -243,6 +240,14 @@ type Model struct {
 	historyWatcher     HistoryWatcher
 	historyRefreshing  bool
 	historyPending     bool
+	playbackMix        int
+	draftMix           int
+	mixTrackCount      int
+	draftTrackCount    int
+	savedPeriod        [3]string
+	periodDraft        [3]string
+	savedMethod        lastfm.MixMethod
+	draftMethod        lastfm.MixMethod
 	playbackOptions    backend.PlaybackOptions
 	draftOptions       backend.PlaybackOptions
 	filterDraft        [2]string
@@ -280,9 +285,6 @@ type Model struct {
 	lastfmCancelling   bool
 	lastfmRunner       *lastfmSyncRunner
 	lastfmCancel       context.CancelFunc
-	lastfmMixDraft     [4]string
-	lastfmMixMethod    lastfm.MixMethod
-	lastfmQueueAction  lastfm.QueueAction
 	lastfmResetArmed   bool
 }
 
@@ -639,7 +641,7 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case modeQueue:
 		return m.handleQueueKey(key), nil
 	case modePlaybackOptions:
-		return m.handleOptionsKey(key), nil
+		return m.handlePlaybackPanelKey(key)
 	case modeFilters:
 		return m.handleFiltersKey(key), nil
 	case modeHelp:
@@ -656,8 +658,6 @@ func (m Model) handleKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m.handleSpotifySearchKey(key)
 	case modeLastFM:
 		return m.handleLastFMKey(key)
-	case modeLastFMMix:
-		return m.handleLastFMMixKey(key)
 	default:
 		return m.handleNavigationKey(key)
 	}
@@ -808,8 +808,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "o":
 		return m.launchQueue()
 	case "p":
-		m.mode, m.overlayCursor, m.draftOptions = modePlaybackOptions, 0, m.playbackOptions
-		m.optionEdit, m.optionEditField, m.optionError = "", -1, ""
+		m.openPlaybackPanel()
 	case "R", "shift+r":
 		return m.requestHistoryRefresh()
 	case "f":
@@ -1307,7 +1306,9 @@ func (m *Model) clampOverlayState() {
 	case modeQueue:
 		m.overlayCursor = min(max(m.overlayCursor, 0), max(len(m.queueOrder)-1, 0))
 	case modePlaybackOptions:
-		m.overlayCursor = min(max(m.overlayCursor, 0), 4)
+		if !slices.Contains(m.playbackRows(), m.overlayCursor) {
+			m.overlayCursor = 5
+		}
 	case modeFilters:
 		m.overlayCursor = min(max(m.overlayCursor, 0), 3)
 	case modeDetails:
@@ -1318,36 +1319,6 @@ func (m *Model) clampOverlayState() {
 
 func (m Model) handleOptionsKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
-	case "esc":
-		m.mode = modeNavigate
-		return m
-	case "p":
-		m.mode = modeNavigate
-		return m
-	case "j", "down", "ctrl+j":
-		if !m.commitOptionEdit() {
-			return m
-		}
-		m.overlayCursor = min(m.overlayCursor+1, 4)
-		return m
-	case "k", "up", "ctrl+k":
-		if !m.commitOptionEdit() {
-			return m
-		}
-		m.overlayCursor = max(m.overlayCursor-1, 0)
-		return m
-	case "r":
-		m.draftOptions = backend.DefaultPlaybackOptions()
-		m.clearOptionEdit()
-		return m
-	case "enter":
-		if !m.commitOptionEdit() {
-			return m
-		}
-		m.playbackOptions = m.draftOptions
-		m.mode = modeNavigate
-		m.status = "Playback options saved"
-		return m
 	case "space":
 		if m.overlayCursor == 0 {
 			m.draftOptions.Shuffle = !m.draftOptions.Shuffle
@@ -1949,7 +1920,7 @@ func (m Model) render() string {
 	footer := m.renderFooter(width)
 	base := strings.Join([]string{header, body, footer}, "\n")
 
-	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker || m.mode == modeSpotifyUpdate || m.mode == modeSpotifySearch || m.mode == modeLastFM || m.mode == modeLastFMMix {
+	if m.mode == modeCategories || m.mode == modeSort || m.mode == modeQueue || m.mode == modePlaybackOptions || m.mode == modeFilters || m.mode == modeHelp || m.mode == modeDetails || m.mode == modeMappingUpdate || m.mode == modeMappingPicker || m.mode == modeSpotifyUpdate || m.mode == modeSpotifySearch || m.mode == modeLastFM {
 		base = m.renderOverlay(base, width, height)
 	}
 	return base
@@ -2196,23 +2167,8 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			lines = append(lines, "", "j/k move  •  shift+j/k reorder  •  delete remove  •  C clear  •  q/esc close")
 		}
 	case modePlaybackOptions:
-		title = "Playback options"
-		maximum := "All"
-		if m.draftOptions.MaximumItems > 0 || m.optionEditField == 3 && m.optionEdit != "" {
-			maximum = m.optionDisplay(3)
-		}
-		lines = []string{
-			fmt.Sprintf("%s Shuffle: %s", cursorMark(m.overlayCursor, 0), onOff(m.draftOptions.Shuffle)),
-			fmt.Sprintf("%s One video per track: %s", cursorMark(m.overlayCursor, 1), onOff(m.draftOptions.OneVideoPerTrack)),
-			fmt.Sprintf("%s Repeat: %s", cursorMark(m.overlayCursor, 2), m.optionDisplay(2)),
-			fmt.Sprintf("%s Maximum: %s", cursorMark(m.overlayCursor, 3), maximum),
-			fmt.Sprintf("%s Version choice: %s", cursorMark(m.overlayCursor, 4), m.draftOptions.SelectionStrategy),
-			m.plannedPreview(),
-		}
-		if m.optionError != "" {
-			lines = append(lines, m.theme.warning.Render(m.optionError))
-		}
-		lines = append(lines, "", "j/k move • digits edit • h/l adjust • r reset • enter save • p/esc cancel")
+		title = "Playback"
+		lines = m.playbackPanelLines(height)
 	case modeFilters:
 		title = "Filters"
 		lines = []string{fmt.Sprintf("%s Track release: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video date: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • f/esc cancel"}
@@ -2354,7 +2310,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		if m.lastfmStatus.LastSyncUTC != nil {
 			syncLabel = m.lastfmStatus.LastSyncUTC.Format(time.RFC3339)
 		}
-		actions := []string{fmt.Sprintf("%s Sync new plays", cursorMark(m.overlayCursor, 0)), fmt.Sprintf("%s Rebuild full history", cursorMark(m.overlayCursor, 1)), fmt.Sprintf("%s Build period mix", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Export unresolved matches", cursorMark(m.overlayCursor, 3)), fmt.Sprintf("%s Import agent decisions", cursorMark(m.overlayCursor, 4)), fmt.Sprintf("%s Reset agent decisions", cursorMark(m.overlayCursor, 5))}
+		actions := []string{fmt.Sprintf("%s Sync new plays", cursorMark(m.overlayCursor, 0)), fmt.Sprintf("%s Rebuild full history", cursorMark(m.overlayCursor, 1)), fmt.Sprintf("%s Export unresolved matches", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Import agent decisions", cursorMark(m.overlayCursor, 3)), fmt.Sprintf("%s Reset agent decisions", cursorMark(m.overlayCursor, 4))}
 		if height < 20 {
 			summary := fmt.Sprintf("%d scrobbles • %d matched • %d unresolved", m.lastfmStatus.Scrobbles, m.lastfmStatus.Matched, m.lastfmStatus.Unresolved)
 			if m.lastfmStatus.CheckpointPages > 0 {
@@ -2377,16 +2333,12 @@ func (m Model) renderOverlay(base string, width, height int) string {
 			}
 			lines = append(lines, "", "j/k move • enter activate • L/esc close")
 		}
-	case modeLastFMMix:
-		title = "Build Last.fm period mix"
-		secondaryPercent := m.lastfmMixDraft[2]
-		if strings.TrimSpace(m.lastfmMixDraft[1]) == "" {
-			secondaryPercent = "disabled"
-		}
-		lines = []string{fmt.Sprintf("%s Primary period: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.lastfmMixDraft[0])), fmt.Sprintf("%s Secondary period: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.lastfmMixDraft[1])), fmt.Sprintf("%s Secondary percentage: %s", cursorMark(m.overlayCursor, 2), secondaryPercent), fmt.Sprintf("%s Track count: %s", cursorMark(m.overlayCursor, 3), m.lastfmMixDraft[3]), fmt.Sprintf("%s Selection method: %s", cursorMark(m.overlayCursor, 4), m.lastfmMixMethod), fmt.Sprintf("%s Queue action: %s", cursorMark(m.overlayCursor, 5), m.lastfmQueueAction), fmt.Sprintf("%s Build", cursorMark(m.overlayCursor, 6)), "", "dates: YYYY or START..END • h/l choices • r reset • esc cancel"}
 	}
 
 	overlayWidth := min(max(width*2/3, 28), min(88, width))
+	if m.mode == modePlaybackOptions {
+		overlayWidth = min(88, width)
+	}
 	contentWidth := max(overlayWidth-6, 1)
 	title = truncate(title, contentWidth)
 	for index, line := range lines {
@@ -2452,9 +2404,7 @@ func (m Model) plannedSourceCounts(options backend.PlaybackOptions) (int, int, i
 			continue
 		}
 		seen[variant.TrackID] = true
-		for range max(options.RepeatEach, 1) {
-			trackIDs = append(trackIDs, variant.TrackID)
-		}
+		trackIDs = append(trackIDs, variant.TrackID)
 	}
 	if options.MaximumItems > 0 && len(trackIDs) > options.MaximumItems {
 		trackIDs = trackIDs[:options.MaximumItems]
@@ -2471,7 +2421,7 @@ func (m Model) plannedSourceCounts(options backend.PlaybackOptions) (int, int, i
 			untrackedCount++
 		}
 	}
-	return spotifyCount, foobarCount, untrackedCount
+	return saturatingMultiply(spotifyCount, max(options.RepeatEach, 1)), saturatingMultiply(foobarCount, max(options.RepeatEach, 1)), saturatingMultiply(untrackedCount, max(options.RepeatEach, 1))
 }
 
 func onOff(value bool) string {

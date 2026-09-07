@@ -32,11 +32,11 @@ func TestPlannedCountAppliesQueueRulesInOrder(t *testing.T) {
 		{"repeat one", backend.PlaybackOptions{RepeatEach: 1}, 3},
 		{"repeat ten", backend.PlaybackOptions{RepeatEach: 10}, 30},
 		{"unlimited maximum", backend.PlaybackOptions{RepeatEach: 10, MaximumItems: 0}, 30},
-		{"maximum below plan", backend.PlaybackOptions{RepeatEach: 10, MaximumItems: 2}, 2},
+		{"maximum below plan", backend.PlaybackOptions{RepeatEach: 10, MaximumItems: 2}, 20},
 		{"maximum equal plan", backend.PlaybackOptions{RepeatEach: 1, MaximumItems: 3}, 3},
 		{"maximum above plan", backend.PlaybackOptions{RepeatEach: 1, MaximumItems: 9}, 3},
 		{"one per normalized audio", backend.PlaybackOptions{RepeatEach: 1, OneVideoPerTrack: true}, 2},
-		{"one per track then repeat then maximum", backend.PlaybackOptions{Shuffle: true, RepeatEach: 3, OneVideoPerTrack: true, MaximumItems: 4}, 4},
+		{"one per track then maximum then repeat", backend.PlaybackOptions{Shuffle: true, RepeatEach: 3, OneVideoPerTrack: true, MaximumItems: 4}, 6},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -61,7 +61,7 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	if m.mode != modePlaybackOptions || m.draftOptions != m.playbackOptions {
 		t.Fatal("options did not open from saved values")
 	}
-	m = updateKey(t, m, "j")
+	m.overlayCursor = 1
 	m = updateKey(t, m, "space")
 	if !m.draftOptions.OneVideoPerTrack {
 		t.Fatal("space did not toggle one-video-per-track")
@@ -82,7 +82,7 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	if m.optionError != "" || m.optionEdit != "3" {
 		t.Fatal("backspace did not restore a valid numeric edit")
 	}
-	m = updateKey(t, m, "j")
+	m.overlayCursor = 3
 	m = updateKey(t, m, "1")
 	m = updateKey(t, m, "2")
 	if m.draftOptions.MaximumItems != 12 {
@@ -97,8 +97,9 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	if m.draftOptions != backend.DefaultPlaybackOptions() || m.optionEditField != -1 {
 		t.Fatal("reset did not restore the complete option draft")
 	}
-	m = updateKey(t, m, "k")
+	m.overlayCursor = 2
 	m = updateKey(t, m, "2")
+	m.overlayCursor = 12
 	m = updateKey(t, m, "enter")
 	if m.mode != modeNavigate || m.playbackOptions.RepeatEach != 2 {
 		t.Fatal("valid options did not save")
@@ -117,9 +118,7 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 func TestPlaybackOptionsCyclesVersionChoice(t *testing.T) {
 	m := New(library.Generate(2, 4))
 	m = updateKey(t, m, "p")
-	for range 4 {
-		m = updateKey(t, m, "j")
-	}
+	m.overlayCursor = 4
 	for _, strategy := range []library.SelectionStrategy{library.FavouriteSelection, library.FreshSelection, library.UnseenSelection, library.LatestSelection, library.DefaultSelection} {
 		m = updateKey(t, m, "space")
 		if m.draftOptions.SelectionStrategy != strategy {

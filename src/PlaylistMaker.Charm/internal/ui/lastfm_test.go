@@ -13,17 +13,21 @@ import (
 )
 
 type lastfmStub struct {
-	status lastfm.Status
-	mix    lastfm.MixResult
-	resets int
+	status  lastfm.Status
+	mix     lastfm.MixResult
+	resets  int
+	request lastfm.MixRequest
 }
 
 func (s *lastfmStub) Status() lastfm.Status { return s.status }
 func (s *lastfmStub) Sync(context.Context, []library.Track, bool, func(lastfm.SyncProgress)) (lastfm.SyncResult, error) {
 	return lastfm.SyncResult{}, nil
 }
-func (s *lastfmStub) Attach(v []library.Track) []library.Track             { return v }
-func (s *lastfmStub) BuildMix(lastfm.MixRequest) (lastfm.MixResult, error) { return s.mix, nil }
+func (s *lastfmStub) Attach(v []library.Track) []library.Track { return v }
+func (s *lastfmStub) BuildMix(r lastfm.MixRequest) (lastfm.MixResult, error) {
+	s.request = r
+	return s.mix, nil
+}
 func (s *lastfmStub) ExportReview([]library.Track, time.Time) (string, error) {
 	return `C:\data\lastfm-review`, nil
 }
@@ -53,46 +57,48 @@ func TestUppercaseLOpensLastFMAndLowercaseLRetainsExpansion(t *testing.T) {
 	}
 }
 
-func TestLastFMMixBuilderReplacesQueueAndValidatesFields(t *testing.T) {
+func TestPeriodMixUsesSharedPanelAndAppendsQueue(t *testing.T) {
 	tracks := library.Generate(2, 2)
-	variant := tracks[1].Variants[0]
-	stub := &lastfmStub{status: lastfm.Status{Configured: true}, mix: lastfm.MixResult{Variants: []library.Variant{variant}, Requested: 10, Created: 1}}
+	stub := &lastfmStub{mix: lastfm.MixResult{Variants: []library.Variant{tracks[1].Variants[0]}, Requested: 20, Created: 1}}
 	m := New(tracks).WithLastFM(stub)
 	m = updateKey(t, m, "space")
-	m = updateKey(t, m, "L")
-	m.overlayCursor = 2
-	m = updateKey(t, m, "enter")
-	if m.mode != modeLastFMMix {
-		t.Fatal("mix builder did not open")
+	m = updateKey(t, m, "p")
+	for range 3 {
+		m = updateKey(t, m, "right")
 	}
-	m.overlayCursor = 6
+	if m.draftMix != 3 || m.mode != modePlaybackOptions {
+		t.Fatal("period mix not in playback panel")
+	}
+	m.periodDraft[0] = "invalid"
+	m.overlayCursor = 11
 	m = updateKey(t, m, "enter")
-	if m.mode != modeLastFM || len(m.queueOrder) != 1 || m.queueOrder[0] != variant.ID {
-		t.Fatalf("queue=%#v mode=%v", m.queueOrder, m.mode)
+	if len(m.queueOrder) != 1 || !strings.Contains(m.status, "Primary period") {
+		t.Fatal("invalid period mutated queue")
+	}
+	m.periodDraft[0] = "2025"
+	m = updateKey(t, m, "enter")
+	if len(m.queueOrder) != 2 || m.queueOrder[1] != tracks[1].Variants[0].ID {
+		t.Fatal("mix did not append")
+	}
+	m = updateKey(t, m, "p")
+	if m.periodDraft[0] != "2025" || m.draftMix != 3 {
+		t.Fatal("mix settings not remembered")
 	}
 }
 
-func TestLastFMMixNavigationKeysDoNotLeakIntoDateFields(t *testing.T) {
-	m := Model{mode: modeLastFMMix, overlayCursor: 0, lastfmMixDraft: [4]string{"", "", "20", "10"}}
-
-	model, _ := m.handleLastFMMixKey(tea.KeyPressMsg{Code: 'j', Text: "j"})
-	m = model.(Model)
-	if m.overlayCursor != 1 || m.lastfmMixDraft[0] != "" || m.lastfmMixDraft[1] != "" {
-		t.Fatalf("down navigation leaked into date fields: cursor=%d draft=%q", m.overlayCursor, m.lastfmMixDraft)
+func TestPeriodNavigationDoesNotEditDates(t *testing.T) {
+	m := New(library.Generate(1, 1))
+	m.openPlaybackPanel()
+	m.draftMix = 3
+	m.overlayCursor = 6
+	m = updateKey(t, m, "j")
+	m = updateKey(t, m, "k")
+	if m.overlayCursor != 6 || m.periodDraft[0] != "" || m.periodDraft[1] != "" {
+		t.Fatal("navigation edited dates")
 	}
-
-	model, _ = m.handleLastFMMixKey(tea.KeyPressMsg{Code: 'k', Text: "k"})
-	m = model.(Model)
-	if m.overlayCursor != 0 || m.lastfmMixDraft[0] != "" || m.lastfmMixDraft[1] != "" {
-		t.Fatalf("up navigation leaked into date fields: cursor=%d draft=%q", m.overlayCursor, m.lastfmMixDraft)
-	}
-
-	for _, key := range []string{"2025-01..2025-03", "h", "l"} {
-		model, _ = m.handleLastFMMixKey(tea.KeyPressMsg{Code: rune(key[0]), Text: key})
-		m = model.(Model)
-	}
-	if m.lastfmMixDraft[0] != "2025-01..2025-03" {
-		t.Fatalf("date input filtering changed valid input: draft=%q", m.lastfmMixDraft[0])
+	model, _ := m.handlePlaybackPanelKey(tea.KeyPressMsg{Text: "2025-01..2025-03"})
+	if model.(Model).periodDraft[0] != "2025-01..2025-03" {
+		t.Fatal("date input lost")
 	}
 }
 
@@ -100,7 +106,7 @@ func TestLastFMResetRequiresSecondConfirmation(t *testing.T) {
 	stub := &lastfmStub{status: lastfm.Status{Configured: true}}
 	m := New(library.Generate(1, 1)).WithLastFM(stub)
 	m = updateKey(t, m, "L")
-	m.overlayCursor = 5
+	m.overlayCursor = 4
 	model, cmd := m.handleLastFMKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 	m = model.(Model)
 	if cmd != nil || !m.lastfmResetArmed || stub.resets != 0 {

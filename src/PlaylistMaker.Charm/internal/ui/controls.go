@@ -31,11 +31,10 @@ func plannedCount(queue []string, variants map[string]library.Variant, options b
 		}
 		count++
 	}
-	count = saturatingMultiply(count, options.RepeatEach)
 	if options.MaximumItems > 0 {
 		count = min(count, options.MaximumItems)
 	}
-	return count
+	return saturatingMultiply(count, options.RepeatEach)
 }
 
 func saturatingMultiply(left, right int) int {
