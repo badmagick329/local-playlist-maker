@@ -129,6 +129,8 @@ func TestSeparateLaunchWaitsForPreviousCompletedQuitToFinishSpotify(t *testing.T
 	}
 	select {
 	case <-second.started:
+	case err := <-secondDone:
+		t.Fatalf("second exited before playback: %v", err)
 	case <-ctx.Done():
 		t.Fatal("second did not start after first finished")
 	}

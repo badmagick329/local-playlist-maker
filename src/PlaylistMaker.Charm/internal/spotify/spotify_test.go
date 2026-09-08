@@ -161,6 +161,38 @@ func TestPlayerCloseDoesNotPauseBeforePlayAttempt(t *testing.T) {
 	}
 }
 
+func TestPlayerDoesNotStartWhenRepeatControlFails(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		switch request.URL.Path {
+		case "/me/player/devices":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "device", "name": "Room"}}})
+		case "/tracks/song":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"uri": "spotify:track:song", "name": "Song", "artists": []map[string]any{{"name": "Artist"}}})
+		case "/me/player/repeat":
+			writer.WriteHeader(http.StatusInternalServerError)
+		default:
+			writer.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "state.json")
+	player := &Player{Client: &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}, StatePath: statePath}
+	if err := player.Preflight(context.Background(), "Room"); err != nil {
+		t.Fatal(err)
+	}
+	if err := player.Start(context.Background(), tracking.Track{SpotifyURI: "spotify:track:song"}); err == nil || !strings.Contains(err.Error(), "repeat control") {
+		t.Fatalf("repeat-control failure = %v", err)
+	}
+	if strings.Contains(strings.Join(requests, "\n"), "PUT /me/player/play") {
+		t.Fatalf("play started without repeat control: %v", requests)
+	}
+	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
+		t.Fatalf("failed startup retained active state: %v", err)
+	}
+}
+
 func TestPlaybackRateLimitReturnsImmediatelyWithoutRetry(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
@@ -216,14 +248,14 @@ func TestRecoverPausesOnlyMatchingPlayingDevice(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		requests = append(requests, request.URL.Path)
 		if request.URL.Path == "/me/player" {
-			_ = json.NewEncoder(writer).Encode(map[string]any{"is_playing": true, "device": map[string]any{"id": "device"}})
+			_ = json.NewEncoder(writer).Encode(map[string]any{"is_playing": true, "device": map[string]any{"id": "device"}, "item": map[string]any{"uri": "spotify:track:song"}})
 			return
 		}
 		writer.WriteHeader(http.StatusNoContent)
 	}))
 	defer server.Close()
 	statePath := filepath.Join(t.TempDir(), "active.json")
-	state, _ := json.Marshal(ActiveState{DeviceID: "device"})
+	state, _ := json.Marshal(ActiveState{DeviceID: "device", TrackURI: "spotify:track:song"})
 	if err := os.WriteFile(statePath, state, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -236,6 +268,27 @@ func TestRecoverPausesOnlyMatchingPlayingDevice(t *testing.T) {
 	}
 	if _, err := os.Stat(statePath); !os.IsNotExist(err) {
 		t.Fatal("recovered state remained")
+	}
+}
+
+func TestRecoverDoesNotPauseDifferentTrackOnSavedDevice(t *testing.T) {
+	requests := []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.URL.Path)
+		_ = json.NewEncoder(writer).Encode(map[string]any{"is_playing": true, "device": map[string]any{"id": "device"}, "item": map[string]any{"uri": "spotify:track:other"}})
+	}))
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "active.json")
+	state, _ := json.Marshal(ActiveState{DeviceID: "device", TrackURI: "spotify:track:song"})
+	if err := os.WriteFile(statePath, state, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	if err := Recover(context.Background(), client, statePath, func(int) bool { return false }); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(requests, ",") != "/me/player" {
+		t.Fatalf("unrelated playback was mutated: %v", requests)
 	}
 }
 

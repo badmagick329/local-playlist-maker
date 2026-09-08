@@ -58,6 +58,11 @@ func (r *Runtime) Load(ctx context.Context, position int, track tracking.Track) 
 	r.stop(ctx)
 	failures := []string{}
 	if track.SpotifyURI != "" && r.spotifyAvailable {
+		if source, ok := r.Spotify.(interface{ SetDiagnostic(func(string)) }); ok {
+			source.SetDiagnostic(func(message string) {
+				r.observe(position, track.TrackID, message)
+			})
+		}
 		if err := r.Spotify.Start(ctx, track); err == nil {
 			r.active, r.activeProvider = r.Spotify, "spotify"
 			r.diagnose(position, track.TrackID, "spotify", "", "")
@@ -94,6 +99,13 @@ func (r *Runtime) Load(ctx context.Context, position int, track tracking.Track) 
 	r.active, r.activeProvider = tracking.Noop{}, "untracked"
 	r.diagnose(position, track.TrackID, "untracked", reason, "")
 	return nil
+}
+
+func (r *Runtime) observe(position int, trackID, message string) {
+	if r.DiagnosticsPath == "" {
+		return
+	}
+	_ = AppendDiagnostic(r.DiagnosticsPath, Diagnostic{EventAtUTC: time.Now().UTC(), PlaylistPosition: position, TrackID: trackID, Provider: "spotify", Message: message})
 }
 
 func (r *Runtime) End(ctx context.Context) { r.stop(ctx) }

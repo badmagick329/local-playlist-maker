@@ -2072,7 +2072,7 @@ func (m Model) renderFooter(width int) string {
 	}
 	status := m.status
 	if m.trackingError != "" {
-		status = "TRACKING FAILED: " + m.trackingError
+		status = m.trackingError
 	}
 	broken := 0
 	firstBroken := ""

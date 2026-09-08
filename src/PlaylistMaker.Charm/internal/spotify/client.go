@@ -84,10 +84,12 @@ func (c *Client) DisableRepeat(ctx context.Context, deviceID string) error {
 }
 
 type PlaybackState struct {
-	IsPlaying  bool   `json:"is_playing"`
-	ProgressMS int    `json:"progress_ms"`
-	Item       *Track `json:"item"`
-	Device     struct {
+	IsPlaying   bool   `json:"is_playing"`
+	ProgressMS  int    `json:"progress_ms"`
+	RepeatState string `json:"repeat_state"`
+	Timestamp   int64  `json:"timestamp"`
+	Item        *Track `json:"item"`
+	Device      struct {
 		ID string `json:"id"`
 	} `json:"device"`
 }
@@ -227,6 +229,8 @@ func spotifyOperation(method, path string) string {
 		return "play"
 	case method == http.MethodPut && strings.HasPrefix(path, "/me/player/pause"):
 		return "pause"
+	case method == http.MethodPut && strings.HasPrefix(path, "/me/player/repeat"):
+		return "repeat control"
 	case method == http.MethodGet && strings.HasPrefix(path, "/me/player/devices"):
 		return "list devices"
 	case method == http.MethodGet && strings.HasPrefix(path, "/me/player"):

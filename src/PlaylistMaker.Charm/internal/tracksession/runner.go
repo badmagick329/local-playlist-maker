@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
@@ -32,7 +33,7 @@ func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 	}
 	defer func() {
 		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			_ = atomicWrite(filepath.Join(filepath.Dir(manifest.LockPath), "tracking-error.txt"), []byte(runErr.Error()), 0o600)
+			_ = atomicWrite(filepath.Join(filepath.Dir(manifest.LockPath), "tracking-error.txt"), []byte("Tracking stopped: "+runErr.Error()), 0o600)
 		}
 	}()
 	lockErr := r.acquire(manifest)
@@ -43,7 +44,9 @@ func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 	ownsLock := lockErr == nil
 	defer func() {
 		if ownsLock {
-			_ = os.Remove(manifest.LockPath)
+			if err := os.Remove(manifest.LockPath); err != nil {
+				runErr = errors.Join(runErr, fmt.Errorf("release tracking session lock: %w", err))
+			}
 		}
 	}()
 	cleanup := false
@@ -90,7 +93,16 @@ func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 	seen := map[string]bool{}
 	mpvSeen := false
 	queue := playQueue{runtime: r.Runtime}
+	started := false
 	inputEnded := false
+	pauseOnFailure := func(err error) error {
+		if !inputEnded && manifest.PausePath != "" {
+			if pauseErr := atomicWrite(manifest.PausePath, []byte(err.Error()+"\n"), 0o600); pauseErr != nil {
+				return fmt.Errorf("%w; request mpv pause: %v", err, pauseErr)
+			}
+		}
+		return err
+	}
 	for {
 		select {
 		case <-ctx.Done():
@@ -156,11 +168,15 @@ func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 						}
 						entry := manifest.Entries[event.PlaylistPosition]
 						if err := queue.load(ctx, event.EventID, event.PlaylistPosition, entry.Track); err != nil {
+							if started {
+								return pauseOnFailure(err)
+							}
 							if terminateErr := r.terminate(manifest.MPVProcessID); terminateErr != nil {
 								return fmt.Errorf("%w; terminate mpv: %v", err, terminateErr)
 							}
 							return err
 						}
+						started = true
 					}
 				case "end-file":
 					if addPosition(&manifest.TerminalPositions, event.PlaylistPosition) {
@@ -196,12 +212,7 @@ func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 				inputEnded = true
 			}
 			if err := queue.tick(ctx); err != nil {
-				if !inputEnded {
-					if terminateErr := r.terminate(manifest.MPVProcessID); terminateErr != nil {
-						return fmt.Errorf("%w; terminate mpv: %v", err, terminateErr)
-					}
-				}
-				return err
+				return pauseOnFailure(err)
 			}
 			if inputEnded && queue.idle() {
 				cleanup = true
@@ -228,7 +239,7 @@ func addPosition(values *[]int, position int) bool {
 }
 
 func (r Runner) acquire(manifest Manifest) error {
-	if contents, err := os.ReadFile(manifest.LockPath); err == nil {
+	if contents, err := readLock(manifest.LockPath); err == nil {
 		var lock Lock
 		if len(contents) == 0 {
 			return errSessionBusy
@@ -251,6 +262,15 @@ func (r Runner) acquire(manifest Manifest) error {
 	defer file.Close()
 	_, err = file.Write(append(contents, '\n'))
 	return err
+}
+
+func readLock(path string) ([]byte, error) {
+	file, err := openLockReader(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(file)
 }
 
 func (r Runner) alive(pid int) bool {

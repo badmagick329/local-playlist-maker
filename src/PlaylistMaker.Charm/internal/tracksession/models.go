@@ -25,6 +25,7 @@ type Manifest struct {
 	EventPath             string    `json:"eventPath"`
 	ReadyPath             string    `json:"readyPath"`
 	CancelPath            string    `json:"cancelPath"`
+	PausePath             string    `json:"pausePath"`
 	DiagnosticsPath       string    `json:"diagnosticsPath"`
 	LockPath              string    `json:"lockPath"`
 	SpotifyStatePath      string    `json:"spotifyStatePath"`
@@ -60,6 +61,7 @@ type Diagnostic struct {
 	TrackID          string    `json:"trackId,omitempty"`
 	Provider         string    `json:"provider,omitempty"`
 	FallbackReason   string    `json:"fallbackReason,omitempty"`
+	Message          string    `json:"message,omitempty"`
 	Error            string    `json:"error,omitempty"`
 }
 
@@ -76,6 +78,7 @@ func Create(dataDirectory string, entries []Entry, allowUntracked, historyEnable
 	manifest := Manifest{
 		SchemaVersion: 1, SessionID: id, CreatedAtUTC: time.Now().UTC(), Entries: entries,
 		EventPath: filepath.Join(directory, id+".events.jsonl"), ReadyPath: filepath.Join(directory, id+".ready.json"), CancelPath: filepath.Join(directory, id+".cancel"),
+		PausePath:       filepath.Join(directory, id+".tracking-stopped"),
 		DiagnosticsPath: filepath.Join(dataDirectory, "tracking-diagnostics.jsonl"), LockPath: filepath.Join(dataDirectory, "active-tracking-session.json"),
 		SpotifyStatePath: filepath.Join(dataDirectory, "spotify-active-session.json"), AllowUntracked: allowUntracked,
 		HistoryEnabled: historyEnabled, HistoryPath: historyPath, MinimumWatchedPercent: minimum,
@@ -137,7 +140,7 @@ func AppendDiagnostic(path string, value Diagnostic) error {
 }
 
 func Cleanup(path string, manifest Manifest) {
-	for _, target := range []string{path, manifest.EventPath, manifest.ReadyPath, manifest.CancelPath} {
+	for _, target := range []string{path, manifest.EventPath, manifest.ReadyPath, manifest.CancelPath, manifest.PausePath} {
 		_ = os.Remove(target)
 	}
 }

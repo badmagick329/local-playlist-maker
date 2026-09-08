@@ -18,6 +18,7 @@ type ActiveState struct {
 	SessionID string `json:"sessionId"`
 	HelperPID int    `json:"helperPid"`
 	DeviceID  string `json:"deviceId"`
+	TrackURI  string `json:"trackUri"`
 }
 
 type Player struct {
@@ -29,13 +30,29 @@ type Player struct {
 	prepared           bool
 	attempted          bool
 	trackURI           string
+	stateTrackURI      string
 	requestedTrack     Track
 	startedAt          time.Time
 	nextCheck          time.Time
 	observed           bool
 	completionDeadline time.Time
 	lastPlayback       string
+	repeatConfirmed    bool
+	repeatRetryAt      time.Time
+	repeatAttempts     int
+	lastRepeatState    string
+	lastStateTimestamp int64
+	lastProgress       int
+	maxProgress        int
+	lastProgressLogged int
+	playDurationMS     int
+	staleLogged        bool
+	candidateLogged    bool
+	diagnostic         func(string)
+	Now                func() time.Time
 }
+
+func (p *Player) SetDiagnostic(write func(string)) { p.diagnostic = write }
 
 func (p *Player) Preflight(ctx context.Context, deviceName string) error {
 	if p.Client == nil || strings.TrimSpace(deviceName) == "" {
@@ -76,20 +93,26 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 		}
 		p.requestedTrack = requested
 	}
-	if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID}); err != nil {
-		return err
-	}
-	p.attempted = true
 	// The session queue owns repetitions; inherited Spotify repeat would prevent
 	// a play from finishing and hold every later video in the tracking queue.
 	if err := p.Client.DisableRepeat(ctx, p.deviceID); err != nil {
 		return err
 	}
+	p.trackURI, p.stateTrackURI = track.SpotifyURI, track.SpotifyURI
+	if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID, TrackURI: p.stateTrackURI}); err != nil {
+		return err
+	}
+	p.attempted = true
 	if err := p.Client.Play(ctx, p.deviceID, track.SpotifyURI); err != nil {
 		return err
 	}
-	p.trackURI, p.startedAt, p.nextCheck, p.observed = track.SpotifyURI, time.Now(), time.Time{}, false
+	p.startedAt, p.nextCheck, p.observed = p.now(), time.Time{}, false
 	p.completionDeadline, p.lastPlayback = time.Time{}, "no playback response"
+	p.repeatConfirmed, p.repeatRetryAt, p.repeatAttempts = false, time.Time{}, 1
+	p.lastRepeatState, p.lastStateTimestamp = "", 0
+	p.lastProgress, p.maxProgress, p.lastProgressLogged, p.playDurationMS = 0, 0, 0, 0
+	p.staleLogged, p.candidateLogged = false, false
+	p.report("repeat disable requested before playback; awaiting observed repeat state")
 	return nil
 }
 
@@ -97,12 +120,14 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 // tracking song. The first matching playback must be observed before accepting
 // an idle response, since Connect can briefly return the previous play's state.
 func (p *Player) Finished(ctx context.Context) (bool, error) {
-	now := time.Now()
+	now := p.now()
 	// Check deadlines before polling backoff: a rate limit or offline device must
 	// not keep a detached session alive forever.
-	if !p.startedAt.IsZero() && ((!p.observed && now.Sub(p.startedAt) >= 30*time.Second) ||
+	if !p.startedAt.IsZero() && (((!p.observed || !p.repeatConfirmed) && now.Sub(p.startedAt) >= 30*time.Second) ||
 		(p.observed && !p.completionDeadline.IsZero() && now.After(p.completionDeadline))) {
-		return false, &tracking.PlaybackFailure{Message: fmt.Sprintf("Spotify tracking timed out: requested %q (%s); last response: %s", p.requestedTrack.Name, p.trackURI, p.lastPlayback)}
+		message := fmt.Sprintf("Spotify tracking timed out: requested %q (%s); observed=%t, repeatConfirmed=%t, repeatDisableAttempts=%d, maximumProgress=%dms; last response: %s", p.requestedTrack.Name, p.trackURI, p.observed, p.repeatConfirmed, p.repeatAttempts, p.maxProgress, p.lastPlayback)
+		p.report("completion decision: tracking failed at bounded deadline; " + message)
+		return false, &tracking.PlaybackFailure{Message: message}
 	}
 	if now.Before(p.nextCheck) {
 		return false, nil
@@ -118,10 +143,42 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		}
 		return false, err
 	}
+	if state.Timestamp > 0 && (state.Timestamp < p.startedAt.Add(-2*time.Second).UnixMilli() || p.lastStateTimestamp > 0 && state.Timestamp < p.lastStateTimestamp) {
+		if !p.staleLogged {
+			p.report(fmt.Sprintf("ignored stale playback response: timestamp=%d, startedAt=%d", state.Timestamp, p.startedAt.UnixMilli()))
+			p.staleLogged = true
+		}
+		return false, nil
+	}
+	if state.Timestamp > p.lastStateTimestamp {
+		p.lastStateTimestamp = state.Timestamp
+	}
 	matching := state.Device.ID == p.deviceID && state.Item != nil && p.matchesTrack(*state.Item)
-	p.lastPlayback = fmt.Sprintf("playing=%t, device=%s, position=%dms", state.IsPlaying, state.Device.ID, state.ProgressMS)
+	p.lastPlayback = fmt.Sprintf("playing=%t, device=%s, position=%dms, repeat=%q, timestamp=%d", state.IsPlaying, state.Device.ID, state.ProgressMS, state.RepeatState, state.Timestamp)
 	if state.Item != nil {
 		p.lastPlayback += fmt.Sprintf(", track=%q (%s)", state.Item.Name, state.Item.URI)
+	}
+	if state.Device.ID == p.deviceID {
+		if state.RepeatState == "off" {
+			if !p.repeatConfirmed {
+				p.report("observed repeat state off")
+			}
+			p.repeatConfirmed = true
+		} else if state.RepeatState != p.lastRepeatState {
+			if state.RepeatState == "" {
+				p.report("repeat state was absent from playback response; awaiting confirmation")
+			} else {
+				p.report(fmt.Sprintf("observed repeat state %q; requesting off again", state.RepeatState))
+			}
+		}
+		p.lastRepeatState = state.RepeatState
+		if state.RepeatState != "off" && !now.Before(p.repeatRetryAt) {
+			p.repeatAttempts++
+			p.repeatRetryAt = now.Add(5 * time.Second)
+			if err := p.Client.DisableRepeat(ctx, p.deviceID); err != nil {
+				return false, fmt.Errorf("verify Spotify repeat is off: %w", err)
+			}
+		}
 	}
 	if !p.observed {
 		if !matching || !state.IsPlaying || time.Duration(state.ProgressMS)*time.Millisecond > now.Sub(p.startedAt)+2*time.Second {
@@ -133,16 +190,70 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		}
 		p.observed = true
 		p.trackURI = state.Item.URI
+		if p.attempted && p.stateTrackURI != p.trackURI {
+			if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID, TrackURI: p.trackURI}); err != nil {
+				return false, fmt.Errorf("record observed Spotify release: %w", err)
+			}
+			p.stateTrackURI = p.trackURI
+		}
+		p.playDurationMS = state.Item.DurationMS
+		p.lastProgress, p.maxProgress = state.ProgressMS, state.ProgressMS
 		p.completionDeadline = now.Add(time.Duration(max(0, state.Item.DurationMS-state.ProgressMS))*time.Millisecond + time.Minute)
+		p.report(fmt.Sprintf("playback observed: position=%dms, duration=%dms, completionDeadline=%s", state.ProgressMS, state.Item.DurationMS, p.completionDeadline.UTC().Format(time.RFC3339)))
+	} else if matching && (state.IsPlaying || state.ProgressMS >= p.lastProgress) {
+		// A stopped response can reset position to zero. Only a playing
+		// backward jump invalidates the prior play's near-end evidence.
+		p.recordProgress(state.ProgressMS)
 	}
 	if !matching || !state.IsPlaying {
-		return true, nil
+		if p.repeatConfirmed && p.nearEnd() {
+			p.report(fmt.Sprintf("completion decision: accepted observed transition after reaching %dms of %dms", p.maxProgress, p.playDurationMS))
+			return true, nil
+		}
+		if !p.candidateLogged {
+			p.report(fmt.Sprintf("completion decision: ignored transition without near-end evidence; maximumProgress=%dms, duration=%dms", p.maxProgress, p.playDurationMS))
+			p.candidateLogged = true
+		}
+		return false, nil
 	}
 	remaining := time.Duration(state.Item.DurationMS-state.ProgressMS) * time.Millisecond
 	if remaining > time.Second {
 		p.nextCheck = now.Add(min(remaining+250*time.Millisecond, 5*time.Second))
 	}
 	return false, nil
+}
+
+func (p *Player) recordProgress(progress int) {
+	if progress+2_000 < p.lastProgress {
+		p.report(fmt.Sprintf("significant progress change: backward from %dms to %dms; not treated as completion", p.lastProgress, progress))
+		p.maxProgress = progress
+		p.lastProgressLogged = progress
+		p.candidateLogged = false
+	} else {
+		p.maxProgress = max(p.maxProgress, progress)
+		if progress-p.lastProgressLogged >= 30_000 || p.nearEnd() && p.lastProgressLogged+2_000 < progress {
+			p.report(fmt.Sprintf("significant progress change: position=%dms, duration=%dms", progress, p.playDurationMS))
+			p.lastProgressLogged = progress
+		}
+	}
+	p.lastProgress = progress
+}
+
+func (p *Player) nearEnd() bool {
+	return p.playDurationMS > 0 && p.maxProgress >= max(0, p.playDurationMS-7_000)
+}
+
+func (p *Player) now() time.Time {
+	if p.Now != nil {
+		return p.Now()
+	}
+	return time.Now()
+}
+
+func (p *Player) report(message string) {
+	if p.diagnostic != nil {
+		p.diagnostic(message)
+	}
 }
 
 // Connect can play another release of the requested song without linked_from
@@ -237,7 +348,7 @@ func Recover(ctx context.Context, client *Client, statePath string, alive ...fun
 		}
 		return err
 	}
-	if !playback.IsPlaying || playback.Device.ID == "" || playback.Device.ID != state.DeviceID {
+	if !playback.IsPlaying || playback.Device.ID == "" || playback.Device.ID != state.DeviceID || playback.Item == nil || playback.Item.URI != state.TrackURI {
 		return os.Remove(statePath)
 	}
 	if err := client.Pause(ctx, state.DeviceID); err != nil {

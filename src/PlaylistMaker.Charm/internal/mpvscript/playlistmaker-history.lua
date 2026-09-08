@@ -1,4 +1,4 @@
--- playlistmaker-history-version: 7
+-- playlistmaker-history-version: 8
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
@@ -30,6 +30,7 @@ end
 local active = nil
 local terminal_entries = {}
 local event_sequence = 0
+local tracking_stopped = false
 
 local function utc_now()
     return os.date("!%Y-%m-%dT%H:%M:%SZ")
@@ -169,6 +170,15 @@ mp.observe_property("time-pos", "number", function(_, position)
     end
 end)
 mp.add_periodic_timer(0.25, function()
+	if not tracking_stopped and manifest.pausePath then
+		local pause_file = io.open(manifest.pausePath, "r")
+		if pause_file then
+			pause_file:close()
+			tracking_stopped = true
+			mp.set_property_native("pause", true)
+			mp.osd_message("PlaylistMaker tracking stopped; video paused", 10)
+		end
+	end
     if not active then return end
     local now = mp.get_time()
     if not mp.get_property_native("pause") then
