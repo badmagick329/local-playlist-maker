@@ -3,12 +3,55 @@ package ui
 import (
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"playlistmaker/charm/internal/backend"
 	"playlistmaker/charm/internal/lastfm"
 	"playlistmaker/charm/internal/library"
 )
+
+func TestNewHistoryModesUseSharedControlsAndShowContext(t *testing.T) {
+	date := time.Date(2025, 1, 31, 12, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		mode    int
+		preset  lastfm.MixPreset
+		context string
+	}{
+		{4, lastfm.ForgottenFavourites, "Local attempts rest for 30 days"},
+		{5, lastfm.CurrentObsessions, "History through: 2025-01-31 UTC"},
+	} {
+		tracks := library.Generate(2, 2)
+		history := &lastfmStub{status: lastfm.Status{LastPlayedAtUTC: &date}, mix: lastfm.MixResult{Created: 1, Requested: 20, Variants: []library.Variant{tracks[1].Variants[0]}}}
+		m := New(tracks).WithLastFM(history)
+		m = updateKey(t, m, "space")
+		m = updateKey(t, m, "p")
+		for range tc.mode {
+			m = updateKey(t, m, "right")
+		}
+		m.draftOptions.SelectionStrategy = library.LatestSelection
+		m.draftOptions.RepeatEach = 2
+		if !strings.Contains(stripStyles(m.render()), tc.context) {
+			t.Fatalf("mode %d context missing", tc.mode)
+		}
+		for _, row := range m.playbackRows() {
+			if row >= 6 && row <= 9 {
+				t.Fatal("unrelated period settings exposed")
+			}
+		}
+		m = updateKey(t, m, "a")
+		if history.request.Preset != tc.preset || history.request.SelectionStrategy != library.LatestSelection || !history.request.QueuedTrackIDs[tracks[0].ID] {
+			t.Fatalf("request=%+v", history.request)
+		}
+		if len(m.queueOrder) != 2 || m.playbackOptions.RepeatEach != 2 {
+			t.Fatal("shared queue controls changed")
+		}
+		m = updateKey(t, m, "p")
+		if m.draftMix != tc.mode {
+			t.Fatal("mode not remembered")
+		}
+	}
+}
 
 func TestGeneratedMixLaunchAppliesSettingsOnce(t *testing.T) {
 	tracks := library.Generate(3, 6)

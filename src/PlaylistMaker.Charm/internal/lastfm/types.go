@@ -174,6 +174,8 @@ const (
 	PeriodMix MixPreset = iota
 	FamiliarUnseen
 	BalancedRotation
+	ForgottenFavourites
+	CurrentObsessions
 )
 
 type MixRequest struct {

@@ -16,6 +16,103 @@ func presetTrack(id string) library.Track {
 	return library.Track{ID: id, Artist: id, Variants: []library.Variant{{ID: id + "-video", TrackID: id, Category: library.BandLive}}}
 }
 
+func TestForgottenFavouritesCooldownAndEstablishedListening(t *testing.T) {
+	now := time.Date(2026, 9, 8, 12, 0, 0, 0, time.UTC)
+	old := now.AddDate(-1, 0, 0)
+	plays := []time.Time{}
+	for i := 0; i < 10; i++ {
+		plays = append(plays, old.AddDate(0, 0, i/2))
+	}
+	for _, tc := range []struct {
+		name   string
+		change func(*library.Track, *[]time.Time)
+		want   bool
+	}{
+		{"established", func(*library.Track, *[]time.Time) {}, true},
+		{"too few plays", func(_ *library.Track, p *[]time.Time) { *p = (*p)[:9] }, false},
+		{"single binge", func(_ *library.Track, p *[]time.Time) {
+			for i := range *p {
+				(*p)[i] = old
+			}
+		}, false},
+		{"recent scrobble", func(_ *library.Track, p *[]time.Time) { *p = append(*p, now.AddDate(0, -6, 0)) }, false},
+		{"recent skip", func(t *library.Track, _ *[]time.Time) {
+			at := now.AddDate(0, 0, -29)
+			t.History.LastAttemptedAtUTC = &at
+		}, false},
+		{"cooldown boundary", func(t *library.Track, _ *[]time.Time) {
+			at := now.AddDate(0, 0, -30)
+			t.History.LastAttemptedAtUTC = &at
+		}, false},
+		{"cooldown expired", func(t *library.Track, _ *[]time.Time) {
+			at := now.AddDate(0, 0, -30).Add(-time.Second)
+			t.History.LastAttemptedAtUTC = &at
+		}, true},
+		{"other video skipped", func(t *library.Track, _ *[]time.Time) {
+			at := now
+			t.Variants = append(t.Variants, library.Variant{Category: library.Category("filtered"), History: library.History{LastAttemptedAtUTC: &at}})
+		}, false},
+		{"local listening absent from cache", func(t *library.Track, _ *[]time.Time) { at := now.AddDate(0, -2, 0); t.History.LastPlayedAtUTC = &at }, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			track := presetTrack("song")
+			history := append([]time.Time(nil), plays...)
+			tc.change(&track, &history)
+			s := Service{Random: firstPick{}, index: Index{TrackPlays: map[string][]time.Time{"song": history}}}
+			r, err := s.BuildMix(MixRequest{Preset: ForgottenFavourites, Now: now, Count: 10, Tracks: []library.Track{track}, Query: library.Query{Enabled: map[library.Category]bool{library.BandLive: true}}})
+			if err != nil || (r.Created == 1) != tc.want {
+				t.Fatalf("created=%d err=%v", r.Created, err)
+			}
+		})
+	}
+	if weight := forgottenWeight(presetTrack("song"), plays, now); weight != 4 {
+		t.Fatalf("moderate familiarity weight=%d", weight)
+	}
+}
+
+func TestCurrentObsessionsRanksGrowthAgainstCacheDate(t *testing.T) {
+	anchor := time.Date(2025, 1, 31, 12, 0, 0, 0, time.UTC)
+	s := Service{Random: firstPick{}, index: Index{Scrobbles: []Scrobble{{PlayedAtUTC: anchor}}, TrackPlays: map[string][]time.Time{}}}
+	tracks := []library.Track{}
+	for _, id := range []string{"growing", "new", "declining", "binge"} {
+		tracks = append(tracks, presetTrack(id))
+	}
+	for _, id := range []string{"growing", "new", "declining"} {
+		s.index.TrackPlays[id] = []time.Time{anchor.AddDate(0, 0, -1), anchor}
+	}
+	for i := 0; i < 6; i++ {
+		s.index.TrackPlays["growing"] = append(s.index.TrackPlays["growing"], anchor.AddDate(0, 0, -2))
+	}
+	for i := 0; i < 3; i++ {
+		s.index.TrackPlays["growing"] = append(s.index.TrackPlays["growing"], anchor.AddDate(0, 0, -20))
+	}
+	for i := 0; i < 10; i++ {
+		s.index.TrackPlays["declining"] = append(s.index.TrackPlays["declining"], anchor.AddDate(0, 0, -20))
+		s.index.TrackPlays["binge"] = append(s.index.TrackPlays["binge"], anchor)
+	}
+	request := MixRequest{Preset: CurrentObsessions, Now: anchor.AddDate(1, 0, 0), Count: 10, Tracks: tracks, Query: library.Query{Enabled: map[library.Category]bool{library.BandLive: true}}}
+	r, err := s.BuildMix(request)
+	if err != nil || r.Created != 2 || r.Variants[0].TrackID != "growing" || r.Variants[1].TrackID != "new" {
+		t.Fatalf("growth mix=%+v %v", r, err)
+	}
+	request.Action = AppendQueue
+	request.QueuedTrackIDs = map[string]bool{"growing": true}
+	r, err = s.BuildMix(request)
+	if err != nil || r.Created != 1 || r.Variants[0].TrackID != "new" {
+		t.Fatalf("append=%+v %v", r, err)
+	}
+}
+
+func TestObsessionWindowBoundaries(t *testing.T) {
+	end := time.Date(2026, 9, 9, 0, 0, 0, 0, time.UTC)
+	start := end.AddDate(0, 0, -14)
+	previous := start.AddDate(0, 0, -30)
+	plays := []time.Time{start, end.Add(-time.Second), previous, start.Add(-time.Second), previous.Add(-time.Second), end}
+	if got := obsessionGrowth(plays, end); got != 32 {
+		t.Fatalf("window score=%d, want 2*30-2*14", got)
+	}
+}
+
 func TestFamiliarUnseenRequiresHistoryAndStrictlyUnseenEligibleVideo(t *testing.T) {
 	now := time.Now()
 	tracks := []library.Track{presetTrack("familiar"), presetTrack("watched"), presetTrack("unfamiliar"), presetTrack("filtered")}

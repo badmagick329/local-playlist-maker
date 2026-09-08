@@ -12,7 +12,7 @@ import (
 	"playlistmaker/charm/internal/library"
 )
 
-var mixNames = []string{"Manual queue", "Familiar songs, unseen performances", "Balanced rotation", "Listening period"}
+var mixNames = []string{"Manual queue", "Familiar songs, unseen performances", "Balanced rotation", "Listening period", "Forgotten favourites", "Current obsessions"}
 
 func (m *Model) openPlaybackPanel() {
 	m.mode, m.overlayCursor = modePlaybackOptions, 5
@@ -215,6 +215,10 @@ func (m Model) runPlaybackPanel(appendQueue bool) (tea.Model, tea.Cmd) {
 		request.Preset = lastfm.FamiliarUnseen
 	case 2:
 		request.Preset = lastfm.BalancedRotation
+	case 4:
+		request.Preset = lastfm.ForgottenFavourites
+	case 5:
+		request.Preset = lastfm.CurrentObsessions
 	case 3:
 		var err error
 		request.Primary, err = library.ParseDateRange(strings.TrimSpace(m.periodDraft[0]))
@@ -306,6 +310,16 @@ func (m Model) playbackPanelLines(height int) []string {
 	}
 	if m.draftMix == 2 {
 		lines = append(lines, "40% recent · 40% older favourites · 20% rare")
+	}
+	if m.draftMix == 4 {
+		lines = append(lines, "10+ plays across 5+ days; unheard for 6 months", "Local attempts rest for 30 days, including skips")
+	}
+	if m.draftMix == 5 {
+		date := "none"
+		if m.lastfmStatus.LastPlayedAtUTC != nil {
+			date = m.lastfmStatus.LastPlayedAtUTC.UTC().Format("2006-01-02")
+		}
+		lines = append(lines, "History through: "+date+" UTC", "Growth: latest 14 days versus preceding 30 days")
 	}
 	if m.optionError != "" {
 		lines = append(lines, m.optionError)
