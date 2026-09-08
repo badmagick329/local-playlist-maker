@@ -31,9 +31,12 @@ type Item struct {
 }
 
 type Audio struct {
-	Path   string
-	Artist string
-	Title  string
+	Path        string
+	Artist      string
+	Title       string
+	Album       string
+	ReleaseDate string
+	Source      string
 }
 
 type ScanResult struct {
@@ -72,6 +75,13 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 		return ScanResult{}, err
 	}
 	index := buildScanIndex(media, cache)
+	// A broken audio link must return to review even when its video is mapped.
+	for _, video := range media.Videos {
+		track, _ := media.Track(video.TrackID)
+		if missingAudio(track.LocalAudioPath) {
+			delete(index.mapped, pathid.ComparisonKey(video.Path))
+		}
+	}
 	paths := []string{}
 	present := make(map[string]bool)
 	for _, root := range s.Config.VideoDirectories {
@@ -215,10 +225,16 @@ func (s Service) refreshAudioCache(ctx context.Context) (map[string]metadata.Ent
 		reader = metadata.FLACReader{}
 	}
 	entries, _, err := metadata.Ensure(ctx, s.Config.FlacCacheFile, paths, reader)
-	if err != nil && entries != nil {
-		return entries, nil
+	if entries == nil {
+		return nil, err
 	}
-	return entries, err
+	present := make(map[string]metadata.Entry, len(entries))
+	for key, entry := range entries {
+		if info, statErr := os.Stat(entry.FilePath); statErr == nil && !info.IsDir() {
+			present[key] = entry
+		}
+	}
+	return present, nil
 }
 
 func (s Service) discoverAudio(ctx context.Context) ([]string, error) {
@@ -390,46 +406,82 @@ func (s Service) Search(ctx context.Context, query string) ([]Audio, error) {
 	if err != nil {
 		return nil, err
 	}
-	type scoredAudio struct {
-		audio Audio
-		score int
-	}
+	candidates := []Audio{}
 	claimed := make(map[string]bool, len(media.Tracks))
-	matches := []scoredAudio{}
-	add := func(audio Audio) {
-		score, ok := library.FuzzyScore(audio.Artist+" "+audio.Title, query)
-		if strings.TrimSpace(query) != "" && !ok {
-			return
-		}
-		matches = append(matches, scoredAudio{audio: audio, score: score})
-	}
+	add := func(audio Audio) { candidates = append(candidates, audio) }
 	for _, track := range media.Tracks {
 		if track.LocalAudioPath != "" {
 			claimed[pathid.ComparisonKey(track.LocalAudioPath)] = true
 		}
-		add(Audio{Path: track.ID, Artist: track.Artist, Title: track.Title})
+		if missingAudio(track.LocalAudioPath) {
+			continue
+		}
+		entry := cache[pathid.ComparisonKey(track.LocalAudioPath)]
+		date := track.ReleaseDate
+		if date == "" {
+			date = entry.Date
+		}
+		source := track.LocalAudioPath
+		if source == "" {
+			source = track.SpotifyURI
+		}
+		if source == "" {
+			source = track.ID
+		}
+		add(Audio{Path: track.ID, Artist: track.Artist, Title: track.Title, Album: entry.Album, ReleaseDate: date, Source: source})
 	}
 	for key, entry := range cache {
-		if !claimed[key] {
-			add(Audio{Path: entry.FilePath, Artist: entry.Artist, Title: entry.Title})
+		if !claimed[key] && !missingAudio(entry.FilePath) {
+			add(Audio{Path: entry.FilePath, Artist: entry.Artist, Title: entry.Title, Album: entry.Album, ReleaseDate: entry.Date, Source: entry.FilePath})
+		}
+	}
+	return FilterAudio(candidates, query), nil
+}
+
+// FilterAudio keeps typing independent of catalogue reads and filesystem checks.
+func FilterAudio(candidates []Audio, query string) []Audio {
+	type scoredAudio struct {
+		audio   Audio
+		score   int
+		nameKey string
+		pathKey string
+	}
+	matches := make([]scoredAudio, 0, len(candidates))
+	for _, audio := range candidates {
+		score, ok := library.FuzzyScore(audio.Artist+" "+audio.Title, query)
+		if strings.TrimSpace(query) == "" || ok {
+			matches = append(matches, scoredAudio{audio: audio, score: score, nameKey: normalize(audio.Artist + " " + audio.Title), pathKey: pathid.ComparisonKey(audio.Path)})
 		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
 		if matches[i].score != matches[j].score {
 			return matches[i].score > matches[j].score
 		}
-		left := normalize(matches[i].audio.Artist + " " + matches[i].audio.Title)
-		right := normalize(matches[j].audio.Artist + " " + matches[j].audio.Title)
+		left := matches[i].nameKey
+		right := matches[j].nameKey
 		if left != right {
 			return left < right
 		}
-		return pathid.ComparisonKey(matches[i].audio.Path) < pathid.ComparisonKey(matches[j].audio.Path)
+		a, b := matches[i].audio, matches[j].audio
+		if a.ReleaseDate != b.ReleaseDate {
+			if a.ReleaseDate == "" {
+				return false
+			}
+			if b.ReleaseDate == "" {
+				return true
+			}
+			return a.ReleaseDate < b.ReleaseDate
+		}
+		if a.Album != b.Album {
+			return a.Album < b.Album
+		}
+		return matches[i].pathKey < matches[j].pathKey
 	})
 	result := make([]Audio, len(matches))
 	for index := range matches {
 		result[index] = matches[index].audio
 	}
-	return result, nil
+	return result
 }
 
 func (s Service) Confirm(videoPath, selection string) error {
@@ -438,6 +490,15 @@ func (s Service) Confirm(videoPath, selection string) error {
 		return err
 	}
 	trackID := selection
+	if track, ok := media.Track(trackID); ok && track.LocalAudioPath != "" {
+		info, statErr := os.Stat(track.LocalAudioPath)
+		if statErr != nil {
+			return fmt.Errorf("access selected audio: %w", statErr)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("selected audio is a folder: %s", track.LocalAudioPath)
+		}
+	}
 	if _, ok := media.Track(trackID); !ok {
 		cache, readErr := metadata.ReadCache(s.Config.FlacCacheFile)
 		if readErr != nil {
@@ -447,12 +508,35 @@ func (s Service) Confirm(videoPath, selection string) error {
 		if !found {
 			return fmt.Errorf("unknown local track %q", selection)
 		}
+		info, statErr := os.Stat(entry.FilePath)
+		if statErr != nil {
+			return fmt.Errorf("access selected audio: %w", statErr)
+		}
+		if info.IsDir() {
+			return fmt.Errorf("selected audio is a folder: %s", entry.FilePath)
+		}
 		matchedTrack := false
 		for _, track := range media.Tracks {
 			if pathid.ComparisonKey(track.LocalAudioPath) == pathid.ComparisonKey(entry.FilePath) {
 				trackID = track.ID
 				matchedTrack = true
 				break
+			}
+		}
+		if !matchedTrack {
+			// Repair the existing identity so every video and history reference follows it.
+			for _, video := range media.Videos {
+				if pathid.ComparisonKey(video.Path) != pathid.ComparisonKey(videoPath) {
+					continue
+				}
+				for i := range media.Tracks {
+					track := &media.Tracks[i]
+					if track.ID == video.TrackID && missingAudio(track.LocalAudioPath) {
+						track.LocalAudioPath, track.ReleaseDate = entry.FilePath, entry.Date
+						track.Artist, track.Title = entry.Artist, entry.Title
+						trackID, matchedTrack = track.ID, true
+					}
+				}
 			}
 		}
 		if !matchedTrack {
@@ -516,4 +600,13 @@ func fuzzyMatch(videoTitle string, candidates []metadata.Entry) (metadata.Entry,
 		}
 	}
 	return best, bestScore > 0 && !tied
+}
+
+// Only confirmed absence invalidates a link; access errors are not evidence of a rename.
+func missingAudio(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	return os.IsNotExist(err) || err == nil && info.IsDir()
 }

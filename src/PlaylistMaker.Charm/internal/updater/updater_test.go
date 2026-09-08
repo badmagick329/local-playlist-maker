@@ -29,6 +29,7 @@ func TestScanSuggestsCatalogueTrackAndPreservesIgnoredVideos(t *testing.T) {
 	catalogPath := filepath.Join(root, "data", "catalog.json")
 	media := catalog.New()
 	media.Tracks = []catalog.Track{{ID: "trk_song", Artist: "Artist", Title: "Song", LocalAudioPath: filepath.Join(root, "audio", "song.flac")}}
+	touchAudio(t, media.Tracks[0].LocalAudioPath)
 	media.Videos = []catalog.Video{{Path: mapped, TrackID: "trk_song"}}
 	if err := catalog.Write(catalogPath, media); err != nil {
 		t.Fatal(err)
@@ -59,6 +60,7 @@ func TestScanFuzzySuggestsLongerCatalogueTitle(t *testing.T) {
 	}
 	audioPath := filepath.Join(root, "audio", "switchblade.flac")
 	otherAudioPath := filepath.Join(root, "audio", "other.flac")
+	touchAudio(t, audioPath, otherAudioPath)
 	catalogPath := filepath.Join(root, "data", "catalog.json")
 	media := catalog.New()
 	media.Tracks = []catalog.Track{
@@ -96,6 +98,7 @@ func TestScanKeepsUniqueUnclaimedLocalAudioSuggestion(t *testing.T) {
 		t.Fatal(err)
 	}
 	audioPath := filepath.Join(root, "01 Skibidi.flac")
+	touchAudio(t, audioPath)
 	catalogPath := filepath.Join(root, "data", "catalog.json")
 	cachePath := filepath.Join(root, "data", "cache.json")
 	if err := catalog.Write(catalogPath, catalog.New()); err != nil {
@@ -291,6 +294,11 @@ func TestSearchReturnsCatalogueTracksInsteadOfAudioPaths(t *testing.T) {
 	media := catalog.New()
 	claimed := filepath.Join(root, "claimed.flac")
 	available := filepath.Join(root, "skibidi.flac")
+	for _, file := range []string{claimed, available} {
+		if err := os.WriteFile(file, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	media.Tracks = []catalog.Track{{ID: "trk_one", Artist: "Artist", Title: "One", LocalAudioPath: claimed}, {ID: "trk_two", Artist: "Other", Title: "Two"}}
 	if err := catalog.Write(path, media); err != nil {
 		t.Fatal(err)
@@ -317,6 +325,9 @@ func TestConfirmCreatesTrackForUnclaimedLocalAudio(t *testing.T) {
 	catalogPath := filepath.Join(root, "catalog.json")
 	cachePath := filepath.Join(root, "cache.json")
 	audioPath := filepath.Join(root, "skibidi.flac")
+	if err := os.WriteFile(audioPath, nil, 0600); err != nil {
+		t.Fatal(err)
+	}
 	if err := catalog.Write(catalogPath, catalog.New()); err != nil {
 		t.Fatal(err)
 	}
@@ -335,5 +346,110 @@ func TestConfirmCreatesTrackForUnclaimedLocalAudio(t *testing.T) {
 	}
 	if loaded.Tracks[0].LocalAudioPath != audioPath || loaded.Videos[0].TrackID != loaded.Tracks[0].ID {
 		t.Fatalf("local track was not linked: %#v", loaded)
+	}
+}
+
+func touchAudio(t *testing.T, paths ...string) {
+	t.Helper()
+	for _, path := range paths {
+		if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, nil, 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func TestRenamedAudioReturnsToReviewAndPreservesIdentity(t *testing.T) {
+	root := t.TempDir()
+	old := filepath.Join(root, "old.flac")
+	newPath := filepath.Join(root, "renamed", "new.flac")
+	video := filepath.Join(root, "240101 Artist - Song.mkv")
+	touchAudio(t, newPath, video)
+	media := catalog.New()
+	media.Tracks = []catalog.Track{{ID: "trk_original", Artist: "Artist", Title: "Song", LocalAudioPath: old}}
+	media.Videos = []catalog.Video{{Path: video, TrackID: "trk_original"}}
+	service := Service{Config: config.Config{MediaCatalogFile: filepath.Join(root, "catalog.json"), FlacCacheFile: filepath.Join(root, "cache.json"), DataDirectory: root, VideoDirectories: []string{root}, AudioDirectories: []string{root}}}
+	if err := catalog.Write(service.Config.MediaCatalogFile, media); err != nil {
+		t.Fatal(err)
+	}
+	if err := metadata.WriteCache(service.Config.FlacCacheFile, map[string]metadata.Entry{
+		"old": {FilePath: old, Artist: "Artist", Title: "Song"},
+		"new": {FilePath: newPath, Artist: "Artist", Title: "Song", Album: "Debut", Date: "2020"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	result, err := service.Scan(context.Background())
+	if err != nil || len(result.Items) != 1 || result.Items[0].AudioPath != newPath {
+		t.Fatalf("scan = %#v, %v", result, err)
+	}
+	matches, err := service.Search(context.Background(), "Artist Song")
+	if err != nil || len(matches) != 1 || matches[0].Album != "Debut" || matches[0].ReleaseDate != "2020" {
+		t.Fatalf("search = %#v, %v", matches, err)
+	}
+	if err := service.Confirm(video, newPath); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := catalog.Read(service.Config.MediaCatalogFile)
+	if err != nil || len(loaded.Tracks) != 1 || loaded.Tracks[0].ID != "trk_original" || loaded.Tracks[0].LocalAudioPath != newPath || loaded.Videos[0].TrackID != "trk_original" {
+		t.Fatalf("repaired = %#v, %v", loaded, err)
+	}
+	result, err = service.Scan(context.Background())
+	if err != nil || len(result.Items) != 0 {
+		t.Fatalf("rescan = %#v, %v", result, err)
+	}
+}
+
+func TestSearchOrdersReleasesWithUnknownDatesLast(t *testing.T) {
+	root := t.TempDir()
+	service := Service{Config: config.Config{MediaCatalogFile: filepath.Join(root, "catalog.json"), FlacCacheFile: filepath.Join(root, "cache.json")}}
+	if err := catalog.Write(service.Config.MediaCatalogFile, catalog.New()); err != nil {
+		t.Fatal(err)
+	}
+	entries := map[string]metadata.Entry{}
+	for i, date := range []string{"2024-05-01", "", "2019-06-19"} {
+		path := filepath.Join(root, []string{"reissue.flac", "unknown.flac", "debut.flac"}[i])
+		touchAudio(t, path)
+		entries[path] = metadata.Entry{FilePath: path, Artist: "Artist", Title: "Song", Album: []string{"Reissue", "Unknown", "Debut"}[i], Date: date}
+	}
+	if err := metadata.WriteCache(service.Config.FlacCacheFile, entries); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := service.Search(context.Background(), "Artist Song")
+	if err != nil || len(matches) != 3 {
+		t.Fatalf("search = %#v, %v", matches, err)
+	}
+	for i, album := range []string{"Debut", "Reissue", "Unknown"} {
+		if matches[i].Album != album || matches[i].Source == "" {
+			t.Fatalf("order/source = %#v", matches)
+		}
+	}
+}
+
+func TestConfirmMovesOnlySelectedVideoToExistingTrack(t *testing.T) {
+	root := t.TempDir()
+	service := Service{Config: config.Config{MediaCatalogFile: filepath.Join(root, "catalog.json")}}
+	media := catalog.New()
+	media.Tracks = []catalog.Track{{ID: "trk_old", Artist: "Cortis", Title: "REDRED"}, {ID: "trk_target", Artist: "CORTIS", Title: "REDRED"}}
+	media.Videos = []catalog.Video{{Path: filepath.Join(root, "selected.mkv"), TrackID: "trk_old"}, {Path: filepath.Join(root, "other.mkv"), TrackID: "trk_old"}}
+	if err := catalog.Write(service.Config.MediaCatalogFile, media); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.Confirm(filepath.Join(root, "selected.mkv"), "trk_target"); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := catalog.Read(service.Config.MediaCatalogFile)
+	if err != nil || len(loaded.Tracks) != 2 || len(loaded.Videos) != 2 {
+		t.Fatalf("catalogue = %#v, %v", loaded, err)
+	}
+	for _, video := range loaded.Videos {
+		want := "trk_old"
+		if filepath.Base(video.Path) == "selected.mkv" {
+			want = "trk_target"
+		}
+		if video.TrackID != want {
+			t.Fatalf("video = %#v", video)
+		}
 	}
 }
