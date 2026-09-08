@@ -47,15 +47,18 @@ type historyWatcherStub struct {
 }
 
 type mappingUpdaterStub struct {
-	items      []updater.Item
-	ignored    []updater.Item
-	candidates []updater.Audio
-	tracks     []library.Track
-	removed    int
-	scanCalls  int
-	confirms   int
-	ignores    int
-	restores   int
+	items          []updater.Item
+	ignored        []updater.Item
+	candidates     []updater.Audio
+	tracks         []library.Track
+	removed        int
+	searchCalls    int
+	confirmedVideo string
+	confirmedTrack string
+	scanCalls      int
+	confirms       int
+	ignores        int
+	restores       int
 }
 
 func (s *mappingUpdaterStub) Scan(context.Context) (updater.ScanResult, error) {
@@ -64,9 +67,14 @@ func (s *mappingUpdaterStub) Scan(context.Context) (updater.ScanResult, error) {
 }
 func (s *mappingUpdaterStub) Ignored(context.Context) ([]updater.Item, error) { return s.ignored, nil }
 func (s *mappingUpdaterStub) Search(context.Context, string) ([]updater.Audio, error) {
+	s.searchCalls++
 	return s.candidates, nil
 }
-func (s *mappingUpdaterStub) Confirm(string, string) error        { s.confirms++; return nil }
+func (s *mappingUpdaterStub) Confirm(video, track string) error {
+	s.confirms++
+	s.confirmedVideo, s.confirmedTrack = video, track
+	return nil
+}
 func (s *mappingUpdaterStub) Create(string, string, string) error { s.confirms++; return nil }
 func (s *mappingUpdaterStub) Ignore(string) error                 { s.ignores++; return nil }
 func (s *mappingUpdaterStub) Restore(string) error                { s.restores++; return nil }

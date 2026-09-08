@@ -6,7 +6,7 @@ var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
 	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Categories", "0-4", "apply configured preset from Categories view"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green • Spotify linked, blue • local audio only, grey • video only"},
 	{"Views", "d", "selected media details"},
-	{"Views", "u", "update mappings"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
+	{"Views", "m", "relink selected video"}, {"Views", "u", "update mappings"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
 	{"Views", "U", "update Spotify links"}, {"Spotify updates", "enter / search / skip / ignore", "confirm, find, defer, or persistently ignore a link"},
 	{"Views", "R", "refresh history"},
 	{"Views", "L", "Last.fm sync and matching"},
@@ -33,7 +33,7 @@ func footerHint(current mode, width int) string {
 	if current == modeNavigate {
 		switch {
 		case width >= 115:
-			return "j/k move  h/l fold  space queue  o play  p options  / search  c categories  s sort  f filters  ? help"
+			return "j/k move  h/l fold  space queue  m relink  o play  p options  / search  c categories  s sort  f filters  ? help"
 		case width >= 75:
 			return "o play  / search  c categories  s sort  f filters  ? help"
 		case width >= 50:

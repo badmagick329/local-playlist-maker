@@ -27,13 +27,14 @@ The main controls are:
 - `Space` queues the current video; `o` plays the queue or highlighted media.
 - `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback and mixes.
 - `q` opens the queue; `Shift+J`/`Shift+K` reorder; `Delete` removes; `C` clears.
+- `m` on a video row opens the catalogue picker to change its track link; Enter saves and Esc cancels.
 - `u` updates video mappings; `U` updates Spotify links; `R` refreshes local history; uppercase `L` opens Last.fm sync and matching; `?` opens help; `Ctrl+Q` quits.
 
 ## Playback tracking and history
 
 PlaylistMaker prefers Spotify when a track has a Spotify URI. Otherwise, a configured local FLAC can be opened in foobar2000. Without either source, playback is rejected unless `--allow-untracked-playback` is supplied. The application installs its bundled mpv Lua script automatically; see [`mpv-scripts/README.md`](mpv-scripts/README.md) for details.
 
-Broken local audio links produce a library warning and block affected playback until repaired, even if Spotify is linked. Intentionally absent local links are allowed. See [Spotify setup](src/PlaylistMaker.Charm/SPOTIFY_SETUP.md) for authentication, playback completion, and timeout behaviour.
+Broken local audio links produce a library warning and block affected playback until repaired, even if Spotify is linked. Press `u` to rescan and review missing or renamed audio links, then choose replacement audio. Relinking an unclaimed file preserves the existing track ID and history. The catalogue picker loads candidates once per opening and filters in memory after a 150 ms typing pause. `Ctrl+U` clears its search. It shows release date, album, and the selected source; matching titles list earliest known releases first. Intentionally absent local links are allowed. See [Spotify setup](src/PlaylistMaker.Charm/SPOTIFY_SETUP.md) for authentication, playback completion, and timeout behaviour.
 
 Playback history is enabled by `playbackHistoryEnabled` and can be disabled for a run with `--disable-history`. History is read from `data/play-history.jsonl`; PlaylistMaker-launched playback records a `started` event and a terminal event for the same lifecycle.
 
