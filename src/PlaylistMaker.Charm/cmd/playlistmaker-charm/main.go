@@ -51,11 +51,11 @@ func (u mappingUpdater) Ignored(ctx context.Context) ([]updater.Item, error) {
 func (u mappingUpdater) Search(ctx context.Context, query string) ([]updater.Audio, error) {
 	return u.service.Search(ctx, query)
 }
-func (u mappingUpdater) Confirm(videoPath, audioPath string) error {
-	return u.service.Confirm(videoPath, audioPath)
+func (u mappingUpdater) Confirm(videoPath, audioPath string, allowNew bool) error {
+	return u.service.Confirm(videoPath, audioPath, allowNew)
 }
-func (u mappingUpdater) Create(videoPath, artist, title string) error {
-	return u.service.Create(videoPath, artist, title)
+func (u mappingUpdater) Create(videoPath, artist, title string, allowNew bool) error {
+	return u.service.Create(videoPath, artist, title, allowNew)
 }
 func (u mappingUpdater) SpotifyScan(ctx context.Context, report func(spotifylink.ScanProgress)) (spotifylink.ScanResult, error) {
 	return u.spotifyService.ScanWithProgress(ctx, report)

@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/updater"
+	"strings"
 	"testing"
 )
 
@@ -122,5 +123,87 @@ func TestMappingPickerCannotChooseStaleResultsWhileTyping(t *testing.T) {
 	next, cmd := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if cmd != nil || next.(Model).mappingSaving || stub.confirms != 0 {
 		t.Fatal("selected results for an older query")
+	}
+}
+
+func TestUnusedTogglePreservesSearchAndAvoidsCatalogueReload(t *testing.T) {
+	stub := &mappingUpdaterStub{candidates: []updater.Audio{{Path: "active", Artist: "A", Title: "Song"}, {Path: "unused", Artist: "A", Title: "Song", Kind: updater.UnusedAudio}, {Path: "file", Artist: "A", Title: "Song", Kind: updater.UnlinkedAudio}}}
+	m := New(nil, nil).WithMappingUpdater(stub)
+	next, load := m.openMappingPicker("Song")
+	next, _ = next.(Model).Update(load())
+	m = next.(Model)
+	next, _ = m.Update(mappingDebounceMsg{m.mappingSession, m.mappingRevision})
+	m = next.(Model)
+	if len(m.mappingCandidates) != 2 {
+		t.Fatal("unused shown by default")
+	}
+	next, _ = m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	m = next.(Model)
+	next, _ = m.Update(mappingDebounceMsg{m.mappingSession, m.mappingRevision})
+	m = next.(Model)
+	if len(m.mappingCandidates) != 3 || m.mappingCandidates[2].Kind != updater.UnusedAudio || m.mappingQuery != "Song" || stub.searchCalls != 1 {
+		t.Fatal("toggle lost query, grouping or snapshot")
+	}
+}
+
+func TestDuplicateCreationOffersReuseOrExplicitSeparateTrack(t *testing.T) {
+	for _, separate := range []bool{false, true} {
+		name := "reuse"
+		if separate {
+			name = "separate"
+		}
+		t.Run(name, func(t *testing.T) {
+			stub := &mappingUpdaterStub{candidates: []updater.Audio{{Path: "existing", Artist: "A", Title: "Song", Kind: updater.UnusedAudio}}}
+			m := New(nil, nil).WithMappingUpdater(stub)
+			m.mode = modeMappingUpdate
+			m.mappingItems = []updater.Item{{VideoPath: "video.mkv", Artist: "A", Title: "Song"}}
+			next, load := m.Update(mappingConfirmMsg{err: &updater.ExistingTracksError{Artist: "A", Title: "Song"}})
+			m = next.(Model)
+			if !m.mappingShowUnused || m.mappingDuplicate == nil || m.mode != modeMappingPicker {
+				t.Fatal("no duplicate choices")
+			}
+			next, _ = m.Update(load())
+			m = next.(Model)
+			next, _ = m.Update(mappingDebounceMsg{m.mappingSession, m.mappingRevision})
+			m = next.(Model)
+			key := tea.KeyPressMsg{Code: tea.KeyEnter}
+			if separate {
+				key = tea.KeyPressMsg{Code: 'n', Mod: tea.ModCtrl}
+			}
+			next, save := m.Update(key)
+			if save == nil {
+				t.Fatal("choice did not save")
+			}
+			next, _ = next.(Model).Update(save())
+			m = next.(Model)
+			if m.mode != modeMappingUpdate || m.mappingIndex != 1 {
+				t.Fatal("did not return and advance")
+			}
+			if separate {
+				if !stub.allowNew || stub.createCalls != 1 {
+					t.Fatal("separate creation was not explicit")
+				}
+			} else if stub.confirmedTrack != "existing" || stub.allowNew {
+				t.Fatal("did not reuse existing")
+			}
+		})
+	}
+}
+
+func TestPickerRendersGroupsAndMissingMetadataClearly(t *testing.T) {
+	m := New(nil, nil)
+	m.mode = modeMappingPicker
+	m.mappingShowUnused = true
+	m.mappingCandidates = []updater.Audio{
+		{Path: "active", Artist: "CORTIS", Title: "REDRED", ReleaseDate: "2026-04-20", Album: "REDRED", VideoCount: 5},
+		{Path: "file", Artist: "CORTIS", Title: "REDRED", ReleaseDate: "2026-05-04", Album: "GREENGREEN", Kind: updater.UnlinkedAudio},
+		{Path: "unused", Artist: "Cortis", Title: "REDRED", ReleaseDate: "2026-04-20", Kind: updater.UnusedAudio, SpotifyOnly: true},
+	}
+	m.mappingCursor = 2
+	content := stripStyles(m.renderOverlay("", 120, 40))
+	for _, label := range []string{"Catalogue tracks", "Unlinked local audio", "Unused catalogue tracks", "No album metadata", "Spotify-only", "Ctrl+O"} {
+		if !strings.Contains(content, label) {
+			t.Fatalf("missing %q in:\n%s", label, content)
+		}
 	}
 }

@@ -52,6 +52,8 @@ type mappingUpdaterStub struct {
 	candidates     []updater.Audio
 	tracks         []library.Track
 	removed        int
+	allowNew       bool
+	createCalls    int
 	searchCalls    int
 	confirmedVideo string
 	confirmedTrack string
@@ -70,14 +72,20 @@ func (s *mappingUpdaterStub) Search(context.Context, string) ([]updater.Audio, e
 	s.searchCalls++
 	return s.candidates, nil
 }
-func (s *mappingUpdaterStub) Confirm(video, track string) error {
+func (s *mappingUpdaterStub) Confirm(video, track string, allowNew bool) error {
 	s.confirms++
+	s.allowNew = allowNew
 	s.confirmedVideo, s.confirmedTrack = video, track
 	return nil
 }
-func (s *mappingUpdaterStub) Create(string, string, string) error { s.confirms++; return nil }
-func (s *mappingUpdaterStub) Ignore(string) error                 { s.ignores++; return nil }
-func (s *mappingUpdaterStub) Restore(string) error                { s.restores++; return nil }
+func (s *mappingUpdaterStub) Create(video, artist, title string, allow bool) error {
+	s.confirms++
+	s.createCalls++
+	s.allowNew = allow
+	return nil
+}
+func (s *mappingUpdaterStub) Ignore(string) error  { s.ignores++; return nil }
+func (s *mappingUpdaterStub) Restore(string) error { s.restores++; return nil }
 func (s *mappingUpdaterStub) Reload(context.Context) ([]library.Track, PlaybackLauncher, error) {
 	return s.tracks, nil, nil
 }

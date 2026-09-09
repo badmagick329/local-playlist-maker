@@ -37,6 +37,31 @@ type Audio struct {
 	Album       string
 	ReleaseDate string
 	Source      string
+	Kind        AudioKind
+	VideoCount  int
+	SpotifyOnly bool
+}
+
+type AudioKind int
+
+const (
+	CatalogueAudio AudioKind = iota
+	UnlinkedAudio
+	UnusedAudio
+)
+
+// ExistingTracksError gives the picker a chance to reuse an identity before creating one.
+type ExistingTracksError struct{ Artist, Title, Selection string }
+
+func (e *ExistingTracksError) Error() string { return "Matching catalogue tracks already exist" }
+
+func hasMatchingTrack(media catalog.Catalog, artist, title string) bool {
+	for _, track := range media.Tracks {
+		if matchKey(track.Artist, track.Title) == matchKey(artist, title) {
+			return true
+		}
+	}
+	return false
 }
 
 type ScanResult struct {
@@ -70,7 +95,7 @@ func (s Service) Scan(ctx context.Context) (ScanResult, error) {
 	for _, path := range ignoredPaths {
 		ignored[pathid.ComparisonKey(path)] = true
 	}
-	cache, err := s.refreshAudioCache(ctx)
+	cache, err := s.refreshAudioCache(ctx, media)
 	if err != nil {
 		return ScanResult{}, err
 	}
@@ -215,10 +240,18 @@ func buildScanIndex(media catalog.Catalog, cache map[string]metadata.Entry) scan
 	return index
 }
 
-func (s Service) refreshAudioCache(ctx context.Context) (map[string]metadata.Entry, error) {
+func (s Service) refreshAudioCache(ctx context.Context, media catalog.Catalog) (map[string]metadata.Entry, error) {
 	paths, err := s.discoverAudio(ctx)
 	if err != nil {
 		return nil, err
+	}
+	// Explicit links remain valid even when discovery folders change.
+	for _, track := range media.Tracks {
+		if track.LocalAudioPath != "" {
+			if info, err := os.Stat(track.LocalAudioPath); err == nil && !info.IsDir() {
+				paths = append(paths, track.LocalAudioPath)
+			}
+		}
 	}
 	reader := s.Reader
 	if reader == nil {
@@ -229,8 +262,9 @@ func (s Service) refreshAudioCache(ctx context.Context) (map[string]metadata.Ent
 		return nil, err
 	}
 	present := make(map[string]metadata.Entry, len(entries))
-	for key, entry := range entries {
-		if info, statErr := os.Stat(entry.FilePath); statErr == nil && !info.IsDir() {
+	for _, path := range paths {
+		key := pathid.ComparisonKey(path)
+		if entry, ok := entries[key]; ok {
 			present[key] = entry
 		}
 	}
@@ -406,6 +440,18 @@ func (s Service) Search(ctx context.Context, query string) ([]Audio, error) {
 	if err != nil {
 		return nil, err
 	}
+	paths, err := s.discoverAudio(ctx)
+	if err != nil {
+		return nil, err
+	}
+	discovered := make(map[string]bool, len(paths))
+	for _, path := range paths {
+		discovered[pathid.ComparisonKey(path)] = true
+	}
+	videos := make(map[string]int)
+	for _, video := range media.Videos {
+		videos[video.TrackID]++
+	}
 	candidates := []Audio{}
 	claimed := make(map[string]bool, len(media.Tracks))
 	add := func(audio Audio) { candidates = append(candidates, audio) }
@@ -428,11 +474,15 @@ func (s Service) Search(ctx context.Context, query string) ([]Audio, error) {
 		if source == "" {
 			source = track.ID
 		}
-		add(Audio{Path: track.ID, Artist: track.Artist, Title: track.Title, Album: entry.Album, ReleaseDate: date, Source: source})
+		kind := CatalogueAudio
+		if videos[track.ID] == 0 && track.LocalAudioPath == "" {
+			kind = UnusedAudio
+		}
+		add(Audio{Kind: kind, VideoCount: videos[track.ID], SpotifyOnly: track.LocalAudioPath == "" && track.SpotifyURI != "", Path: track.ID, Artist: track.Artist, Title: track.Title, Album: entry.Album, ReleaseDate: date, Source: source})
 	}
 	for key, entry := range cache {
-		if !claimed[key] && !missingAudio(entry.FilePath) {
-			add(Audio{Path: entry.FilePath, Artist: entry.Artist, Title: entry.Title, Album: entry.Album, ReleaseDate: entry.Date, Source: entry.FilePath})
+		if !claimed[key] && discovered[key] {
+			add(Audio{Kind: UnlinkedAudio, Path: entry.FilePath, Artist: entry.Artist, Title: entry.Title, Album: entry.Album, ReleaseDate: entry.Date, Source: entry.FilePath})
 		}
 	}
 	return FilterAudio(candidates, query), nil
@@ -454,6 +504,9 @@ func FilterAudio(candidates []Audio, query string) []Audio {
 		}
 	}
 	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].audio.Kind != matches[j].audio.Kind {
+			return matches[i].audio.Kind < matches[j].audio.Kind
+		}
 		if matches[i].score != matches[j].score {
 			return matches[i].score > matches[j].score
 		}
@@ -484,7 +537,7 @@ func FilterAudio(candidates []Audio, query string) []Audio {
 	return result
 }
 
-func (s Service) Confirm(videoPath, selection string) error {
+func (s Service) Confirm(videoPath, selection string, allowNew bool) error {
 	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
 		return err
@@ -540,6 +593,9 @@ func (s Service) Confirm(videoPath, selection string) error {
 			}
 		}
 		if !matchedTrack {
+			if !allowNew && hasMatchingTrack(media, entry.Artist, entry.Title) {
+				return &ExistingTracksError{Artist: entry.Artist, Title: entry.Title, Selection: selection}
+			}
 			trackID, err = catalog.NewTrackID()
 			if err != nil {
 				return err
@@ -553,10 +609,13 @@ func (s Service) Confirm(videoPath, selection string) error {
 	return catalog.Write(s.Config.MediaCatalogFile, media)
 }
 
-func (s Service) Create(videoPath, artist, title string) error {
+func (s Service) Create(videoPath, artist, title string, allowNew bool) error {
 	media, err := catalog.Read(s.Config.MediaCatalogFile)
 	if err != nil {
 		return err
+	}
+	if !allowNew && hasMatchingTrack(media, artist, title) {
+		return &ExistingTracksError{Artist: artist, Title: title}
 	}
 	id, err := catalog.NewTrackID()
 	if err != nil {

@@ -118,8 +118,8 @@ type MappingUpdater interface {
 	Scan(context.Context) (updater.ScanResult, error)
 	Ignored(context.Context) ([]updater.Item, error)
 	Search(context.Context, string) ([]updater.Audio, error)
-	Confirm(string, string) error
-	Create(string, string, string) error
+	Confirm(string, string, bool) error
+	Create(string, string, string, bool) error
 	Ignore(string) error
 	Restore(string) error
 	Reload(context.Context) ([]library.Track, PlaybackLauncher, error)
@@ -267,6 +267,8 @@ type Model struct {
 	mappingQuery       string
 	mappingCandidates  []updater.Audio
 	mappingCursor      int
+	mappingShowUnused  bool
+	mappingDuplicate   *updater.ExistingTracksError
 	mappingSession     int
 	mappingRevision    int
 	mappingPool        []updater.Audio
@@ -536,7 +538,7 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode != modeMappingPicker || message.session != m.mappingSession || message.revision != m.mappingRevision || m.mappingLoading {
 			return m, nil
 		}
-		m.mappingCandidates, m.mappingCursor = updater.FilterAudio(m.mappingPool, m.mappingQuery), 0
+		m.mappingCandidates, m.mappingCursor = updater.FilterAudio(m.visibleMappingPool(), m.mappingQuery), 0
 		m.mappingPending = false
 		return m, nil
 	case mappingSearchMsg:
@@ -554,6 +556,14 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case mappingConfirmMsg:
+		var duplicate *updater.ExistingTracksError
+		if errors.As(message.err, &duplicate) {
+			m.mappingSaving = false
+			next, cmd := m.openMappingPicker(duplicate.Artist + " " + duplicate.Title)
+			m = next.(Model)
+			m.mappingShowUnused, m.mappingDuplicate = true, duplicate
+			return m, cmd
+		}
 		m.mappingSaving = false
 		if message.err != nil {
 			m.status = "Mapping save failed: " + message.err.Error()
@@ -562,6 +572,9 @@ func (m Model) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mappingRelink {
 			m.mappingRelink, m.mappingDirty, m.mode = false, true, modeNavigate
 			return m, m.mappingReloadCmd()
+		}
+		if m.mappingDuplicate != nil {
+			m.mode, m.mappingDuplicate = modeMappingUpdate, nil
 		}
 		m.mappingDirty, m.mappingIndex = true, min(m.mappingIndex+1, len(m.mappingItems))
 		m.status = "Mapping saved"
@@ -987,7 +1000,7 @@ func (m Model) handleDetailsKey(key tea.KeyPressMsg) Model {
 }
 
 func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if m.mappingScanning {
+	if m.mappingScanning || m.mappingSaving {
 		return m, nil
 	}
 	switch key.String() {
@@ -1041,10 +1054,11 @@ func (m Model) handleMappingUpdateKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if !ok {
 			return m, nil
 		}
+		m.mappingSaving = true
 		if item.AudioPath == "" {
-			return m, m.mappingCreateCmd(item.VideoPath, item.Artist, item.Title)
+			return m, m.mappingCreateCmd(item.VideoPath, item.Artist, item.Title, false)
 		}
-		return m, m.mappingConfirmCmd(item.VideoPath, item.AudioPath)
+		return m, m.mappingConfirmCmd(item.VideoPath, item.AudioPath, false)
 	}
 	return m, nil
 }
@@ -1055,6 +1069,7 @@ func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 	}
 	switch key.String() {
 	case "esc", "/":
+		m.mappingDuplicate = nil
 		m.mode = modeMappingUpdate
 		if m.mappingRelink {
 			m.mode, m.mappingRelink = modeNavigate, false
@@ -1064,6 +1079,20 @@ func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		m.mappingCursor = min(m.mappingCursor+1, max(len(m.mappingCandidates)-1, 0))
 	case "up", "ctrl+k":
 		m.mappingCursor = max(m.mappingCursor-1, 0)
+	case "ctrl+o":
+		m.mappingShowUnused = !m.mappingShowUnused
+		command := m.mappingSearchCmd()
+		return m, command
+	case "ctrl+n":
+		if m.mappingDuplicate == nil || m.mappingLoading || m.mappingPending {
+			return m, nil
+		}
+		item, _ := m.currentMappingItem()
+		m.mappingSaving = true
+		if m.mappingDuplicate.Selection != "" {
+			return m, m.mappingConfirmCmd(item.VideoPath, m.mappingDuplicate.Selection, true)
+		}
+		return m, m.mappingCreateCmd(item.VideoPath, item.Artist, item.Title, true)
 	case "ctrl+u":
 		m.mappingQuery = ""
 		command := m.mappingSearchCmd()
@@ -1076,9 +1105,9 @@ func (m Model) handleMappingPickerKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		if !ok || m.mappingCursor >= len(m.mappingCandidates) {
 			return m, nil
 		}
-		if m.mappingRelink {
+		if m.mappingRelink || m.mappingDuplicate != nil {
 			m.mappingSaving = true
-			return m, m.mappingConfirmCmd(item.VideoPath, m.mappingCandidates[m.mappingCursor].Path)
+			return m, m.mappingConfirmCmd(item.VideoPath, m.mappingCandidates[m.mappingCursor].Path, false)
 		}
 		item.AudioPath = m.mappingCandidates[m.mappingCursor].Path
 		item.AudioArtist = m.mappingCandidates[m.mappingCursor].Artist
@@ -1205,6 +1234,7 @@ func (m Model) mappingIgnoredCmd() tea.Cmd {
 // Each picker session owns a snapshot; late loads and debounce ticks cannot cross sessions.
 func (m Model) openMappingPicker(query string) (tea.Model, tea.Cmd) {
 	m.mode, m.mappingQuery, m.mappingCursor = modeMappingPicker, query, 0
+	m.mappingShowUnused, m.mappingDuplicate = false, nil
 	m.mappingSession++
 	m.mappingPool, m.mappingCandidates = nil, nil
 	m.mappingLoading, m.mappingPending = true, true
@@ -1221,13 +1251,13 @@ func (m *Model) mappingSearchCmd() tea.Cmd {
 	session, revision := m.mappingSession, m.mappingRevision
 	return tea.Tick(150*time.Millisecond, func(time.Time) tea.Msg { return mappingDebounceMsg{session, revision} })
 }
-func (m Model) mappingConfirmCmd(video, trackID string) tea.Cmd {
+func (m Model) mappingConfirmCmd(video, trackID string, allowNew bool) tea.Cmd {
 	service := m.mappingUpdater
-	return func() tea.Msg { return mappingConfirmMsg{err: service.Confirm(video, trackID)} }
+	return func() tea.Msg { return mappingConfirmMsg{err: service.Confirm(video, trackID, allowNew)} }
 }
-func (m Model) mappingCreateCmd(video, artist, title string) tea.Cmd {
+func (m Model) mappingCreateCmd(video, artist, title string, allowNew bool) tea.Cmd {
 	service := m.mappingUpdater
-	return func() tea.Msg { return mappingConfirmMsg{err: service.Create(video, artist, title)} }
+	return func() tea.Msg { return mappingConfirmMsg{err: service.Create(video, artist, title, allowNew)} }
 }
 func (m Model) mappingIgnoreCmd(video string, restored bool) tea.Cmd {
 	service := m.mappingUpdater
@@ -2287,7 +2317,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		}
 		lines = []string{mappingSummary(m.mappingItems), fmt.Sprintf("%d of %d", m.mappingIndex+1, len(m.mappingItems)), "Video: " + item.Filename, "Artist: " + emptyAny(item.Artist), "Title: " + emptyAny(item.Title)}
 		if item.AudioPath == "" {
-			lines = append(lines, "No automatic suggestion; Enter creates a video-only track")
+			lines = append(lines, "No automatic suggestion; Enter checks existing tracks before creating")
 		} else {
 			audio := item.AudioArtist + " — " + item.AudioTitle
 			if item.AudioArtist == "" && item.AudioTitle == "" {
@@ -2311,19 +2341,38 @@ func (m Model) renderOverlay(base string, width, height int) string {
 		if m.mappingSaving {
 			lines = append(lines, "Saving link…")
 		}
+		if m.mappingDuplicate != nil {
+			lines = append(lines, "Matching tracks exist. Choose one or Ctrl+N create separately.")
+		}
+		unused := "hidden"
+		if m.mappingShowUnused {
+			unused = "shown"
+		}
+		lines = append(lines, "Unused tracks: "+unused+" • Ctrl+O toggle")
 		lines = append(lines, "Search: "+m.mappingQuery)
-		start := max(0, m.mappingCursor-max(1, height-14)+1)
-		end := min(len(m.mappingCandidates), start+max(1, height-14))
+		start := max(0, m.mappingCursor-max(1, height-19)+1)
+		end := min(len(m.mappingCandidates), start+max(1, height-19))
 		for index := start; index < end; index++ {
 			candidate := m.mappingCandidates[index]
+			if index == start || candidate.Kind != m.mappingCandidates[index-1].Kind {
+				lines = append(lines, mappingKindLabel(candidate))
+			}
 			prefix := "  "
 			if index == m.mappingCursor {
 				prefix = "› "
 			}
-			lines = append(lines, prefix+"["+releasePickerLabel(candidate.ReleaseDate)+"] "+candidate.Artist+" — "+candidate.Title+" • "+releasePickerLabel(candidate.Album))
+			lines = append(lines, prefix+"["+releasePickerLabel(candidate.ReleaseDate)+"] "+candidate.Artist+" — "+candidate.Title+" • "+albumPickerLabel(candidate.Album))
 		}
 		if len(m.mappingCandidates) > 0 {
-			lines = append(lines, "Source: "+m.mappingCandidates[m.mappingCursor].Source)
+			selected := m.mappingCandidates[m.mappingCursor]
+			detail := fmt.Sprintf("%d videos", selected.VideoCount)
+			if selected.SpotifyOnly {
+				detail += " • Spotify-only"
+			}
+			if selected.Kind == updater.UnlinkedAudio {
+				detail = "Creates a catalogue track when linked"
+			}
+			lines = append(lines, detail, "Source: "+selected.Source)
 		}
 		if len(m.mappingCandidates) == 0 && !m.mappingLoading && !m.mappingPending {
 			lines = append(lines, "No matching track")
@@ -2705,6 +2754,29 @@ func milliseconds(duration time.Duration) float64 {
 func releasePickerLabel(value string) string {
 	if value == "" {
 		return "unknown"
+	}
+	return value
+}
+
+func (m Model) visibleMappingPool() []updater.Audio {
+	if m.mappingShowUnused {
+		return m.mappingPool
+	}
+	return slices.DeleteFunc(slices.Clone(m.mappingPool), func(a updater.Audio) bool { return a.Kind == updater.UnusedAudio })
+}
+func mappingKindLabel(a updater.Audio) string {
+	switch a.Kind {
+	case updater.UnlinkedAudio:
+		return "Unlinked local audio"
+	case updater.UnusedAudio:
+		return "Unused catalogue tracks"
+	default:
+		return "Catalogue tracks"
+	}
+}
+func albumPickerLabel(value string) string {
+	if value == "" {
+		return "No album metadata"
 	}
 	return value
 }

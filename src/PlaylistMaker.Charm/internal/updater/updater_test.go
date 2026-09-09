@@ -38,7 +38,7 @@ func TestScanSuggestsCatalogueTrackAndPreservesIgnoredVideos(t *testing.T) {
 	if err := metadata.WriteCache(cachePath, map[string]metadata.Entry{"song": {FilePath: media.Tracks[0].LocalAudioPath, Artist: "Artist", Title: "Song"}}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, AudioDirectories: []string{root}, VideoDirectories: []string{videos}}}
 	if err := service.Ignore(ignored); err != nil {
 		t.Fatal(err)
 	}
@@ -77,7 +77,7 @@ func TestScanFuzzySuggestsLongerCatalogueTitle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, AudioDirectories: []string{root}, VideoDirectories: []string{videos}}}
 	result, err := service.Scan(context.Background())
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("scan = %#v, %v", result, err)
@@ -109,7 +109,7 @@ func TestScanKeepsUniqueUnclaimedLocalAudioSuggestion(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, VideoDirectories: []string{videos}}}
+	service := Service{Config: config.Config{DataDirectory: filepath.Join(root, "data"), MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, AudioDirectories: []string{root}, VideoDirectories: []string{videos}}}
 	result, err := service.Scan(context.Background())
 	if err != nil || len(result.Items) != 1 {
 		t.Fatalf("scan = %#v, %v", result, err)
@@ -270,10 +270,10 @@ func TestCreateAddsVideoOnlyTrackAndConfirmLinksExistingTrack(t *testing.T) {
 		t.Fatal(err)
 	}
 	service := Service{Config: config.Config{MediaCatalogFile: path}}
-	if err := service.Create("video-one.mkv", "Artist", "Title"); err != nil {
+	if err := service.Create("video-one.mkv", "Artist", "Title", false); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Confirm("video-two.mkv", "trk_existing"); err != nil {
+	if err := service.Confirm("video-two.mkv", "trk_existing", false); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := catalog.Read(path)
@@ -309,7 +309,7 @@ func TestSearchReturnsCatalogueTracksInsteadOfAudioPaths(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{Config: config.Config{MediaCatalogFile: path, FlacCacheFile: cachePath}}
+	service := Service{Config: config.Config{MediaCatalogFile: path, FlacCacheFile: cachePath, AudioDirectories: []string{root}}}
 	items, err := service.Search(context.Background(), "artist one")
 	if err != nil || len(items) != 1 || items[0].Path != "trk_one" {
 		t.Fatalf("search = %#v, %v", items, err)
@@ -336,8 +336,8 @@ func TestConfirmCreatesTrackForUnclaimedLocalAudio(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	service := Service{Config: config.Config{MediaCatalogFile: catalogPath, FlacCacheFile: cachePath}}
-	if err := service.Confirm("260831 Girls Generation - Skibidi.mkv", audioPath); err != nil {
+	service := Service{Config: config.Config{MediaCatalogFile: catalogPath, FlacCacheFile: cachePath, AudioDirectories: []string{root}}}
+	if err := service.Confirm("260831 Girls Generation - Skibidi.mkv", audioPath, false); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := catalog.Read(catalogPath)
@@ -388,7 +388,7 @@ func TestRenamedAudioReturnsToReviewAndPreservesIdentity(t *testing.T) {
 	if err != nil || len(matches) != 1 || matches[0].Album != "Debut" || matches[0].ReleaseDate != "2020" {
 		t.Fatalf("search = %#v, %v", matches, err)
 	}
-	if err := service.Confirm(video, newPath); err != nil {
+	if err := service.Confirm(video, newPath, false); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := catalog.Read(service.Config.MediaCatalogFile)
@@ -403,7 +403,7 @@ func TestRenamedAudioReturnsToReviewAndPreservesIdentity(t *testing.T) {
 
 func TestSearchOrdersReleasesWithUnknownDatesLast(t *testing.T) {
 	root := t.TempDir()
-	service := Service{Config: config.Config{MediaCatalogFile: filepath.Join(root, "catalog.json"), FlacCacheFile: filepath.Join(root, "cache.json")}}
+	service := Service{Config: config.Config{MediaCatalogFile: filepath.Join(root, "catalog.json"), FlacCacheFile: filepath.Join(root, "cache.json"), AudioDirectories: []string{root}}}
 	if err := catalog.Write(service.Config.MediaCatalogFile, catalog.New()); err != nil {
 		t.Fatal(err)
 	}
@@ -436,7 +436,7 @@ func TestConfirmMovesOnlySelectedVideoToExistingTrack(t *testing.T) {
 	if err := catalog.Write(service.Config.MediaCatalogFile, media); err != nil {
 		t.Fatal(err)
 	}
-	if err := service.Confirm(filepath.Join(root, "selected.mkv"), "trk_target"); err != nil {
+	if err := service.Confirm(filepath.Join(root, "selected.mkv"), "trk_target", false); err != nil {
 		t.Fatal(err)
 	}
 	loaded, err := catalog.Read(service.Config.MediaCatalogFile)
