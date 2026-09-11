@@ -842,6 +842,11 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case "/":
 		m.mode = modeSearch
 		m.status = "Search mode: type freely; Enter or Esc returns to navigation"
+	case "C":
+		m.query = ""
+		m.refreshResults()
+		m.cursor = 0
+		m.status = "Search cleared"
 	case "c":
 		m.mode = modeCategories
 		m.overlayCursor = 0

@@ -147,6 +147,23 @@ func TestSearchEditsMoveFocusToFirstResult(t *testing.T) {
 	}
 }
 
+func TestCapitalCClearsSearchFromNavigation(t *testing.T) {
+	m := New(library.Generate(50, 200))
+	m = updateKey(t, m, "/")
+	m = updateKey(t, m, "a")
+	m = updateKey(t, m, "/")
+	m.cursor = min(3, len(m.rows)-1)
+
+	m = updateKey(t, m, "C")
+
+	if m.query != "" || m.cursor != 0 || m.status != "Search cleared" {
+		t.Fatalf("C did not clear search: query=%q cursor=%d status=%q", m.query, m.cursor, m.status)
+	}
+	if len(m.filtered) != len(m.all) {
+		t.Fatalf("C filtered %d of %d tracks", len(m.filtered), len(m.all))
+	}
+}
+
 func TestOpeningKeysCloseEveryModeAndDiscardDrafts(t *testing.T) {
 	for _, test := range []struct {
 		open string

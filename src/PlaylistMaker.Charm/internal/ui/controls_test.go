@@ -422,7 +422,7 @@ func TestOverlaysPreserveTerminalCellAlignmentOverKoreanRows(t *testing.T) {
 
 func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 	wide := footerHint(modeNavigate, 140)
-	for _, value := range []string{"/ search", "c categories", "s sort", "f filters", "? help"} {
+	for _, value := range []string{"/ search", "C clear", "c cats", "s sort", "f filters", "? help"} {
 		if !strings.Contains(wide, value) {
 			t.Fatalf("wide footer missing %q: %q", value, wide)
 		}
@@ -441,7 +441,7 @@ func TestHelpFootersAndNarrowOverlaysRemainUsable(t *testing.T) {
 		}
 	}
 	help := strings.Join(helpLines(), "\n")
-	for _, value := range []string{"h/l, left/right, Enter", "digits / Backspace", "Shift+J/K", "Ctrl+U/D, PgUp/Dn", "o  —  play queue or highlighted media", "green • Spotify linked", "blue • local audio only", "grey • video only"} {
+	for _, value := range []string{"h/l, left/right, Enter", "C  —  clear active search", "digits / Backspace", "Shift+J/K", "Ctrl+U/D, PgUp/Dn", "o  —  play queue or highlighted media", "green • Spotify linked", "blue • local audio only", "grey • video only"} {
 		if !strings.Contains(help, value) {
 			t.Fatalf("help missing %q", value)
 		}

@@ -4,7 +4,7 @@ type shortcut struct{ section, key, description string }
 
 var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
-	{"Views", "/", "search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Categories", "0-4", "apply configured preset from Categories view"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green • Spotify linked, blue • local audio only, grey • video only"},
+	{"Views", "/", "search"}, {"Views", "C", "clear active search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Categories", "0-4", "apply configured preset from Categories view"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green • Spotify linked, blue • local audio only, grey • video only"},
 	{"Views", "d", "selected media details"},
 	{"Views", "m", "relink selected video"}, {"Views", "u", "update mappings"}, {"Catalogue picker", "Ctrl+O", "show or hide unused catalogue tracks"}, {"Catalogue picker", "Ctrl+U", "clear search"}, {"Catalogue picker", "Ctrl+N", "create separately when existing matches are offered"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
 	{"Views", "U", "update Spotify links"}, {"Spotify updates", "enter / search / skip / ignore", "confirm, find, defer, or persistently ignore a link"},
@@ -33,13 +33,13 @@ func footerHint(current mode, width int) string {
 	if current == modeNavigate {
 		switch {
 		case width >= 115:
-			return "j/k move  h/l fold  space queue  m relink  o play  p options  / search  c categories  s sort  f filters  ? help"
+			return "j/k move  h/l fold  space queue  o play  / search  C clear  p options  c cats  s sort  f filters  ? help"
 		case width >= 75:
-			return "o play  / search  c categories  s sort  f filters  ? help"
+			return "o play  / search  C clear  c categories  s sort  f filters  ? help"
 		case width >= 50:
-			return "o play  / search  c cats  s sort  f filter  ? help"
+			return "o play  / search  C clear  c cats  s sort  f filter  ? help"
 		default:
-			return "o play  / search  ? help"
+			return "o play  / search  C clear  ? help"
 		}
 	}
 
