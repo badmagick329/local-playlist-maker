@@ -309,7 +309,7 @@ func TestParentRowsShowTheActiveEligibleDateSortValue(t *testing.T) {
 	} {
 		m.sort = test.sort
 		m.refreshResults()
-		if got := stripStyles(m.renderRow(m.rows[0], false, 120)); !strings.Contains(got, test.want) {
+		if got := stripStyles(m.renderRow(m.rows[0], false, 120, m.parentRowCountWidth())); !strings.Contains(got, test.want) {
 			t.Fatalf("%s parent row = %q, want %s", test.sort, got, test.want)
 		}
 	}
@@ -336,7 +336,7 @@ func TestParentRowsKeepDateAlignedAcrossCountWidths(t *testing.T) {
 			continue
 		}
 		track := m.filtered[current.trackIndex]
-		rows[track.ID] = stripStyles(m.renderRow(current, false, 100))
+		rows[track.ID] = stripStyles(m.renderRow(current, false, 100, m.parentRowCountWidth()))
 	}
 	for _, id := range []string{"one", "many"} {
 		if !strings.HasSuffix(rows[id], map[string]string{"one": "  1", "many": "  13"}[id]) {
@@ -375,7 +375,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	}
 	for index, want := range []string{"Spotify", "Local", "Video only"} {
 		m := New([]library.Track{tracks[index]})
-		row := stripStyles(m.renderRow(m.rows[0], false, 80))
+		row := stripStyles(m.renderRow(m.rows[0], false, 80, m.parentRowCountWidth()))
 		if !strings.Contains(row, "•") {
 			t.Fatalf("parent row %d has no source badge: %q", index, row)
 		}
@@ -401,7 +401,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	if variantIndex < 0 {
 		t.Fatal("expanded track did not produce a variant row")
 	}
-	variantRow := stripStyles(m.renderRow(m.rows[variantIndex], false, 80))
+	variantRow := stripStyles(m.renderRow(m.rows[variantIndex], false, 80, m.parentRowCountWidth()))
 	if strings.Contains(variantRow, "•") {
 		t.Fatalf("variant row gained source badge: %q", variantRow)
 	}
@@ -418,7 +418,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	for _, test := range selectedCases {
 		t.Run("selected "+test.name, func(t *testing.T) {
 			rowModel := New([]library.Track{test.track})
-			raw := rowModel.renderRow(rowModel.rows[0], true, 80)
+			raw := rowModel.renderRow(rowModel.rows[0], true, 80, rowModel.parentRowCountWidth())
 			badge := rowModel.selectedSourceBadge(test.track)
 			separator := rowModel.theme.selected.Render(" ")
 			before, after, found := strings.Cut(raw, separator+badge+separator)
@@ -439,7 +439,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 					t.Fatalf("selected %s content %q does not use selected foreground: %q", test.name, ordinary, raw)
 				}
 			}
-			unselected := rowModel.renderRow(rowModel.rows[0], false, 80)
+			unselected := rowModel.renderRow(rowModel.rows[0], false, 80, rowModel.parentRowCountWidth())
 			if got := ansi.StringWidth(unselected); got != 80 {
 				t.Fatalf("unselected row width = %d, want 80", got)
 			}
@@ -447,7 +447,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	}
 
 	localModel := New([]library.Track{tracks[1]})
-	localSelected := localModel.renderRow(localModel.rows[0], true, 80)
+	localSelected := localModel.renderRow(localModel.rows[0], true, 80, localModel.parentRowCountWidth())
 	if !strings.Contains(localSelected, localModel.selectedSourceBadge(tracks[1])) {
 		t.Fatalf("selected local badge is not using its contrasting foreground: %q", localSelected)
 	}
@@ -458,7 +458,7 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	queuedModel := New([]library.Track{tracks[0]})
 	queuedModel.queued[tracks[0].Variants[0].ID] = tracks[0].Variants[0]
 	queuedModel.queueOrder = []string{tracks[0].Variants[0].ID}
-	queuedRaw := queuedModel.renderRow(queuedModel.rows[0], true, 80)
+	queuedRaw := queuedModel.renderRow(queuedModel.rows[0], true, 80, queuedModel.parentRowCountWidth())
 	queuedText := stripStyles(queuedRaw)
 	if !strings.Contains(queuedText, "•") || !strings.Contains(queuedText, "●") {
 		t.Fatalf("selected row does not retain both queue and source dots: %q", queuedText)
@@ -468,14 +468,14 @@ func TestSourceBadgesRenderOnlyOnParentRows(t *testing.T) {
 	}
 
 	long := New([]library.Track{{Artist: "Artist", Title: strings.Repeat("Long title ", 12), SpotifyURI: "spotify:track:long", Variants: []library.Variant{{ID: "long-video", Filename: "long.mkv", Category: library.MusicVideo}}}})
-	longRow := stripStyles(long.renderRow(long.rows[0], false, 40))
+	longRow := stripStyles(long.renderRow(long.rows[0], false, 40, long.parentRowCountWidth()))
 	if !strings.Contains(longRow, "•") {
 		t.Fatalf("narrow parent row lost source badge: %q", longRow)
 	}
 	if width := ansi.StringWidth(longRow); width > 40 {
 		t.Fatalf("narrow parent row width = %d, want <= 40", width)
 	}
-	longSelected := stripStyles(long.renderRow(long.rows[0], true, 40))
+	longSelected := stripStyles(long.renderRow(long.rows[0], true, 40, long.parentRowCountWidth()))
 	if width := ansi.StringWidth(longSelected); width > 40 {
 		t.Fatalf("narrow selected parent row width = %d, want <= 40", width)
 	}
