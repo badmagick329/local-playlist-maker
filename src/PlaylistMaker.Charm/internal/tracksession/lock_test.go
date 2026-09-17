@@ -1,7 +1,7 @@
 package tracksession
 
 import (
-	"os"
+	"errors"
 	"path/filepath"
 	"testing"
 )
@@ -17,7 +17,11 @@ func TestWaitingLockReaderAllowsOwnerRelease(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer reader.Close()
-	if err := os.Remove(manifest.LockPath); err != nil {
+	other := Runner{}
+	if err := other.acquire(manifest); !errors.Is(err, errSessionBusy) {
+		t.Fatalf("concurrent owner acquired: %v", err)
+	}
+	if err := runner.release(manifest.LockPath); err != nil {
 		t.Fatalf("waiting reader blocked ownership release: %v", err)
 	}
 	if err := reader.Close(); err != nil {
@@ -27,4 +31,5 @@ func TestWaitingLockReaderAllowsOwnerRelease(t *testing.T) {
 	if err := runner.acquire(manifest); err != nil {
 		t.Fatalf("next session could not acquire released ownership: %v", err)
 	}
+	runner.release(manifest.LockPath)
 }

@@ -22,7 +22,12 @@ type Player interface {
 	Close(context.Context) error
 }
 
-// PlaybackFailure ends a failed attempt instead of retrying telemetry forever.
+// StartBlocked preserves a not-yet-started occurrence when ownership is unsafe.
+type StartBlocked struct{ Message string }
+
+func (e *StartBlocked) Error() string { return e.Message }
+
+// PlaybackFailure suspends an uncertain or interrupted tracking occurrence.
 type PlaybackFailure struct{ Message string }
 
 func (e *PlaybackFailure) Error() string { return e.Message }

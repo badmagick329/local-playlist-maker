@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
+	"playlistmaker/charm/internal/tracksession"
 	"slices"
 	"time"
 
@@ -26,7 +28,7 @@ type trackingErrorTick struct{}
 
 // Detached helpers cannot write to the TUI; surface their failures here.
 func (m Model) WithTrackingErrors(path string) Model {
-	m.trackingErrorPath, m.trackingErrorSince = path, time.Now()
+	m.trackingErrorPath, m.trackingErrorSince = path, time.Time{}
 	return m
 }
 
@@ -52,6 +54,10 @@ func (m Model) handlePlaybackResult(message playbackResultMsg) (tea.Model, tea.C
 }
 
 func (m Model) handleTrackingErrorTick() (tea.Model, tea.Cmd) {
+	if status := tracksession.Summary(filepath.Dir(m.trackingErrorPath), time.Now()); status != "" {
+		m.trackingError = status
+		return m, m.trackingErrorCmd()
+	}
 	if info, err := os.Stat(m.trackingErrorPath); err == nil && info.ModTime().After(m.trackingErrorSince) {
 		if contents, err := os.ReadFile(m.trackingErrorPath); err == nil {
 			m.trackingError = string(contents)

@@ -87,6 +87,10 @@ func RecoverStale(_ context.Context, dataDirectory string, alive func(int) bool)
 				return err
 			}
 		}
+		// Failed sessions retain occurrence evidence for explicit recovery/review.
+		if _, err := os.Stat(manifest.CheckpointPath); err == nil {
+			continue
+		}
 		Cleanup(path, manifest)
 	}
 	return nil

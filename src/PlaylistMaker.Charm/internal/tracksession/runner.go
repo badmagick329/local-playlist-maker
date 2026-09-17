@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"playlistmaker/charm/internal/tracking"
 	"time"
 )
 
@@ -23,167 +24,196 @@ type Runner struct {
 	IsAlive    func(int) bool
 	Poll       time.Duration
 	DeviceName string
-	Terminate  func(int) error
+	Notify     func()
+	Now        func() time.Time
+	leases     map[string]*os.File
 }
 
-func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
+func (r Runner) Run(ctx context.Context, manifestPath string) error {
 	manifest, err := ReadManifest(manifestPath)
 	if err != nil {
 		return err
 	}
-	defer func() {
-		if runErr != nil && !errors.Is(runErr, context.Canceled) {
-			_ = atomicWrite(filepath.Join(filepath.Dir(manifest.LockPath), "tracking-error.txt"), []byte("Tracking stopped: "+runErr.Error()), 0o600)
-		}
-	}()
-	lockErr := r.acquire(manifest)
-	if lockErr != nil && !errors.Is(lockErr, errSessionBusy) {
-		_ = WriteReady(manifest.ReadyPath, Ready{Error: lockErr.Error()})
-		return lockErr
-	}
-	ownsLock := lockErr == nil
-	defer func() {
-		if ownsLock {
-			if err := os.Remove(manifest.LockPath); err != nil {
-				runErr = errors.Join(runErr, fmt.Errorf("release tracking session lock: %w", err))
-			}
-		}
-	}()
-	cleanup := false
-	defer func() {
-		if cleanup {
-			Cleanup(manifestPath, manifest)
-		}
-	}()
-	manifest.HelperProcessID = os.Getpid()
-	if err := WriteManifest(manifestPath, manifest); err != nil {
-		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
-		return err
+	if manifest.HelperProcessID != 0 && manifest.HelperProcessID != os.Getpid() && r.alive(manifest.HelperProcessID) {
+		return fmt.Errorf("tracking helper is still running; close the unresponsive helper before retry")
 	}
 	if r.Runtime == nil {
-		err = fmt.Errorf("tracking runtime is unavailable")
-		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
+		return fmt.Errorf("tracking runtime is unavailable")
+	}
+	guard := manifest
+	guard.LockPath = manifestPath + ".helper-lock"
+	if err := r.acquire(guard); err != nil {
 		return err
 	}
-	r.Runtime.AllowUntracked = manifest.AllowUntracked
-	r.Runtime.DiagnosticsPath = manifest.DiagnosticsPath
-	if err := r.Runtime.Prepare(ctx, r.DeviceName, manifest.Entries); err != nil {
-		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
-		r.Runtime.Close(context.Background())
-		return err
-	}
-	if err := WriteReady(manifest.ReadyPath, Ready{Ready: true}); err != nil {
-		r.Runtime.Close(context.Background())
-		return err
-	}
+	defer r.release(guard.LockPath)
+	ownsLock := false
 	defer func() {
 		if ownsLock {
 			closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
 			r.Runtime.Close(closeCtx)
+			_ = r.release(manifest.LockPath)
 		}
 	}()
+	manifest.HelperProcessID = os.Getpid()
+	if err = WriteManifest(manifestPath, manifest); err != nil {
+		return err
+	}
+	r.Runtime.AllowUntracked, r.Runtime.DiagnosticsPath = manifest.AllowUntracked, manifest.DiagnosticsPath
+	if err = r.Runtime.Prepare(ctx, r.DeviceName, manifest.Entries); err != nil {
+		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
+		return err
+	}
+	queue := playQueue{runtime: r.Runtime}
+	offset, inputEnded, err := queue.restore(manifest.CheckpointPath, manifest)
+	if err != nil {
+		return err
+	}
+	restored := queue.blocked != ""
+	var blockedError error
+	notified := false
+	if err = WriteReady(manifest.ReadyPath, Ready{Ready: true}); err != nil {
+		return err
+	}
 	poll := r.Poll
 	if poll == 0 {
 		poll = 100 * time.Millisecond
 	}
 	ticker := time.NewTicker(poll)
 	defer ticker.Stop()
-	offset := 0
 	seen := map[string]bool{}
-	mpvSeen := false
-	queue := playQueue{runtime: r.Runtime}
-	started := false
-	inputEnded := false
-	pauseOnFailure := func(err error) error {
-		if !inputEnded && manifest.PausePath != "" {
-			if pauseErr := atomicWrite(manifest.PausePath, []byte(err.Error()+"\n"), 0o600); pauseErr != nil {
-				return fmt.Errorf("%w; request mpv pause: %v", err, pauseErr)
-			}
+	revision := 0
+	lastStatus := ""
+	lastSave := time.Time{}
+	lastHeartbeat := time.Time{}
+	retry := false
+	untracked := false
+	parked := false
+	pauseSince := time.Time{}
+	publish := func() error {
+		status := queue.status(manifest.SessionID, revision)
+		if !ownsLock && queue.blocked == "" && !untracked && !parked {
+			status.State, status.Message, status.Hold = "waiting", "Waiting for tracking ownership", true
 		}
-		return err
+		key := fmt.Sprintf("%s/%s/%d/%s", status.State, status.OccurrenceID, status.IntentSequence, status.Message)
+		changed := key != lastStatus
+		if changed {
+			revision++
+			status.Revision = revision
+			lastStatus = key
+			target := "unknown"
+			if queue.target != nil {
+				target = fmt.Sprint(*queue.target)
+			}
+			r.Runtime.observe(-1, "", fmt.Sprintf("session=%s occurrence=%s intent=%d paused=%t target=%v state=%s: %s", manifest.SessionID, status.OccurrenceID, status.IntentSequence, queue.paused, target, status.State, status.Message))
+			_ = atomicWrite(filepath.Join(filepath.Dir(manifest.LockPath), "tracking-error.txt"), []byte(status.Message+" (mpv: Play retries; Ctrl+Shift+U continues without tracking)"), 0600)
+		}
+		if r.now().Sub(lastHeartbeat) >= time.Second || changed {
+			lastHeartbeat = r.now()
+			return writeJSON(manifest.StatusPath, status)
+		}
+		return nil
+	}
+	if p, ok := r.Runtime.Spotify.(interface{ SetProtection(func() error) }); ok {
+		p.SetProtection(publish)
+	}
+	block := func(failure error) {
+		if queue.blocked == "" {
+			queue.blocked = failure.Error()
+			blockedError = failure
+			if !notified && r.Notify != nil {
+				r.Notify()
+			}
+			notified = true
+		}
+		_ = publish() // Put the video hold on disk before any bounded cleanup request.
+		// Suspend command ownership. Future retries must reacquire and inspect the
+		// same occurrence before issuing any resume command.
+		if ownsLock {
+			stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			if r.Runtime.active != nil {
+				_ = r.Runtime.active.Stop(stopCtx)
+			}
+			cancel()
+			_ = r.release(manifest.LockPath)
+			ownsLock = false
+			queue.suspended = true
+		}
 	}
 	for {
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if _, cancelErr := os.Stat(manifest.CancelPath); cancelErr == nil {
-				cleanup = true
+			if _, err := os.Stat(manifest.CancelPath); err == nil {
 				return nil
 			}
-			// Let mpv launch while a previous session finishes its Spotify tail.
-			// Its events remain on disk until this helper owns the tracking player.
-			if !ownsLock {
-				if err := r.acquire(manifest); errors.Is(err, errSessionBusy) {
-					continue
-				} else if err != nil {
-					return err
-				}
-				ownsLock = true
-			}
-			if inputEnded {
-				if err := queue.tick(ctx); err != nil {
-					return err
-				}
-				if queue.idle() {
-					cleanup = true
-					return nil
-				}
-				continue
-			}
-			latest, readErr := ReadManifest(manifestPath)
-			if readErr == nil {
+			if latest, e := ReadManifest(manifestPath); e == nil {
 				manifest = latest
-				mpvSeen = mpvSeen || manifest.MPVProcessID != 0
 			}
-			if manifest.MPVProcessID == 0 {
-				if time.Since(manifest.CreatedAtUTC) > 30*time.Second {
-					return fmt.Errorf("mpv did not attach to the tracking session")
-				}
-				continue
+			if manifest.MPVProcessID == 0 && r.now().Sub(manifest.CreatedAtUTC) > 30*time.Second {
+				return fmt.Errorf("mpv did not attach to tracking session")
 			}
-			events, next, readErr := readEvents(manifest.EventPath, offset)
-			if readErr != nil {
-				return readErr
+			events, next, e := readEvents(manifest.EventPath, offset)
+			if e != nil {
+				return e
 			}
-			offset = next
 			for _, event := range events {
 				if event.EventID == "" || seen[event.EventID] {
 					continue
 				}
 				seen[event.EventID] = true
+				if event.SessionID != "" && event.SessionID != manifest.SessionID {
+					continue
+				}
 				switch event.Event {
 				case "file-loaded", "playback-repeat":
-					if addPosition(&manifest.LoadedPositions, event.PlaylistPosition) {
-						if err := WriteManifest(manifestPath, manifest); err != nil {
-							return err
+					reason := "stop"
+					if event.Event == "playback-repeat" {
+						reason = "eof"
+					}
+					queue.end(ctx, reason)
+					if event.PlaylistPosition >= 0 && event.PlaylistPosition < len(manifest.Entries) {
+						entry := manifest.Entries[event.PlaylistPosition]
+						play := &queuedPlay{id: event.EventID, position: event.PlaylistPosition, track: entry.Track, videoStartedAt: r.now()}
+						queue.video = play
+						queue.pending = append(queue.pending, play)
+						queue.paused, queue.target = event.Paused, event.PositionMS
+						addPosition(&manifest.LoadedPositions, event.PlaylistPosition)
+					}
+				case "intent":
+					if queue.intent(event) {
+						parked = false
+						if !event.Paused {
+							retry = true
 						}
 					}
-					if event.PlaylistPosition >= 0 && event.PlaylistPosition < len(manifest.Entries) {
-						if event.Event == "playback-repeat" {
-							queue.end(ctx, "eof")
-						} else {
-							queue.end(ctx, "stop")
+				case "retry":
+					if queue.video != nil && event.OccurrenceID == queue.video.id {
+						retry = true
+					}
+				case "health-failure":
+					notified = true // mpv already sent this incident's desktop notification.
+					r.Runtime.observe(-1, "", "mpv detected stale helper heartbeat")
+				case "hold-ack":
+					if queue.video != nil && event.OccurrenceID == queue.video.id && event.StatusRevision == revision {
+						r.Runtime.observe(event.PlaylistPosition, "", fmt.Sprintf("hold acknowledged occurrence=%s revision=%d actualPaused=%t", event.OccurrenceID, revision, event.Paused))
+					}
+				case "untracked":
+					if queue.video != nil && event.OccurrenceID == queue.video.id {
+						if ownsLock {
+							r.Runtime.End(ctx)
+							_ = r.release(manifest.LockPath)
+							ownsLock = false
 						}
-						entry := manifest.Entries[event.PlaylistPosition]
-						if err := queue.load(ctx, event.EventID, event.PlaylistPosition, entry.Track); err != nil {
-							if started {
-								return pauseOnFailure(err)
-							}
-							if terminateErr := r.terminate(manifest.MPVProcessID); terminateErr != nil {
-								return fmt.Errorf("%w; terminate mpv: %v", err, terminateErr)
-							}
-							return err
-						}
-						started = true
+						untracked = true
+						queue.active = nil
+						queue.pending = nil
+						queue.blocked = ""
 					}
 				case "end-file":
-					if addPosition(&manifest.TerminalPositions, event.PlaylistPosition) {
-						if err := WriteManifest(manifestPath, manifest); err != nil {
-							return err
-						}
-					}
+					parked = false
+					addPosition(&manifest.TerminalPositions, event.PlaylistPosition)
 					if queue.video != nil && queue.video.position == event.PlaylistPosition {
 						reason := event.EndReason
 						if event.Completed {
@@ -192,34 +222,141 @@ func (r Runner) Run(ctx context.Context, manifestPath string) (runErr error) {
 						queue.end(ctx, reason)
 					}
 				case "shutdown":
+					parked = false
 					manifest.ShutdownSeen = true
-					if err := WriteManifest(manifestPath, manifest); err != nil {
-						return err
-					}
+					reason := "quit"
 					if event.Completed {
-						queue.end(ctx, "eof")
-					} else {
-						queue.end(ctx, "quit")
+						reason = "eof"
 					}
+					queue.end(ctx, reason)
 					inputEnded = true
 				}
 			}
-			if !inputEnded && manifest.MPVProcessID != 0 && !r.alive(manifest.MPVProcessID) {
-				if err := recoverHistory(manifest); err != nil {
+			offset = next
+			if len(events) > 0 {
+				if err = WriteManifest(manifestPath, manifest); err != nil {
+					return err
+				}
+			}
+			if manifest.MPVProcessID != 0 && !r.alive(manifest.MPVProcessID) && !inputEnded {
+				if err = recoverHistory(manifest); err != nil {
 					return err
 				}
 				queue.end(ctx, "quit")
+				manifest.ShutdownSeen = true
+				if err = WriteManifest(manifestPath, manifest); err != nil {
+					return err
+				}
 				inputEnded = true
 			}
-			if err := queue.tick(ctx); err != nil {
-				return pauseOnFailure(err)
+			if untracked {
+				queue.pending = nil
+				queue.active = nil
+			} else {
+				if queue.blocked != "" && retry && restored {
+					if acquireErr := r.acquire(manifest); acquireErr == nil {
+						ownsLock = true
+						if p, ok := r.Runtime.Spotify.(recoverablePlayer); ok && queue.active != nil && len(queue.evidence) > 0 {
+							restoreCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+							restoreErr := p.Restore(restoreCtx, queue.evidence)
+							cancel()
+							if restoreErr == nil {
+								restored = false
+								queue.suspended = false
+								r.Runtime.active = r.Runtime.Spotify
+							} else {
+								queue.blocked = restoreErr.Error()
+							}
+						} else if queue.active == nil && len(queue.pending) == 0 {
+							restored = false
+						}
+						if restored {
+							_ = r.release(manifest.LockPath)
+							ownsLock = false
+						}
+					}
+				}
+				if queue.blocked != "" && retry && !restored {
+					queue.blocked = ""
+					if p, ok := r.Runtime.Spotify.(controlledPlayer); ok {
+						p.Retry()
+					}
+				}
+				retry = false
+				if queue.blocked == "" && !ownsLock && !parked {
+					if err = r.acquire(manifest); err == nil {
+						ownsLock = true
+						queue.suspended = false
+						if queue.active != nil && r.Runtime.activeProvider == "spotify" {
+							if p, ok := r.Runtime.Spotify.(interface{ Reacquire() error }); ok {
+								if e := p.Reacquire(); e != nil {
+									block(e)
+								}
+							}
+						}
+					} else if !errors.Is(err, errSessionBusy) {
+						block(err)
+					}
+				}
+				if ownsLock && queue.blocked == "" {
+					// Journal before external commands: a crash in a start/finish transaction
+					// leaves ambiguity for intervention, never permission to replay.
+					if err = queue.save(manifest.CheckpointPath, offset, inputEnded); err != nil {
+						return err
+					}
+					if err = queue.tick(ctx); err != nil {
+						block(err)
+					} else if status := queue.status(manifest.SessionID, revision); !status.Hold {
+						notified = false
+					}
+				}
 			}
-			if inputEnded && queue.idle() {
-				cleanup = true
-				return nil
+			if ownsLock && queue.blocked == "" && queue.paused {
+				state := queue.status(manifest.SessionID, revision)
+				if state.State == "user-paused" && (queue.active == nil || func() bool {
+					p, ok := r.Runtime.Spotify.(controlledPlayer)
+					if !ok {
+						return false
+					}
+					phase, _ := p.TrackingStatus()
+					return phase == "paused"
+				}()) {
+					if pauseSince.IsZero() {
+						pauseSince = r.now()
+					}
+					if r.now().Sub(pauseSince) >= time.Minute {
+						_ = r.release(manifest.LockPath)
+						ownsLock = false
+						queue.suspended = true
+						parked = true
+					}
+				} else {
+					pauseSince = time.Time{}
+				}
+			} else if !parked {
+				pauseSince = time.Time{}
 			}
-			if !mpvSeen && time.Since(manifest.CreatedAtUTC) > 30*time.Second {
-				return fmt.Errorf("mpv did not attach to the tracking session")
+			if err = publish(); err != nil {
+				return err
+			}
+			if r.now().Sub(lastSave) >= time.Second || len(events) > 0 {
+				if err = queue.save(manifest.CheckpointPath, offset, inputEnded); err != nil {
+					return err
+				}
+				lastSave = r.now()
+			}
+			if inputEnded {
+				if queue.blocked != "" {
+					if blockedError != nil {
+						return blockedError
+					}
+					return &tracking.PlaybackFailure{Message: queue.blocked}
+				}
+				if queue.idle() {
+					Cleanup(manifestPath, manifest)
+					_ = atomicWrite(filepath.Join(filepath.Dir(manifest.LockPath), "tracking-error.txt"), nil, 0600)
+					return nil
+				}
 			}
 		}
 	}
@@ -238,30 +375,31 @@ func addPosition(values *[]int, position int) bool {
 	return true
 }
 
-func (r Runner) acquire(manifest Manifest) error {
-	if contents, err := readLock(manifest.LockPath); err == nil {
-		var lock Lock
-		if len(contents) == 0 {
-			return errSessionBusy
-		}
-		if json.Unmarshal(contents, &lock) == nil && lock.HelperPID != 0 && r.alive(lock.HelperPID) {
-			return errSessionBusy
-		}
-		_ = os.Remove(manifest.LockPath)
-	} else if !os.IsNotExist(err) {
+func (r *Runner) acquire(manifest Manifest) error {
+	file, err := openLease(manifest.LockPath + ".lease")
+	if err != nil {
 		return err
 	}
 	contents, _ := json.Marshal(Lock{SessionID: manifest.SessionID, HelperPID: os.Getpid()})
-	file, err := os.OpenFile(manifest.LockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
-	if os.IsExist(err) {
-		return errSessionBusy
+	if err = atomicWrite(manifest.LockPath, append(contents, '\n'), 0600); err != nil {
+		file.Close()
+		return err
 	}
-	if err != nil {
-		return fmt.Errorf("acquire tracking session lock: %w", err)
+	if r.leases == nil {
+		r.leases = map[string]*os.File{}
 	}
-	defer file.Close()
-	_, err = file.Write(append(contents, '\n'))
-	return err
+	r.leases[manifest.LockPath] = file
+	return nil
+}
+
+func (r *Runner) release(path string) error {
+	file := r.leases[path]
+	if file == nil {
+		return nil
+	}
+	delete(r.leases, path)
+	err := os.Remove(path)
+	return errors.Join(err, file.Close())
 }
 
 func readLock(path string) ([]byte, error) {
@@ -278,13 +416,6 @@ func (r Runner) alive(pid int) bool {
 		return r.IsAlive(pid)
 	}
 	return processAlive(pid)
-}
-
-func (r Runner) terminate(pid int) error {
-	if r.Terminate != nil {
-		return r.Terminate(pid)
-	}
-	return terminateProcess(pid)
 }
 
 func readEvents(path string, offset int) ([]Event, int, error) {
@@ -310,4 +441,11 @@ func readEvents(path string, offset int) ([]Event, int, error) {
 		}
 	}
 	return events, offset + consumed, nil
+}
+
+func (r Runner) now() time.Time {
+	if r.Now != nil {
+		return r.Now()
+	}
+	return time.Now()
 }

@@ -25,10 +25,12 @@ type Manifest struct {
 	EventPath             string    `json:"eventPath"`
 	ReadyPath             string    `json:"readyPath"`
 	CancelPath            string    `json:"cancelPath"`
-	PausePath             string    `json:"pausePath"`
+	StatusPath            string    `json:"statusPath"`
+	CheckpointPath        string    `json:"checkpointPath"`
 	DiagnosticsPath       string    `json:"diagnosticsPath"`
 	LockPath              string    `json:"lockPath"`
 	SpotifyStatePath      string    `json:"spotifyStatePath"`
+	HelperExecutable      string    `json:"helperExecutable,omitempty"`
 	HelperProcessID       int       `json:"helperProcessId,omitempty"`
 	MPVProcessID          int       `json:"mpvProcessId,omitempty"`
 	LoadedPositions       []int     `json:"loadedPositions,omitempty"`
@@ -42,6 +44,12 @@ type Manifest struct {
 }
 
 type Event struct {
+	SessionID        string    `json:"sessionId"`
+	OccurrenceID     string    `json:"occurrenceId"`
+	IntentSequence   int       `json:"intentSequence"`
+	Paused           bool      `json:"paused"`
+	PositionMS       *int      `json:"positionMs"`
+	StatusRevision   int       `json:"statusRevision"`
 	EventID          string    `json:"eventId"`
 	Event            string    `json:"event"`
 	EventAtUTC       time.Time `json:"eventAtUtc"`
@@ -78,7 +86,8 @@ func Create(dataDirectory string, entries []Entry, allowUntracked, historyEnable
 	manifest := Manifest{
 		SchemaVersion: 1, SessionID: id, CreatedAtUTC: time.Now().UTC(), Entries: entries,
 		EventPath: filepath.Join(directory, id+".events.jsonl"), ReadyPath: filepath.Join(directory, id+".ready.json"), CancelPath: filepath.Join(directory, id+".cancel"),
-		PausePath:       filepath.Join(directory, id+".tracking-stopped"),
+		StatusPath:      filepath.Join(directory, id+".status.json"),
+		CheckpointPath:  filepath.Join(directory, id+".checkpoint.json"),
 		DiagnosticsPath: filepath.Join(dataDirectory, "tracking-diagnostics.jsonl"), LockPath: filepath.Join(dataDirectory, "active-tracking-session.json"),
 		SpotifyStatePath: filepath.Join(dataDirectory, "spotify-active-session.json"), AllowUntracked: allowUntracked,
 		HistoryEnabled: historyEnabled, HistoryPath: historyPath, MinimumWatchedPercent: minimum,
@@ -140,7 +149,7 @@ func AppendDiagnostic(path string, value Diagnostic) error {
 }
 
 func Cleanup(path string, manifest Manifest) {
-	for _, target := range []string{path, manifest.EventPath, manifest.ReadyPath, manifest.CancelPath, manifest.PausePath} {
+	for _, target := range []string{path, manifest.EventPath, manifest.ReadyPath, manifest.CancelPath, manifest.StatusPath, manifest.CheckpointPath} {
 		_ = os.Remove(target)
 	}
 }
@@ -165,5 +174,5 @@ func atomicWrite(path string, contents []byte, mode os.FileMode) error {
 	if err != nil {
 		return err
 	}
-	return os.Rename(name, path)
+	return replaceState(name, path)
 }

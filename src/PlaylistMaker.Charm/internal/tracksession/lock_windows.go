@@ -1,6 +1,7 @@
 package tracksession
 
 import (
+	"errors"
 	"os"
 	"syscall"
 	"time"
@@ -26,5 +27,21 @@ func openLockReader(path string) (*os.File, error) {
 			return nil, &os.PathError{Op: "open", Path: path, Err: err}
 		}
 		time.Sleep(time.Millisecond)
+	}
+}
+
+// Lua and the TUI briefly open status files without Windows delete sharing.
+// Retry their read windows without publishing a partial JSON response.
+func replaceState(source, target string) error {
+	deadline := time.Now().Add(250 * time.Millisecond)
+	for {
+		err := os.Rename(source, target)
+		if err == nil {
+			return nil
+		}
+		if (!os.IsPermission(err) && !errors.Is(err, syscall.Errno(32))) || !time.Now().Before(deadline) {
+			return err
+		}
+		time.Sleep(5 * time.Millisecond)
 	}
 }

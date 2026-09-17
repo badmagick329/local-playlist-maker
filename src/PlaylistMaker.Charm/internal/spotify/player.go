@@ -22,6 +22,8 @@ type ActiveState struct {
 }
 
 type Player struct {
+	protect            func() error
+	control            playbackControl
 	Client             *Client
 	StatePath          string
 	SessionID          string
@@ -29,12 +31,15 @@ type Player struct {
 	deviceID           string
 	prepared           bool
 	attempted          bool
+	startAccepted      bool
 	trackURI           string
 	stateTrackURI      string
 	requestedTrack     Track
 	startedAt          time.Time
 	nextCheck          time.Time
+	rateUntil          time.Time
 	observed           bool
+	confirmationHeld   time.Duration
 	completionDeadline time.Time
 	lastPlayback       string
 	repeatConfirmed    bool
@@ -86,6 +91,9 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 	if !p.prepared {
 		return fmt.Errorf("Spotify player was not preflighted")
 	}
+	if err := p.checkPreviousOwner(ctx); err != nil {
+		return err
+	}
 	if p.requestedTrack.URI != track.SpotifyURI {
 		requested, err := p.Client.Track(ctx, track.SpotifyURI)
 		if err != nil {
@@ -103,15 +111,20 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 		return err
 	}
 	p.attempted = true
-	if err := p.Client.Play(ctx, p.deviceID, track.SpotifyURI); err != nil {
-		return err
-	}
+	p.startAccepted = false
+
+	p.control = playbackControl{lastAdvance: p.now()}
 	p.startedAt, p.nextCheck, p.observed = p.now(), time.Time{}, false
+	p.confirmationHeld = 0
 	p.completionDeadline, p.lastPlayback = time.Time{}, "no playback response"
 	p.repeatConfirmed, p.repeatRetryAt, p.repeatAttempts = false, time.Time{}, 1
 	p.lastRepeatState, p.lastStateTimestamp = "", 0
 	p.lastProgress, p.maxProgress, p.lastProgressLogged, p.playDurationMS = 0, 0, 0, 0
 	p.staleLogged, p.candidateLogged = false, false
+	if err := p.Client.Play(ctx, p.deviceID, track.SpotifyURI); err != nil {
+		return p.block("Spotify start acceptance is uncertain: " + err.Error())
+	}
+	p.startAccepted = true
 	p.report("repeat disable requested before playback; awaiting observed repeat state")
 	return nil
 }
@@ -120,16 +133,45 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 // tracking song. The first matching playback must be observed before accepting
 // an idle response, since Connect can briefly return the previous play's state.
 func (p *Player) Finished(ctx context.Context) (bool, error) {
+	budget := 10 * time.Second
+	if p.control.phase == "recovering" || p.control.phase == "pausing" {
+		remaining := recoveryLimit - p.now().Sub(p.control.recoveryAt)
+		if remaining > 0 {
+			budget = min(budget, remaining)
+		}
+	}
+	callCtx, cancel := context.WithTimeout(ctx, budget)
+	defer cancel()
+	done, err := p.finished(callCtx)
+	var limited *RateLimitError
+	if errors.As(err, &limited) && limited.Valid {
+		p.rateUntil = p.now().Add(limited.RetryAfter)
+	}
+	return done, err
+}
+
+func (p *Player) finished(ctx context.Context) (bool, error) {
 	now := p.now()
+	if p.control.phase == "blocked" {
+		return false, &tracking.PlaybackFailure{Message: p.control.message}
+	}
+	p.accountHold(now)
+	p.control.updated = now
+	if (p.control.phase == "recovering" || p.control.phase == "pausing") && now.Sub(p.control.recoveryAt) >= recoveryLimit {
+		return false, p.block("Spotify recovery could not verify advancing playback; press Play to retry")
+	}
+	if p.observed && p.control.phase != "paused" && p.control.phase != "recovering" && p.control.phase != "pausing" && now.Sub(p.control.lastAdvance) >= stallLimit {
+		p.recovering(now)
+	}
 	// Check deadlines before polling backoff: a rate limit or offline device must
 	// not keep a detached session alive forever.
-	if !p.startedAt.IsZero() && (((!p.observed || !p.repeatConfirmed) && now.Sub(p.startedAt) >= 30*time.Second) ||
+	if !p.startedAt.IsZero() && (((!p.observed || !p.repeatConfirmed) && !p.control.retry && now.Sub(p.startedAt)-p.confirmationHeld >= 30*time.Second) ||
 		(p.observed && !p.completionDeadline.IsZero() && now.After(p.completionDeadline))) {
 		message := fmt.Sprintf("Spotify tracking timed out: requested %q (%s); observed=%t, repeatConfirmed=%t, repeatDisableAttempts=%d, maximumProgress=%dms; last response: %s", p.requestedTrack.Name, p.trackURI, p.observed, p.repeatConfirmed, p.repeatAttempts, p.maxProgress, p.lastPlayback)
 		p.report("completion decision: tracking failed at bounded deadline; " + message)
-		return false, &tracking.PlaybackFailure{Message: message}
+		return false, p.block(message)
 	}
-	if now.Before(p.nextCheck) {
+	if now.Before(p.nextCheck) || now.Before(p.rateUntil) {
 		return false, nil
 	}
 	p.nextCheck = now.Add(time.Second)
@@ -139,6 +181,7 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		var limited *RateLimitError
 		if errors.As(err, &limited) && limited.Valid {
 			p.nextCheck = now.Add(limited.RetryAfter)
+			p.rateUntil = p.nextCheck
 			return false, nil
 		}
 		return false, err
@@ -153,12 +196,28 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 	if state.Timestamp > p.lastStateTimestamp {
 		p.lastStateTimestamp = state.Timestamp
 	}
+	previousProgress := p.lastProgress
 	matching := state.Device.ID == p.deviceID && state.Item != nil && p.matchesTrack(*state.Item)
 	p.lastPlayback = fmt.Sprintf("playing=%t, device=%s, position=%dms, repeat=%q, timestamp=%d", state.IsPlaying, state.Device.ID, state.ProgressMS, state.RepeatState, state.Timestamp)
 	if state.Item != nil {
 		p.lastPlayback += fmt.Sprintf(", track=%q (%s)", state.Item.Name, state.Item.URI)
 	}
-	if state.Device.ID == p.deviceID {
+	if p.observed && !matching {
+		// Near-end evidence survives a takeover, but it does not grant permission
+		// to start the next queued occurrence on a device the user left.
+		if state.Device.ID != "" && state.Device.ID != p.deviceID {
+			return false, p.block("Spotify changed device; restore the owned song/device before retrying")
+		}
+		if p.repeatConfirmed && p.nearEnd() && !p.control.deliberateStop {
+			p.report("completion decision: accepted transition with near-end evidence")
+			return true, nil
+		}
+		if state.Device.ID != "" && (state.Item != nil || state.Device.ID != p.deviceID) {
+			return false, p.block("Spotify changed song or device; restore the owned song/device before retrying")
+		}
+		return false, nil
+	}
+	if matching {
 		if state.RepeatState == "off" {
 			if !p.repeatConfirmed {
 				p.report("observed repeat state off")
@@ -181,11 +240,25 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		}
 	}
 	if !p.observed {
-		if !matching || !state.IsPlaying || time.Duration(state.ProgressMS)*time.Millisecond > now.Sub(p.startedAt)+2*time.Second {
+		plausibleStart := matching && state.ProgressMS >= 0 &&
+			time.Duration(state.ProgressMS)*time.Millisecond <= min(now.Sub(p.startedAt), 30*time.Second)+2*time.Second
+		if plausibleStart && !state.IsPlaying && p.startAccepted && state.Timestamp >= p.startedAt.UnixMilli() {
+			owned, err := p.ownsState()
+			if err != nil || !owned {
+				return false, p.block("Cannot identify ownership of the paused Spotify start; automatic resume is unsafe")
+			}
+			// A fresh, near-start pause can precede the first playing sample.
+			// Recover it without treating the accepted command as confirmation.
+			return false, p.controlPlayback(ctx, state, previousProgress)
+		}
+		if !plausibleStart || !state.IsPlaying {
 			if now.Sub(p.startedAt) > 15*time.Second {
 				p.nextCheck = now.Add(5 * time.Second)
 				return false, fmt.Errorf("waiting for Spotify to confirm the requested tracking song; keep Spotify open")
 			}
+			return false, nil
+		}
+		if p.control.phase == "recovering" && state.ProgressMS <= p.control.baseline {
 			return false, nil
 		}
 		p.observed = true
@@ -206,9 +279,24 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		p.recordProgress(state.ProgressMS)
 	}
 	if !matching || !state.IsPlaying {
-		if p.repeatConfirmed && p.nearEnd() {
+		if matching && p.repeatConfirmed && p.completedResume(state) {
+			p.report("completion decision: fresh stopped endpoint advanced after in-place resume")
+			return true, nil
+		}
+		if p.repeatConfirmed && p.nearEnd() && !p.control.deliberateStop {
 			p.report(fmt.Sprintf("completion decision: accepted observed transition after reaching %dms of %dms", p.maxProgress, p.playDurationMS))
 			return true, nil
+		}
+		if !matching && state.Item != nil && state.Device.ID != "" {
+			return false, p.block("Spotify changed song or device; restore the owned song/device before retrying")
+		}
+		if matching {
+			// An endpoint without fresh resume evidence is ambiguous. Reissuing
+			// Resume here could replay a song that has already finished.
+			if p.control.deliberateStop && p.playDurationMS > 0 && state.ProgressMS >= p.playDurationMS {
+				return false, nil
+			}
+			return false, p.controlPlayback(ctx, state, previousProgress)
 		}
 		if !p.candidateLogged {
 			p.report(fmt.Sprintf("completion decision: ignored transition without near-end evidence; maximumProgress=%dms, duration=%dms", p.maxProgress, p.playDurationMS))
@@ -216,9 +304,16 @@ func (p *Player) Finished(ctx context.Context) (bool, error) {
 		}
 		return false, nil
 	}
+	if err := p.controlPlayback(ctx, state, previousProgress); err != nil {
+		return false, err
+	}
 	remaining := time.Duration(state.Item.DurationMS-state.ProgressMS) * time.Millisecond
 	if remaining > time.Second {
 		p.nextCheck = now.Add(min(remaining+250*time.Millisecond, 5*time.Second))
+	}
+	if p.control.paused && p.control.target != nil && p.control.phase != "paused" {
+		remainingTarget := time.Duration(max(0, *p.control.target-state.ProgressMS)) * time.Millisecond
+		p.nextCheck = now.Add(max(250*time.Millisecond, min(time.Second, remainingTarget)))
 	}
 	return false, nil
 }
@@ -240,7 +335,7 @@ func (p *Player) recordProgress(progress int) {
 }
 
 func (p *Player) nearEnd() bool {
-	return p.playDurationMS > 0 && p.maxProgress >= max(0, p.playDurationMS-7_000)
+	return p.playDurationMS > 0 && p.maxProgress >= p.playDurationMS-min(7_000, p.playDurationMS/10)
 }
 
 func (p *Player) now() time.Time {
@@ -291,6 +386,13 @@ func normalizeReleaseTitle(title string) string {
 }
 
 func (p *Player) Stop(ctx context.Context) error {
+	owned, err := p.ownsState()
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return nil
+	}
 	if !p.prepared || !p.attempted {
 		return nil
 	}
@@ -305,10 +407,20 @@ func (p *Player) Stop(ctx context.Context) error {
 }
 
 func (p *Player) Close(ctx context.Context) error {
+	owned, err := p.ownsState()
+	if err != nil {
+		return err
+	}
+	if !owned {
+		return nil
+	}
 	if !p.prepared || !p.attempted {
 		return nil
 	}
 	stopErr := p.Stop(ctx)
+	if stopErr != nil {
+		return stopErr
+	} // Retain ownership evidence when stopping is uncertain.
 	if err := os.Remove(p.StatePath); err == nil || os.IsNotExist(err) {
 		p.prepared = false
 		p.attempted = false

@@ -75,6 +75,11 @@ func (c *Client) Play(ctx context.Context, deviceID, uri string) error {
 	return c.do(ctx, http.MethodPut, "/me/player/play?device_id="+url.QueryEscape(deviceID), map[string]any{"uris": []string{uri}, "position_ms": 0}, nil)
 }
 
+// Resume preserves the current occurrence: no URI or position is sent.
+func (c *Client) Resume(ctx context.Context, deviceID string) error {
+	return c.do(ctx, http.MethodPut, "/me/player/play?device_id="+url.QueryEscape(deviceID), nil, nil)
+}
+
 func (c *Client) Pause(ctx context.Context, deviceID string) error {
 	return c.do(ctx, http.MethodPut, "/me/player/pause?device_id="+url.QueryEscape(deviceID), nil, nil)
 }

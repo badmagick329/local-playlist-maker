@@ -2,6 +2,7 @@ package tracksession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"time"
 
@@ -22,11 +23,17 @@ type queuedPlay struct {
 // a distinct object, so skipping a later video never stops an earlier song's tail
 // or removes another occurrence of a repeated track.
 type playQueue struct {
-	runtime     *Runtime
-	pending     []*queuedPlay
-	active      *queuedPlay
-	video       *queuedPlay
-	statusError string
+	runtime        *Runtime
+	pending        []*queuedPlay
+	active         *queuedPlay
+	video          *queuedPlay
+	statusError    string
+	paused         bool
+	target         *int
+	intentSequence int
+	blocked        string
+	suspended      bool
+	evidence       json.RawMessage
 }
 
 func (q *playQueue) load(ctx context.Context, id string, position int, track tracking.Track) error {
@@ -48,7 +55,9 @@ func (q *playQueue) end(ctx context.Context, reason string) {
 		return
 	}
 	if q.active == play {
-		q.runtime.End(ctx)
+		if !q.suspended {
+			q.runtime.End(ctx)
+		}
 		q.active = nil
 	}
 	for i, pending := range q.pending {
@@ -61,6 +70,9 @@ func (q *playQueue) end(ctx context.Context, reason string) {
 
 func (q *playQueue) tick(ctx context.Context) error {
 	if q.active != nil && q.runtime.activeProvider == "spotify" {
+		if player, ok := q.runtime.Spotify.(controlledPlayer); ok {
+			player.Intent(q.paused && q.active == q.video, q.target)
+		}
 		finished, err := q.runtime.Spotify.Finished(ctx)
 		if err != nil {
 			var terminal *tracking.PlaybackFailure
@@ -94,10 +106,20 @@ func (q *playQueue) tick(ctx context.Context) error {
 func (q *playQueue) advance(ctx context.Context) error {
 	for q.active == nil && len(q.pending) > 0 {
 		play := q.pending[0]
-		q.pending = q.pending[1:]
+		if q.blocked != "" {
+			return nil
+		}
+		if play == q.video && q.paused && (q.target == nil || *q.target == 0) {
+			return nil
+		}
 		if err := q.runtime.Load(ctx, play.position, play.track); err != nil {
+			if q.runtime.activeProvider == "spotify" {
+				q.active = play
+				q.pending = q.pending[1:]
+			}
 			return err
 		}
+		q.pending = q.pending[1:]
 		q.active = play
 		q.statusError = ""
 		play.trackingStartedAt = time.Now()

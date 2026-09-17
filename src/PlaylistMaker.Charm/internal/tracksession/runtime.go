@@ -2,6 +2,7 @@ package tracksession
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -68,6 +69,15 @@ func (r *Runtime) Load(ctx context.Context, position int, track tracking.Track) 
 			r.diagnose(position, track.TrackID, "spotify", "", "")
 			return nil
 		} else {
+			var blocked *tracking.StartBlocked
+			if errors.As(err, &blocked) {
+				return err
+			}
+			var failure *tracking.PlaybackFailure
+			if errors.As(err, &failure) {
+				r.active, r.activeProvider = r.Spotify, "spotify"
+				return err
+			}
 			r.spotifyAvailable = false
 			r.spotifyUnavailable = err
 			r.diagnose(position, track.TrackID, "spotify", "", err.Error())

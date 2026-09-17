@@ -200,7 +200,10 @@ func TestFinishedDoesNotAcceptUnrelatedOrIdleStateWithoutNearEndEvidence(t *test
 	response = `{"is_playing":false,"repeat_state":"off","device":{"id":"device"},"item":{"uri":"spotify:track:song","duration_ms":240000},"progress_ms":1000}`
 	checkPending()
 	response = `{"is_playing":true,"repeat_state":"off","device":{"id":"device"},"item":{"uri":"spotify:track:other","duration_ms":200000},"progress_ms":5000}`
-	checkPending()
+	player.nextCheck = time.Time{}
+	if done, err := player.Finished(context.Background()); done || err == nil {
+		t.Fatalf("takeover not blocked: %v %v", done, err)
+	}
 }
 
 func TestFinishedDoesNotTreatBackwardProgressAsCompletion(t *testing.T) {
@@ -237,8 +240,9 @@ func TestFinishedDoesNotTreatBackwardProgressAsCompletion(t *testing.T) {
 		t.Fatal("stop after backward jump used stale near-end evidence")
 	}
 	response = `{"is_playing":true,"repeat_state":"off","device":{"id":"device"},"item":{"uri":"spotify:track:other","duration_ms":200000},"progress_ms":5000}`
-	if check() {
-		t.Fatal("transition after restart used stale near-end evidence")
+	player.nextCheck = time.Time{}
+	if done, err := player.Finished(context.Background()); done || err == nil {
+		t.Fatalf("takeover not blocked: %v %v", done, err)
 	}
 	if !strings.Contains(strings.Join(diagnostics, "\n"), "backward") {
 		t.Fatalf("missing backward-progress diagnostic: %#v", diagnostics)

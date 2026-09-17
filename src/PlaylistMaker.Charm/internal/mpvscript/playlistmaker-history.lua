@@ -1,4 +1,4 @@
--- playlistmaker-history-version: 8
+-- playlistmaker-history-version: 9
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
@@ -30,7 +30,18 @@ end
 local active = nil
 local terminal_entries = {}
 local event_sequence = 0
-local tracking_stopped = false
+local user_paused = mp.get_property_native("pause") or false
+local hold = manifest.statusPath ~= nil
+local untracked = false
+local imposed_pause = nil
+local intent_sequence = 0
+local heartbeat = nil
+local heartbeat_seen = mp.get_time()
+local status_revision = -1
+local status_message = "Waiting for tracking helper"
+local health_failed = false
+local emit_intent
+local enforce_hold
 
 local function utc_now()
     return os.date("!%Y-%m-%dT%H:%M:%SZ")
@@ -51,6 +62,10 @@ local function emit_session_event(name, position, reason, completed)
     append_json(config.event_path, {
         eventId = manifest.sessionId .. ":" .. tostring(event_sequence),
         event = name,
+        sessionId = manifest.sessionId,
+        occurrenceId = active and active.play_id,
+        paused = user_paused,
+        intentSequence = intent_sequence,
         eventAtUtc = utc_now(),
         playlistPosition = position,
         endReason = reason,
@@ -66,6 +81,10 @@ local function write_history(name, entry, fields)
     local value = {
         schemaVersion = 3,
         event = name,
+        sessionId = manifest.sessionId,
+        occurrenceId = active and active.play_id,
+        paused = user_paused,
+        intentSequence = intent_sequence,
         eventAtUtc = utc_now(),
         sessionId = manifest.sessionId,
         entryId = entry.entryId,
@@ -137,6 +156,68 @@ local function finish_active(reason)
     return counted
 end
 
+local function media_position()
+    local pos = mp.get_property_number("time-pos", nil)
+    if not pos then return nil end
+    local duration, raw, start = playback_duration()
+    if start and start > 0 and raw and raw > start then pos = pos - start end
+    return math.floor(math.max(0, pos) * 1000)
+end
+
+emit_intent = function(name)
+    if not active then return end
+    intent_sequence = intent_sequence + 1
+    event_sequence = event_sequence + 1
+    append_json(config.event_path, {
+        eventId = manifest.sessionId .. ":" .. tostring(event_sequence),
+        sessionId = manifest.sessionId, occurrenceId = active.play_id,
+        event = name or "intent", eventAtUtc = utc_now(),
+        playlistPosition = active.entry.playlistPosition,
+        paused = user_paused, positionMs = media_position(),
+        intentSequence = intent_sequence, statusRevision = status_revision,
+    })
+end
+
+enforce_hold = function()
+    local desired = user_paused or (hold and not untracked)
+    if mp.get_property_native("pause") ~= desired then
+        imposed_pause = desired
+        mp.set_property_native("pause", desired)
+    end
+end
+
+local restart_requested = false
+local function user_intent(paused)
+    user_paused = paused
+    if not paused and health_failed and manifest.helperExecutable and not restart_requested then
+        restart_requested = true
+        mp.command_native_async({name="subprocess", args={manifest.helperExecutable,"--track-session",config.manifest_path}, playback_only=false}, function() restart_requested=false end)
+    end
+    if not paused and manifest.statusPath and not untracked then hold = true end
+    emit_intent("intent")
+    enforce_hold()
+end
+
+mp.observe_property("pause", "bool", function(_, paused)
+    if imposed_pause ~= nil and paused == imposed_pause then imposed_pause = nil; return end
+    if not active then return end
+    user_intent(paused)
+end)
+mp.add_forced_key_binding("SPACE", "tracking-toggle", function() if hold then user_intent(false) else user_intent(not user_paused) end end)
+mp.add_forced_key_binding("p", "tracking-toggle-p", function() user_intent(not user_paused) end)
+mp.add_forced_key_binding("PLAY", "tracking-play", function() user_intent(false) end)
+mp.add_forced_key_binding("PAUSE", "tracking-pause", function() user_intent(true) end)
+mp.register_script_message("playlistmaker-retry", function() user_intent(false) end)
+mp.register_script_message("playlistmaker-pause", function() user_intent(true) end)
+local function continue_untracked()
+    emit_intent("untracked")
+    untracked, hold, user_paused = true, false, false
+    enforce_hold()
+    mp.osd_message("Continuing without tracking", 5)
+end
+mp.add_forced_key_binding("Ctrl+Shift+u", "continue-without-tracking", continue_untracked)
+mp.register_script_message("playlistmaker-untracked", continue_untracked)
+
 local function start_play(name)
     local position = mp.get_property_number("playlist-pos", -1)
     local entry = manifest.entries[position + 1]
@@ -146,6 +227,9 @@ local function start_play(name)
     active = {entry = entry, watched_seconds = 0, last_tick = mp.get_time(), duration = duration, raw = raw, start = start}
     emit_session_event(name, position, nil)
     active.play_id = manifest.sessionId .. ":" .. tostring(event_sequence)
+    if manifest.statusPath and not untracked then hold = true end
+    emit_intent("intent")
+    enforce_hold()
     write_history("started", entry, {durationSeconds = duration, rawDurationSeconds = raw, demuxerStartSeconds = start})
 end
 
@@ -159,6 +243,7 @@ mp.observe_property("time-pos", "number", function(_, position)
     if not active or not position then return end
     local previous = active.position
     active.position = position
+    if user_paused then emit_intent("intent"); return end
     local duration = active.duration
     local looping = mp.get_property("loop-file", "no") ~= "no"
     if not looping or not previous or not duration or duration <= 0 then return end
@@ -170,15 +255,45 @@ mp.observe_property("time-pos", "number", function(_, position)
     end
 end)
 mp.add_periodic_timer(0.25, function()
-	if not tracking_stopped and manifest.pausePath then
-		local pause_file = io.open(manifest.pausePath, "r")
-		if pause_file then
-			pause_file:close()
-			tracking_stopped = true
-			mp.set_property_native("pause", true)
-			mp.osd_message("PlaylistMaker tracking stopped; video paused", 10)
-		end
-	end
+    if manifest.statusPath and not untracked then
+        local file = io.open(manifest.statusPath, "r")
+        local status = nil
+        if file then status = utils.parse_json(file:read("*a")); file:close() end
+        if status and status.sessionId == manifest.sessionId then
+            if heartbeat ~= status.heartbeat then
+                heartbeat = status.heartbeat
+                heartbeat_seen = mp.get_time()
+                health_failed = false
+            end
+            if active and status.occurrenceId == active.play_id and status.intentSequence == intent_sequence then
+                hold = status.hold
+                status_message = status.message
+                if status_revision ~= status.revision then
+                    status_revision = status.revision
+                    enforce_hold()
+                    -- Acknowledgements do not change user intent sequence.
+                    event_sequence = event_sequence + 1
+                    append_json(config.event_path, {eventId=manifest.sessionId .. ":" .. event_sequence,
+                        sessionId=manifest.sessionId, occurrenceId=active.play_id,
+                        event="hold-ack", paused=mp.get_property_native("pause"), statusRevision=status_revision, eventAtUtc=utc_now()})
+                end
+            end
+        end
+        if mp.get_time() - heartbeat_seen > 15 then
+            hold = true
+            status_message = "Tracking helper unresponsive. Video held; restart helper or Ctrl+Shift+U to continue without tracking."
+            if not health_failed then
+                emit_intent("health-failure"); health_failed = true
+                if manifest.helperExecutable then
+                    mp.command_native_async({name="subprocess",args={manifest.helperExecutable,"--tracking-notification"},playback_only=false},function() end)
+                end
+            end
+        end
+        enforce_hold()
+        if hold or user_paused then
+            mp.osd_message("PlaylistMaker: " .. (status_message or "Tracking held") .. "\nPlay: retry/resume | Ctrl+Shift+U: without tracking", 1)
+        end
+    end
     if not active then return end
     local now = mp.get_time()
     if not mp.get_property_native("pause") then

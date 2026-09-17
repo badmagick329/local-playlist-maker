@@ -51,6 +51,10 @@ func (s OSStarter) Start(ctx context.Context, manifestPath string, manifest Mani
 			return nil, err
 		}
 	}
+	manifest.HelperExecutable = executable
+	if err := WriteManifest(manifestPath, manifest); err != nil {
+		return nil, err
+	}
 	command := exec.Command(executable, "--track-session", manifestPath)
 	configureHidden(command)
 	if err := command.Start(); err != nil {

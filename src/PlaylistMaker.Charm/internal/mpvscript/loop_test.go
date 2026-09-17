@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	"playlistmaker/charm/internal/history"
+	"playlistmaker/charm/internal/tracking"
+	"playlistmaker/charm/internal/tracksession"
 )
 
 // Real mpv events matter here: loop-file does not emit file-loaded or end-file.
@@ -113,7 +114,7 @@ func TestMPVRepeatedPlays(t *testing.T) {
 	}
 }
 
-func TestMPVPausesWhenTrackingStops(t *testing.T) {
+func TestMPVPersistentHoldAndUserIntent(t *testing.T) {
 	mpv, err := exec.LookPath("mpv")
 	if err != nil {
 		t.Skip("mpv is not installed")
@@ -125,73 +126,157 @@ func TestMPVPausesWhenTrackingStops(t *testing.T) {
 	}
 	manifest := filepath.Join(dir, "manifest.json")
 	events := filepath.Join(dir, "events.jsonl")
-	pause := filepath.Join(dir, "tracking-stopped")
-	marker := filepath.Join(dir, "paused")
-	manifestContents, _ := json.Marshal(map[string]any{
-		"sessionId": "test", "pausePath": pause,
-		"entries": []map[string]any{{"entryId": "entry", "playlistPosition": 0, "videoPath": "test.wav", "track": map[string]any{"trackId": "track"}}},
-	})
-	if err := os.WriteFile(manifest, manifestContents, 0o600); err != nil {
+	status := filepath.Join(dir, "status.json")
+	marker := filepath.Join(dir, "result")
+	data, _ := json.Marshal(map[string]any{"sessionId": "test", "statusPath": status, "entries": []map[string]any{{"entryId": "entry", "playlistPosition": 0, "track": map[string]any{"trackId": "track"}}}})
+	if err = os.WriteFile(manifest, data, 0600); err != nil {
 		t.Fatal(err)
 	}
 	var wav bytes.Buffer
 	wav.WriteString("RIFF")
-	binary.Write(&wav, binary.LittleEndian, uint32(48000+36))
+	binary.Write(&wav, binary.LittleEndian, uint32(480000+36))
 	wav.WriteString("WAVEfmt ")
-	for _, value := range []any{uint32(16), uint16(1), uint16(1), uint32(8000), uint32(16000), uint16(2), uint16(16)} {
-		binary.Write(&wav, binary.LittleEndian, value)
+	for _, v := range []any{uint32(16), uint16(1), uint16(1), uint32(8000), uint32(16000), uint16(2), uint16(16)} {
+		binary.Write(&wav, binary.LittleEndian, v)
 	}
 	wav.WriteString("data")
-	binary.Write(&wav, binary.LittleEndian, uint32(48000))
-	wav.Write(make([]byte, 48000))
+	binary.Write(&wav, binary.LittleEndian, uint32(480000))
+	wav.Write(make([]byte, 480000))
 	media := filepath.Join(dir, "test.wav")
-	if err := os.WriteFile(media, wav.Bytes(), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	probe := filepath.Join(dir, "pause-probe.lua")
-	probeSource := `local mp = require("mp")
-local options = require("mp.options")
-local config = { marker_path = "" }
-options.read_options(config, "pause_probe")
-mp.observe_property("pause", "bool", function(_, paused)
-    if paused and config.marker_path ~= "" then
-        local file = io.open(config.marker_path, "w")
-        if file then file:write("paused"); file:close() end
-        mp.commandv("quit")
-    end
+	os.WriteFile(media, wav.Bytes(), 0600)
+	probe := filepath.Join(dir, "probe.lua")
+	source := `local mp=require("mp")
+local utils=require("mp.utils")
+local o={events="",status="",marker=""};require("mp.options").read_options(o,"probe")
+local revision=0
+local sequence=0
+local occurrence=""
+local failed=false
+local function check(value,label)
+ if mp.get_property_native("pause")~=value then
+  failed=true;local f=io.open(o.marker,"a");f:write(label .. " failed\n");f:close()
+ end
+end
+local function publish(state,held,stale)
+ local f=io.open(o.events,"r")
+ if f then for line in f:lines() do local e=utils.parse_json(line)
+  if e and (e.event=="file-loaded" or e.event=="playback-repeat") then occurrence=e.eventId end
+  if e and e.event=="intent" then sequence=e.intentSequence end
+ end f:close() end
+ revision=revision+1
+ f=io.open(o.status,"w");f:write(utils.format_json({sessionId="test",occurrenceId=occurrence,intentSequence=stale and sequence-1 or sequence,revision=revision,heartbeat=revision,state=state,hold=held,message=state}));f:close()
+end
+mp.add_timeout(0.5,function() publish("playing",false) end)
+mp.add_timeout(1.0,function() check(false,"initial release");publish("recovering",true) end)
+mp.add_timeout(1.5,function() check(true,"recovery hold");mp.commandv("script-message","playlistmaker-pause") end)
+mp.add_timeout(2.0,function() publish("playing",false) end)
+mp.add_timeout(2.5,function() check(true,"user pause during recovery");mp.commandv("script-message","playlistmaker-retry") end)
+mp.add_timeout(3.0,function() publish("blocked",true) end)
+mp.add_timeout(3.5,function() mp.set_property_native("pause",false) end)
+mp.add_timeout(4.0,function() check(true,"first Play bypass");mp.set_property_native("pause",false) end)
+mp.add_timeout(4.5,function() check(true,"second Play bypass");publish("playing",false,true) end)
+mp.add_timeout(5.0,function() check(true,"stale acknowledgement");publish("playing",false) end)
+mp.add_timeout(5.5,function() check(false,"healthy release") end)
+mp.add_timeout(21.0,function() check(true,"heartbeat loss");mp.commandv("script-message","playlistmaker-untracked") end)
+mp.add_timeout(21.5,function()
+ check(false,"explicit untracked")
+ local f=io.open(o.marker,"a");if not failed then f:write("ok") end;f:close();mp.commandv("quit")
 end)`
-	if err := os.WriteFile(probe, []byte(probeSource), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	os.WriteFile(probe, []byte(source), 0600)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, mpv,
-		"--no-config", "--ao=null", "--vo=null", "--script="+script, "--script="+probe,
-		"--script-opt=playlistmaker_history-manifest_path="+manifest,
-		"--script-opt=playlistmaker_history-event_path="+events,
-		"--script-opt=pause_probe-marker_path="+marker, media)
-	var output bytes.Buffer
-	command.Stdout, command.Stderr = io.Discard, &output
-	if err := command.Start(); err != nil {
-		t.Fatal(err)
+	output, err := exec.CommandContext(ctx, mpv, "--no-config", "--ao=null", "--vo=null", "--script="+script, "--script="+probe,
+		"--script-opt=playlistmaker_history-manifest_path="+manifest, "--script-opt=playlistmaker_history-event_path="+events,
+		"--script-opt=probe-events="+events, "--script-opt=probe-status="+status, "--script-opt=probe-marker="+marker, media).CombinedOutput()
+	result, _ := os.ReadFile(marker)
+	if err != nil || string(result) != "ok" {
+		t.Fatalf("mpv control: %v, %s\n%s", err, result, output)
 	}
-	for {
-		contents, _ := os.ReadFile(events)
-		if bytes.Contains(contents, []byte(`"file-loaded"`)) {
-			break
+	contents, _ := os.ReadFile(events)
+	var intents []bool
+	for _, line := range bytes.Split(contents, []byte("\n")) {
+		var e struct {
+			Event  string `json:"event"`
+			Paused bool   `json:"paused"`
 		}
-		if ctx.Err() != nil {
-			t.Fatal("mpv did not load the synthetic clip")
+		if json.Unmarshal(line, &e) == nil && e.Event == "intent" {
+			intents = append(intents, e.Paused)
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-	if err := os.WriteFile(pause, []byte("tracking failed\n"), 0o600); err != nil {
-		t.Fatal(err)
+	if len(intents) < 2 || intents[0] || !intents[1] {
+		t.Fatalf("system hold became user pause: %v\n%s", intents, contents)
 	}
-	if err := command.Wait(); err != nil {
-		t.Fatalf("mpv pause probe: %v\n%s", err, output.Bytes())
-	}
-	if contents, err := os.ReadFile(marker); err != nil || string(contents) != "paused" {
-		t.Fatalf("mpv did not observe the tracking pause: %q, %v", contents, err)
-	}
+	t.Run("actual-helper", func(t *testing.T) {
+		path, m, err := tracksession.Create(t.TempDir(), []tracksession.Entry{{VideoPath: media, Track: tracking.Track{SpotifyURI: "spotify:track:synthetic"}}}, false, false, "", 50)
+		if err != nil {
+			t.Fatal(err)
+		}
+		m.MPVProcessID = 123
+		if err = tracksession.WriteManifest(path, m); err != nil {
+			t.Fatal(err)
+		}
+		player := &mpvTestSpotify{}
+		runner := tracksession.Runner{Runtime: &tracksession.Runtime{Spotify: player}, Poll: 10 * time.Millisecond, IsAlive: func(int) bool { return true }}
+		ctx, cancel := context.WithTimeout(context.Background(), 12*time.Second)
+		defer cancel()
+		done := make(chan error, 1)
+		go func() { done <- runner.Run(ctx, path) }()
+		probe := filepath.Join(filepath.Dir(path), "helper-probe.lua")
+		marker := filepath.Join(filepath.Dir(path), "result")
+		source := `local mp=require("mp")
+local o={marker=""};require("mp.options").read_options(o,"probe")
+local failed=false
+local function check(paused,label)
+ if mp.get_property_native("pause")~=paused then
+  failed=true;local f=io.open(o.marker,"a");f:write(label .. " failed\n");f:close()
+ end
+end
+mp.add_timeout(0.8,function() check(false,"start");mp.commandv("script-message","playlistmaker-pause") end)
+mp.add_timeout(1.3,function() check(true,"manual pause") end)
+mp.add_timeout(1.6,function() mp.commandv("script-message","playlistmaker-retry") end)
+mp.add_timeout(2.3,function() check(false,"manual resume") end)
+mp.add_timeout(3.7,function() check(true,"failure hold");mp.commandv("script-message","playlistmaker-retry") end)
+mp.add_timeout(4.5,function() check(false,"recovered");local f=io.open(o.marker,"a");if not failed then f:write("ok") end;f:close();mp.commandv("quit") end)`
+		if err = os.WriteFile(probe, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+		output, err := exec.CommandContext(ctx, mpv, "--no-config", "--ao=null", "--vo=null", "--script="+script, "--script="+probe,
+			"--script-opt=playlistmaker_history-manifest_path="+path, "--script-opt=playlistmaker_history-event_path="+m.EventPath, "--script-opt=probe-marker="+marker, media).CombinedOutput()
+		result, _ := os.ReadFile(marker)
+		if err != nil || string(result) != "ok" {
+			cancel()
+			<-done
+			t.Fatalf("actual helper: %v %s\n%s", err, result, output)
+		}
+		if err = <-done; err != nil {
+			t.Fatal(err)
+		}
+		if len(player.Started) != 1 || !player.recovered {
+			t.Fatal("helper restarted occurrence or failed to retry")
+		}
+	})
 }
+
+type mpvTestSpotify struct {
+	tracking.Fake
+	started   time.Time
+	phase     string
+	recovered bool
+}
+
+func (p *mpvTestSpotify) Preflight(context.Context, string) error { return nil }
+func (p *mpvTestSpotify) Start(ctx context.Context, track tracking.Track) error {
+	p.started = time.Now()
+	p.phase = "playing"
+	return p.Fake.Start(ctx, track)
+}
+func (p *mpvTestSpotify) Finished(context.Context) (bool, error) {
+	if time.Since(p.started) >= 3*time.Second && !p.recovered {
+		p.phase = "blocked"
+		return false, &tracking.PlaybackFailure{Message: "Synthetic Spotify interruption"}
+	}
+	return false, nil
+}
+func (p *mpvTestSpotify) Intent(bool, *int)                {}
+func (p *mpvTestSpotify) TrackingStatus() (string, string) { return p.phase, p.phase }
+func (p *mpvTestSpotify) Retry()                           { p.recovered = true; p.phase = "playing" }

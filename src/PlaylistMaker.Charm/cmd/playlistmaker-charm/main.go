@@ -117,10 +117,16 @@ func main() {
 	configPath := flag.String("config", "", "path to PlaylistMaker config")
 	disableHistory := flag.Bool("disable-history", false, "disable new playback-history sessions")
 	allowUntracked := flag.Bool("allow-untracked-playback", false, "allow mpv playback without Spotify or local tracking")
+	trackingNotification := flag.Bool("tracking-notification", false, "show tracking health notification")
 	trackSession := flag.String("track-session", "", "run the hidden tracking helper for a playback manifest")
 	migrateMapping := flag.String("migrate-mapping", "", "one-time path to the legacy video-to-audio mapping")
 	check := flag.Bool("check", false, "load the selected library and exit")
 	flag.Parse()
+	if *trackingNotification {
+		tracksession.NotifyTrackingFailure()
+		time.Sleep(8 * time.Second)
+		return
+	}
 	if *trackSession != "" {
 		manifest, err := tracksession.ReadManifest(*trackSession)
 		if err != nil {
@@ -141,7 +147,7 @@ func main() {
 			client := &spotify.Client{Auth: auth}
 			runtime.Spotify = &spotify.Player{Client: client, StatePath: manifest.SpotifyStatePath, SessionID: manifest.SessionID, HelperPID: os.Getpid()}
 		}
-		if err := (tracksession.Runner{Runtime: runtime, DeviceName: goConfig.SpotifyDeviceName}).Run(context.Background(), *trackSession); err != nil {
+		if err := (tracksession.Runner{Runtime: runtime, DeviceName: goConfig.SpotifyDeviceName, Notify: tracksession.NotifyTrackingFailure}).Run(context.Background(), *trackSession); err != nil {
 			fmt.Fprintf(os.Stderr, "PlaylistMaker tracking helper failed: %v\n", err)
 			os.Exit(1)
 		}

@@ -2,6 +2,7 @@ package tracksession
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -45,36 +46,6 @@ func TestRunnerRestartsRepeatedTrackAndDeduplicatesEvents(t *testing.T) {
 	}
 }
 
-func TestRunnerTerminatesMPVAfterDisallowedUntrackedFallback(t *testing.T) {
-	directory := t.TempDir()
-	track := tracking.Track{TrackID: "one", Artist: "Artist", Title: "Title", SpotifyURI: "spotify:track:one", LocalAudioPath: "one.flac"}
-	manifestPath, manifest, err := Create(directory, []Entry{{VideoPath: "one.mkv", Track: track}}, false, false, "", 50)
-	if err != nil {
-		t.Fatal(err)
-	}
-	manifest.MPVProcessID = 123
-	if err := WriteManifest(manifestPath, manifest); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(manifest.EventPath, []byte(`{"eventId":"loaded","event":"file-loaded","playlistPosition":0}`+"\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	spotify := &fakeSpotify{Fake: tracking.Fake{Err: errors.New("Spotify failed")}}
-	local := &tracking.Fake{Err: errors.New("foobar failed")}
-	terminated := 0
-	runner := Runner{Runtime: &Runtime{Spotify: spotify, Local: local}, Poll: time.Millisecond, IsAlive: func(int) bool { return true }, Terminate: func(pid int) error { terminated = pid; return nil }}
-	err = runner.Run(context.Background(), manifestPath)
-	if err == nil || terminated != 123 {
-		t.Fatalf("run error = %v, terminated pid = %d", err, terminated)
-	}
-	if spotify.Closed != 1 {
-		t.Fatalf("Spotify close calls = %d", spotify.Closed)
-	}
-	if _, statErr := os.Stat(manifestPath); statErr != nil {
-		t.Fatal("failed session manifest was removed")
-	}
-}
-
 type laterStartFailureSpotify struct {
 	controlledSpotify
 	attempts []string
@@ -88,8 +59,8 @@ func (s *laterStartFailureSpotify) Start(ctx context.Context, track tracking.Tra
 	return s.controlledSpotify.Start(ctx, track)
 }
 
-func TestRunnerRequestsMPVPauseAndStopsFailedTrackingSession(t *testing.T) {
-	for _, scenario := range []string{"status failure", "later load failure", "deferred start failure"} {
+func TestRunnerPreservesQueueAndPersistentHoldAfterFailure(t *testing.T) {
+	for _, scenario := range []string{"status failure", "deferred start failure"} {
 		t.Run(scenario, func(t *testing.T) {
 			directory := t.TempDir()
 			entries := []Entry{
@@ -127,33 +98,48 @@ func TestRunnerRequestsMPVPauseAndStopsFailedTrackingSession(t *testing.T) {
 				spotify = &later.controlledSpotify
 				player = later
 			}
-			terminated := 0
-			runner := Runner{Runtime: &Runtime{Spotify: player}, Poll: time.Millisecond, IsAlive: func(int) bool { return true }, Terminate: func(pid int) error { terminated = pid; return nil }}
-			err = runner.Run(context.Background(), manifestPath)
-			if scenario == "status failure" && !errors.Is(err, failure) || scenario != "status failure" && (err == nil || !strings.Contains(err.Error(), "later Spotify start failed")) {
-				t.Fatalf("run error = %v", err)
+			runner := Runner{Runtime: &Runtime{Spotify: player}, Poll: time.Millisecond, IsAlive: func(int) bool { return true }}
+			ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			result := make(chan error, 1)
+			go func() { result <- runner.Run(ctx, manifestPath) }()
+			for ctx.Err() == nil {
+				data, _ := os.ReadFile(manifest.StatusPath)
+				var status Status
+				if json.Unmarshal(data, &status) == nil && status.State == "blocked" {
+					cancel()
+					break
+				}
+				time.Sleep(time.Millisecond)
 			}
+			err = <-result
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("helper did not stay recoverable: %v", err)
+			}
+
 			if later != nil && (len(later.attempts) != 2 || later.attempts[1] != "spotify:track:advice") {
 				t.Fatalf("unexpected start attempts: %v", later.attempts)
 			}
-			if terminated != 0 {
-				t.Fatalf("mpv was terminated after tracking startup: %d", terminated)
+			data, readErr := os.ReadFile(manifest.StatusPath)
+			var status Status
+			if readErr != nil || json.Unmarshal(data, &status) != nil || !status.Hold || status.State != "blocked" {
+				t.Fatalf("persistent hold missing: %s %v", data, readErr)
 			}
-			pause, pauseErr := os.ReadFile(manifest.PausePath)
-			if pauseErr != nil || !strings.Contains(string(pause), err.Error()) {
-				t.Fatalf("mpv pause was not requested: %q, %v", pause, pauseErr)
+			if _, e := os.Stat(manifest.CheckpointPath); e != nil {
+				t.Fatal("queue checkpoint missing", e)
 			}
+
 			if len(spotify.Started) != 1 || spotify.Started[0].SpotifyURI != "spotify:track:bingle" {
 				t.Fatalf("queued play started after failure: %#v", spotify.Started)
 			}
-			if spotify.Closed != 1 {
+			if spotify.Closed != 0 {
 				t.Fatalf("tracking runtime close calls = %d", spotify.Closed)
 			}
 			if _, err := os.Stat(manifest.LockPath); !os.IsNotExist(err) {
 				t.Fatalf("tracking ownership retained: %v", err)
 			}
 			contents, err := os.ReadFile(filepath.Join(directory, "tracking-error.txt"))
-			if err != nil || !strings.Contains(string(contents), "Tracking stopped:") {
+			if err != nil || len(contents) == 0 {
 				t.Fatalf("tracking failure not exposed: %q, %v", contents, err)
 			}
 		})
