@@ -4,21 +4,12 @@
 /data/
 /notes/
 
-# Generated artifacts and publishing output
-/artifacts/
-/publish/
-bin/
-obj/
-
 # IDE metadata
 .idea/
 .vscode/
-*.sln.DotSettings.user
 
 # Binaries and temporary files
 *.exe
-*.dll
-*.pdb
 *.tmp
 *.log
 *.cache
