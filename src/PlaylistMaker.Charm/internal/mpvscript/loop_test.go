@@ -134,14 +134,14 @@ func TestMPVPersistentHoldAndUserIntent(t *testing.T) {
 	}
 	var wav bytes.Buffer
 	wav.WriteString("RIFF")
-	binary.Write(&wav, binary.LittleEndian, uint32(480000+36))
+	binary.Write(&wav, binary.LittleEndian, uint32(960000+36))
 	wav.WriteString("WAVEfmt ")
 	for _, v := range []any{uint32(16), uint16(1), uint16(1), uint32(8000), uint32(16000), uint16(2), uint16(16)} {
 		binary.Write(&wav, binary.LittleEndian, v)
 	}
 	wav.WriteString("data")
-	binary.Write(&wav, binary.LittleEndian, uint32(480000))
-	wav.Write(make([]byte, 480000))
+	binary.Write(&wav, binary.LittleEndian, uint32(960000))
+	wav.Write(make([]byte, 960000))
 	media := filepath.Join(dir, "test.wav")
 	os.WriteFile(media, wav.Bytes(), 0600)
 	probe := filepath.Join(dir, "probe.lua")
@@ -177,13 +177,15 @@ mp.add_timeout(4.0,function() check(true,"first Play bypass");mp.set_property_na
 mp.add_timeout(4.5,function() check(true,"second Play bypass");publish("playing",false,true) end)
 mp.add_timeout(5.0,function() check(true,"stale acknowledgement");publish("playing",false) end)
 mp.add_timeout(5.5,function() check(false,"healthy release") end)
-mp.add_timeout(21.0,function() check(true,"heartbeat loss");mp.commandv("script-message","playlistmaker-untracked") end)
-mp.add_timeout(21.5,function()
+mp.add_timeout(21.0,function() check(true,"heartbeat loss");publish("playing",false) end)
+mp.add_timeout(21.5,function() check(false,"heartbeat recovery");publish("playing",false) end)
+mp.add_timeout(37.0,function() check(true,"second heartbeat loss");mp.commandv("script-message","playlistmaker-untracked") end)
+mp.add_timeout(37.5,function()
  check(false,"explicit untracked")
  local f=io.open(o.marker,"a");if not failed then f:write("ok") end;f:close();mp.commandv("quit")
 end)`
 	os.WriteFile(probe, []byte(source), 0600)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, mpv, "--no-config", "--ao=null", "--vo=null", "--script="+script, "--script="+probe,
 		"--script-opt=playlistmaker_history-manifest_path="+manifest, "--script-opt=playlistmaker_history-event_path="+events,

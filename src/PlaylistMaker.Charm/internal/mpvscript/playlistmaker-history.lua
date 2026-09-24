@@ -285,7 +285,9 @@ mp.add_periodic_timer(0.25, function()
             hold = true
             status_message = "Tracking helper unresponsive. Video held; restart helper or Ctrl+Shift+U to continue without tracking."
             if not health_failed then
-                emit_intent("health-failure"); health_failed = true
+                -- Not an intent: the helper never acknowledges it, so bumping the
+                -- sequence would keep the hold after the heartbeat recovers.
+                emit_session_event("health-failure", -1); health_failed = true
                 if manifest.helperExecutable then
                     mp.command_native_async({name="subprocess",args={manifest.helperExecutable,"--tracking-notification"},playback_only=false},function() end)
                 end
