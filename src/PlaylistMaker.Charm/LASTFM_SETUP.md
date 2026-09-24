@@ -39,7 +39,7 @@ Current obsessions uses the latest cached scrobble date across the whole history
 
 Generated mixes select one video per track. Performances chooses that video, except the familiar/unseen preset fixes it to Unseen only. Track count limits the generated selection; fewer tracks are returned when the filters or history leave too few candidates. All mixes respect the current filtered library and eligible video categories and dates.
 
-Order defaults to Mix order for generated mixes. Explicitly choosing Shuffle changes the playback order. Manual queues offer Queue order or Shuffle, an optional One video per track setting, and Play first N, where zero means all. The manual limit takes the first selected entries before shuffling. Version choice resolves multiple queued performances when One video per track is enabled.
+Order defaults to Mix order for generated mixes. Explicitly choosing Shuffle changes the playback order. Manual queues offer Queue order or Shuffle, an optional One video per track setting, and Play first N, where zero means all. With Shuffle, the whole selected queue is shuffled before the manual limit is applied. Version choice resolves multiple queued performances when One video per track is enabled.
 
 Repeat each applies after selection, limiting and ordering. A count of 20 with repeat 2 produces up to 40 plays, with each pair consecutive. Generated queues contain concrete videos; changing Performances later does not replace them. The `o` shortcut plays the existing queue or highlighted media without generating another mix.
 

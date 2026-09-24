@@ -180,12 +180,12 @@ func (s Service) Plan(ids []string, options backend.PlaybackOptions) ([]Item, er
 			}
 		}
 	}
+	if options.Shuffle {
+		s.random().Shuffle(len(queued), func(i, j int) { queued[i], queued[j] = queued[j], queued[i] })
+	}
 	// Limits count selected videos; repeats are consecutive occurrences of that selection.
 	if options.MaximumItems > 0 && len(queued) > options.MaximumItems {
 		queued = queued[:options.MaximumItems]
-	}
-	if options.Shuffle {
-		s.random().Shuffle(len(queued), func(i, j int) { queued[i], queued[j] = queued[j], queued[i] })
 	}
 	expanded := make([]indexed, 0, len(queued)*options.RepeatEach)
 	for _, value := range queued {
