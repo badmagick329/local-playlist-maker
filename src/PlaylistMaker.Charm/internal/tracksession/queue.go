@@ -34,10 +34,18 @@ type playQueue struct {
 	blocked        string
 	suspended      bool
 	evidence       json.RawMessage
+	now            func() time.Time
+}
+
+func (q *playQueue) clock() time.Time {
+	if q.now != nil {
+		return q.now()
+	}
+	return time.Now()
 }
 
 func (q *playQueue) load(ctx context.Context, id string, position int, track tracking.Track) error {
-	play := &queuedPlay{id: id, position: position, track: track, videoStartedAt: time.Now()}
+	play := &queuedPlay{id: id, position: position, track: track, videoStartedAt: q.clock()}
 	q.video = play
 	q.pending = append(q.pending, play)
 	return q.advance(ctx)
@@ -51,7 +59,7 @@ func (q *playQueue) end(ctx context.Context, reason string) {
 	}
 	if reason == "eof" {
 		play.completed = true
-		play.videoDuration = time.Since(play.videoStartedAt)
+		play.videoDuration = q.clock().Sub(play.videoStartedAt)
 		return
 	}
 	if q.active == play {
@@ -96,7 +104,7 @@ func (q *playQueue) tick(ctx context.Context) error {
 	// A local fallback can also start late behind Spotify. Give it the video's
 	// playback time instead of starting and immediately stopping an ended video.
 	if q.active != nil && q.active.completed && q.runtime.activeProvider != "spotify" &&
-		(q.runtime.activeProvider == "untracked" || time.Since(q.active.trackingStartedAt) >= q.active.videoDuration) {
+		(q.runtime.activeProvider == "untracked" || q.clock().Sub(q.active.trackingStartedAt) >= q.active.videoDuration) {
 		q.runtime.End(ctx)
 		q.active = nil
 	}
@@ -122,7 +130,7 @@ func (q *playQueue) advance(ctx context.Context) error {
 		q.pending = q.pending[1:]
 		q.active = play
 		q.statusError = ""
-		play.trackingStartedAt = time.Now()
+		play.trackingStartedAt = q.clock()
 		if play.completed && q.runtime.activeProvider == "untracked" {
 			q.runtime.End(ctx)
 			q.active = nil

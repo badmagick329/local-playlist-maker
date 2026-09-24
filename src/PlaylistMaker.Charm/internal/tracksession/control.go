@@ -55,7 +55,13 @@ func (q *playQueue) status(session string, revision int) Status {
 	if q.active != nil && q.runtime.activeProvider == "spotify" {
 		if p, ok := q.runtime.Spotify.(controlledPlayer); ok {
 			s.State, s.Message = p.TrackingStatus()
-			s.Hold = s.State == "recovering" || s.State == "pausing" || s.State == "blocked" || s.State == ""
+			s.Hold = s.State == "recovering" || s.State == "pausing" || s.State == "blocked"
+			if s.State == "" {
+				s.State, s.Message = "starting", "Waiting for Spotify to start the song"
+				if s.Hold = !q.inStartGrace(); s.Hold {
+					s.Message = "Spotify has not confirmed the song; video held"
+				}
+			}
 		}
 	} else if q.idle() {
 		s.State, s.Message = "tracking-completed", "Tracking completed"
@@ -64,6 +70,23 @@ func (q *playQueue) status(session string, revision int) Status {
 		s.State, s.Message = "user-paused", "Video paused"
 	}
 	return s
+}
+
+// Holding an already-playing video for every late song start pauses it on
+// each routine switch. A late start gets a short confirmation window instead;
+// a start that is still unconfirmed afterwards holds the video as before.
+const (
+	startGrace         = 5 * time.Second
+	lateStartThreshold = 2 * time.Second
+)
+
+func (q *playQueue) inStartGrace() bool {
+	a := q.active
+	if a == nil || a.trackingStartedAt.IsZero() {
+		return false
+	}
+	late := a != q.video || a.trackingStartedAt.Sub(a.videoStartedAt) >= lateStartThreshold
+	return late && q.clock().Sub(a.trackingStartedAt) < startGrace
 }
 
 func writeJSON(path string, value any) error {

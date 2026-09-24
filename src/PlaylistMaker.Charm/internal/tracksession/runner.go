@@ -64,7 +64,7 @@ func (r Runner) Run(ctx context.Context, manifestPath string) error {
 		_ = WriteReady(manifest.ReadyPath, Ready{Error: err.Error()})
 		return err
 	}
-	queue := playQueue{runtime: r.Runtime}
+	queue := playQueue{runtime: r.Runtime, now: r.now}
 	offset, inputEnded, err := queue.restore(manifest.CheckpointPath, manifest)
 	if err != nil {
 		return err

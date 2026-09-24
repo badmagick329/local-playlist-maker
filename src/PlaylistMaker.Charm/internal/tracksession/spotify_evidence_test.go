@@ -78,7 +78,7 @@ func newSpotifyQueueFixture(t *testing.T) *spotifyQueueFixture {
 	if err := runtime.Prepare(context.Background(), "fixture", []Entry{{Track: tracking.Track{SpotifyURI: "spotify:track:first"}}}); err != nil {
 		t.Fatal(err)
 	}
-	f.queue = &playQueue{runtime: runtime}
+	f.queue = &playQueue{runtime: runtime, now: func() time.Time { return f.now }}
 	if err := f.queue.load(context.Background(), "first", 0, tracking.Track{SpotifyURI: "spotify:track:first"}); err != nil {
 		t.Fatal(err)
 	}
@@ -168,5 +168,108 @@ func TestQueueStillAdvancesAfterNaturalCompletion(t *testing.T) {
 	f.tick(t, 2*time.Second)
 	if len(f.starts) != 2 || f.resumes != 0 || f.queue.active.id != "second" {
 		t.Fatal("natural completion no longer advances queue")
+	}
+}
+
+func (f *spotifyQueueFixture) finishSong(t *testing.T) {
+	t.Helper()
+	f.state.ProgressMS = 179000
+	f.tick(t, 179*time.Second)
+	f.state.IsPlaying = false
+	f.state.ProgressMS = 180000
+	f.tick(t, 2*time.Second)
+}
+
+func (f *spotifyQueueFixture) loadVideo(t *testing.T, id string, position int) {
+	t.Helper()
+	f.queue.end(context.Background(), "eof")
+	if err := f.queue.load(context.Background(), id, position, tracking.Track{SpotifyURI: "spotify:track:" + id}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLateSongStartDoesNotHoldPlayingVideoWhileConfirming(t *testing.T) {
+	f := newSpotifyQueueFixture(t)
+	f.enqueueNext(t)
+	f.finishSong(t)
+	if f.queue.active == nil || f.queue.active.id != "second" {
+		t.Fatal("queued song did not start after the previous song finished")
+	}
+	if status := f.queue.status("queue-test", 1); status.Hold || status.State != "starting" {
+		t.Fatalf("late start held the playing video: %+v", status)
+	}
+	f.tick(t, time.Second)
+	if status := f.queue.status("queue-test", 2); status.Hold || status.State != "playing" {
+		t.Fatalf("confirmed late start did not continue playing: %+v", status)
+	}
+}
+
+func TestLateSongStartHoldsVideoWhenUnconfirmedAfterGrace(t *testing.T) {
+	f := newSpotifyQueueFixture(t)
+	f.enqueueNext(t)
+	f.finishSong(t)
+	// Connect keeps reporting the finished song instead of the requested one.
+	f.state = spotify.PlaybackState{RepeatState: "off", Timestamp: f.now.UnixMilli(), ProgressMS: 180000, Item: &spotify.Track{URI: "spotify:track:first", DurationMS: 180000}}
+	f.state.Device.ID = "device"
+	f.tick(t, time.Second)
+	if f.queue.status("queue-test", 1).Hold {
+		t.Fatal("late start held before its grace period expired")
+	}
+	f.tick(t, 4*time.Second)
+	if status := f.queue.status("queue-test", 2); !status.Hold || status.State != "starting" {
+		t.Fatalf("unconfirmed late start did not hold the video: %+v", status)
+	}
+}
+
+func TestSongStartingWithItsVideoHoldsUntilConfirmed(t *testing.T) {
+	f := newSpotifyQueueFixture(t)
+	f.queue.end(context.Background(), "eof")
+	f.finishSong(t)
+	if !f.queue.idle() {
+		t.Fatal("finished song left the queue busy")
+	}
+	f.loadVideo(t, "second", 1)
+	if status := f.queue.status("queue-test", 1); !status.Hold || status.State != "starting" {
+		t.Fatalf("song starting with its video did not hold until confirmed: %+v", status)
+	}
+	f.tick(t, time.Second)
+	if f.queue.status("queue-test", 2).Hold {
+		t.Fatal("confirmed start did not release the hold")
+	}
+}
+
+// A paused video several songs ahead must not pause the backlog. Earlier songs
+// play out, and the paused video's own song catches up to its position.
+func TestPausedVideoLetsBacklogPlayAndCatchUp(t *testing.T) {
+	f := newSpotifyQueueFixture(t)
+	f.enqueueNext(t)
+	f.loadVideo(t, "third", 2)
+	ceiling := 60000
+	f.queue.paused, f.queue.target = true, &ceiling
+	f.tick(t, time.Second)
+	if !f.state.IsPlaying || f.queue.active.id != "first" {
+		t.Fatal("paused later video paused an earlier song")
+	}
+	f.finishSong(t)
+	f.tick(t, time.Second)
+	if f.queue.active.id != "second" || !f.state.IsPlaying || f.queue.status("queue-test", 1).Hold {
+		t.Fatal("backlog song did not play behind the paused video")
+	}
+	f.finishSong(t)
+	f.tick(t, time.Second)
+	if f.queue.active.id != "third" || !f.state.IsPlaying {
+		t.Fatal("paused video's song did not start catching up")
+	}
+	if phase, _ := f.player.TrackingStatus(); phase != "catch-up" {
+		t.Fatalf("paused video's song phase = %q, want catch-up", phase)
+	}
+	f.state.ProgressMS = ceiling
+	f.tick(t, time.Second)
+	f.tick(t, time.Second)
+	if phase, _ := f.player.TrackingStatus(); f.state.IsPlaying || phase != "paused" {
+		t.Fatalf("song did not pause at the video position: playing=%t phase=%q", f.state.IsPlaying, phase)
+	}
+	if len(f.starts) != 3 {
+		t.Fatalf("starts = %v", f.starts)
 	}
 }

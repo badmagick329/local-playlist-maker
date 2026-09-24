@@ -1,4 +1,4 @@
--- playlistmaker-history-version: 9
+-- playlistmaker-history-version: 10
 local mp = require("mp")
 local options = require("mp.options")
 local utils = require("mp.utils")
@@ -39,6 +39,7 @@ local heartbeat = nil
 local heartbeat_seen = mp.get_time()
 local status_revision = -1
 local status_message = "Waiting for tracking helper"
+local status_state = nil
 local health_failed = false
 local emit_intent
 local enforce_hold
@@ -268,6 +269,7 @@ mp.add_periodic_timer(0.25, function()
             if active and status.occurrenceId == active.play_id and status.intentSequence == intent_sequence then
                 hold = status.hold
                 status_message = status.message
+                status_state = status.state
                 if status_revision ~= status.revision then
                     status_revision = status.revision
                     enforce_hold()
@@ -292,6 +294,9 @@ mp.add_periodic_timer(0.25, function()
         enforce_hold()
         if hold or user_paused then
             mp.osd_message("PlaylistMaker: " .. (status_message or "Tracking held") .. "\nPlay: retry/resume | Ctrl+Shift+U: without tracking", 1)
+        elseif status_state == "starting" then
+            -- A late song start keeps playing briefly; the helper holds if it stays unconfirmed.
+            mp.osd_message("PlaylistMaker: " .. (status_message or "Waiting for Spotify"), 1)
         end
     end
     if not active then return end
