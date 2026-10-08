@@ -158,7 +158,7 @@ func (m Model) handleLastFMAction(message lastfmActionMsg) (tea.Model, tea.Cmd) 
 		case "import":
 			m.all = m.lastfm.Attach(m.all)
 			m.refreshResults()
-			m.status = fmt.Sprintf("Last.fm decisions: %d matched, %d no-match, %d needs-human, %d missing, %d invalid", message.imported.Matched, message.imported.NoMatch, message.imported.NeedsHuman, message.imported.Missing, message.imported.Invalid)
+			m.status = fmt.Sprintf("Last.fm decisions: %d matched, %d no-match, %d needs-human, %d already resolved, %d missing, %d invalid", message.imported.Matched, message.imported.NoMatch, message.imported.NeedsHuman, message.imported.AlreadyResolved, message.imported.Missing, message.imported.Invalid)
 		case "reset":
 			m.all = m.lastfm.Attach(m.all)
 			m.refreshResults()

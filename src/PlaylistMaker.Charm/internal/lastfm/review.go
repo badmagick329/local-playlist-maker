@@ -62,12 +62,11 @@ type ReviewTrack struct {
 	Videos      []ReviewVideo `json:"videos"`
 }
 type Review struct {
-	SchemaVersion        int           `json:"schemaVersion"`
-	ExportID             string        `json:"exportId"`
-	CatalogueFingerprint string        `json:"catalogueFingerprint"`
-	GeneratedAtUTC       time.Time     `json:"generatedAtUtc"`
-	Cases                []ReviewCase  `json:"cases"`
-	Catalogue            []ReviewTrack `json:"catalogue"`
+	SchemaVersion  int           `json:"schemaVersion"`
+	ExportID       string        `json:"exportId"`
+	GeneratedAtUTC time.Time     `json:"generatedAtUtc"`
+	Cases          []ReviewCase  `json:"cases"`
+	Catalogue      []ReviewTrack `json:"catalogue"`
 }
 type Decision struct {
 	CaseID   string  `json:"caseId"`
@@ -80,7 +79,10 @@ type Decisions struct {
 	ExportID      string     `json:"exportId"`
 	Decisions     []Decision `json:"decisions"`
 }
-type ImportResult struct{ Matched, NoMatch, NeedsHuman, Missing, Invalid int }
+// ImportResult counts decisions by outcome. AlreadyResolved counts valid
+// decisions on cases that gained a match or no_match after the export, which
+// import leaves untouched.
+type ImportResult struct{ Matched, NoMatch, NeedsHuman, AlreadyResolved, Missing, Invalid int }
 
 func CaseID(sourceKey string) string {
 	sum := sha256.Sum256([]byte(sourceKey))
@@ -99,7 +101,7 @@ func (s *Service) ExportReview(tracks []library.Track, now time.Time) (string, e
 	if err != nil {
 		return "", err
 	}
-	review := Review{SchemaVersion: SchemaVersion, ExportID: exportID, CatalogueFingerprint: CatalogueFingerprint(tracks), GeneratedAtUTC: now.UTC(), Cases: []ReviewCase{}, Catalogue: []ReviewTrack{}}
+	review := Review{SchemaVersion: SchemaVersion, ExportID: exportID, GeneratedAtUTC: now.UTC(), Cases: []ReviewCase{}, Catalogue: []ReviewTrack{}}
 	for key, id := range s.index.Identities {
 		if m, ok := s.index.Matches[key]; ok && (m.Status == "match" || m.Status == "no_match") {
 			continue
@@ -185,6 +187,11 @@ func rankCandidates(id Identity, tracks []library.Track, cache map[string]Spotif
 	return result
 }
 
+// ImportDecisions applies an agent's decisions to the cases that are still
+// unresolved. The catalogue may change between export and import: a match must
+// name a track that exists now, a case resolved meanwhile keeps its current
+// decision, and exact matching runs again afterwards so a no_match whose
+// identity the catalogue has since gained reopens straight away.
 func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) {
 	dir := s.path(ReviewDirectory)
 	var review Review
@@ -193,9 +200,6 @@ func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) 
 	}
 	if review.SchemaVersion != SchemaVersion {
 		return ImportResult{}, fmt.Errorf("Last.fm review schemaVersion is unsupported")
-	}
-	if review.CatalogueFingerprint != CatalogueFingerprint(tracks) {
-		return ImportResult{}, fmt.Errorf("Last.fm review catalogue fingerprint is stale")
 	}
 	b, err := os.ReadFile(filepath.Join(dir, "decisions.json"))
 	if err != nil {
@@ -233,33 +237,41 @@ func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) 
 	valid := []Match{}
 	for _, d := range document.Decisions {
 		c, ok := cases[d.CaseID]
-		invalid := !ok || occurrences[d.CaseID] != 1 || strings.TrimSpace(d.Reason) == ""
 		seen[d.CaseID] = true
-		if !invalid {
+		var decided *Match
+		isValid := ok && occurrences[d.CaseID] == 1 && strings.TrimSpace(d.Reason) != ""
+		if isValid {
 			switch d.Decision {
 			case "match":
-				invalid = d.TrackID == nil || *d.TrackID == "" || !trackIDs[*d.TrackID]
-				if !invalid {
-					valid = append(valid, Match{SourceKey: c.Source.Key, Artist: c.Source.Artist, Title: c.Source.Title, Status: "match", TrackID: *d.TrackID, Provenance: "agent", Reason: d.Reason, ExportID: review.ExportID})
-					result.Matched++
+				isValid = d.TrackID != nil && trackIDs[*d.TrackID]
+				if isValid {
+					decided = &Match{SourceKey: c.Source.Key, Artist: c.Source.Artist, Title: c.Source.Title, Status: "match", TrackID: *d.TrackID, Provenance: "agent", Reason: d.Reason, ExportID: review.ExportID}
 				}
 			case "no_match":
-				invalid = d.TrackID != nil
-				if !invalid {
-					valid = append(valid, Match{SourceKey: c.Source.Key, Artist: c.Source.Artist, Title: c.Source.Title, Status: "no_match", Provenance: "agent", Reason: d.Reason, ExportID: review.ExportID})
-					result.NoMatch++
+				isValid = d.TrackID == nil
+				if isValid {
+					decided = &Match{SourceKey: c.Source.Key, Artist: c.Source.Artist, Title: c.Source.Title, Status: "no_match", Provenance: "agent", Reason: d.Reason, ExportID: review.ExportID}
 				}
 			case "needs_human":
-				invalid = d.TrackID != nil
-				if !invalid {
-					result.NeedsHuman++
-				}
+				isValid = d.TrackID == nil
 			default:
-				invalid = true
+				isValid = false
 			}
 		}
-		if invalid {
+		switch {
+		case !isValid:
 			result.Invalid++
+		case !s.unresolved(c.Source.Key):
+			result.AlreadyResolved++
+		case decided == nil:
+			result.NeedsHuman++
+		default:
+			valid = append(valid, *decided)
+			if decided.Status == "match" {
+				result.Matched++
+			} else {
+				result.NoMatch++
+			}
 		}
 	}
 	for id := range cases {
@@ -270,13 +282,20 @@ func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) 
 	for _, v := range valid {
 		s.index.Matches[v.SourceKey] = v
 	}
-	s.rebuildTrackPlays()
+	s.resolve(tracks)
 	if len(valid) > 0 {
 		if err := s.saveMatches(); err != nil {
 			return ImportResult{}, err
 		}
 	}
 	return result, nil
+}
+func (s *Service) unresolved(key string) bool {
+	if s.index.Identities[key] == nil {
+		return false
+	}
+	_, decided := s.index.Matches[key]
+	return !decided
 }
 func spotifyURL(uri string) string {
 	if strings.HasPrefix(uri, "spotify:track:") {

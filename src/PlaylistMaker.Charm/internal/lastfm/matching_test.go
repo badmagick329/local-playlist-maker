@@ -124,12 +124,7 @@ func TestResetAgentDecisionsRetainsAutomaticMatches(t *testing.T) {
 	}
 }
 
-func TestFingerprintAndCaseIDAreDeterministic(t *testing.T) {
-	a := []library.Track{testTrack("b", "B", "T"), testTrack("a", "A", "T")}
-	b := []library.Track{a[1], a[0]}
-	if CatalogueFingerprint(a) != CatalogueFingerprint(b) {
-		t.Fatal("fingerprint depends on input order")
-	}
+func TestCaseIDIsDeterministic(t *testing.T) {
 	if CaseID("key") != CaseID("key") || CaseID("key") == CaseID("other") {
 		t.Fatal("case IDs are not stable")
 	}

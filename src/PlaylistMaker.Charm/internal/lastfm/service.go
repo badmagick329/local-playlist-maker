@@ -2,8 +2,6 @@ package lastfm
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -148,16 +146,6 @@ func buildIndex(scrobbles []Scrobble, matches []Match, spotifyValues []SpotifyMe
 		idx.Spotify[v.URI] = v
 	}
 	return idx
-}
-
-func CatalogueFingerprint(tracks []library.Track) string {
-	copyTracks := append([]library.Track(nil), tracks...)
-	sort.Slice(copyTracks, func(i, j int) bool { return copyTracks[i].ID < copyTracks[j].ID })
-	h := sha256.New()
-	for _, v := range copyTracks {
-		fmt.Fprintf(h, "%s\x00%s\x00%s\x00%s\x00%s\n", v.ID, v.Artist, v.Title, v.ReleaseDateLabel, v.SpotifyURI)
-	}
-	return hex.EncodeToString(h.Sum(nil))
 }
 
 // resolve drops stored decisions the catalogue has outgrown and auto-matches

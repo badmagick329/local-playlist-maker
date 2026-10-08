@@ -68,9 +68,58 @@ func TestDecisionImportRejectsStaleEnvelopeAndSkipsInvalidRows(t *testing.T) {
 	if result.Invalid != 2 {
 		t.Fatalf("result=%#v", result)
 	}
-	changed := append(tracks, testTrack("two", "C", "D"))
-	if _, err := s.ImportDecisions(changed); err == nil {
-		t.Fatal("stale fingerprint accepted")
+}
+
+func TestDecisionImportAppliesToCasesStillUnresolvedAfterCatalogueChanges(t *testing.T) {
+	tracks := []library.Track{testTrack("one", "A", "B")}
+	s := Service{DataDirectory: t.TempDir()}
+	s.index = buildIndex([]Scrobble{{Artist: "Absent", Title: "Song", PlayedAtUTC: day(1)}, {Artist: "Later", Title: "Added", PlayedAtUTC: day(2)}, {Artist: "Fuzzy", Title: "Name", PlayedAtUTC: day(3)}, {Artist: "Twice", Title: "Added", PlayedAtUTC: day(4)}}, nil, nil)
+	s.resolve(tracks)
+	dir, err := s.ExportReview(tracks, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var review Review
+	if err := readJSON(filepath.Join(dir, "review.json"), &review, "review"); err != nil {
+		t.Fatal(err)
+	}
+	caseFor := func(artist, title string) string { return CaseID(SourceKey(artist, title)) }
+	one, fuzzy := "one", "fuzzy"
+	decisions := Decisions{SchemaVersion: 1, ExportID: review.ExportID, Decisions: []Decision{
+		{CaseID: caseFor("Absent", "Song"), Decision: "no_match", Reason: "absent"},
+		{CaseID: caseFor("Later", "Added"), Decision: "match", TrackID: &one, Reason: "wrong guess"},
+		{CaseID: caseFor("Fuzzy", "Name"), Decision: "match", TrackID: &fuzzy, Reason: "same song, spelled differently"},
+		{CaseID: caseFor("Twice", "Added"), Decision: "no_match", Reason: "absent at export"},
+	}}
+	if err := writeJSON(filepath.Join(dir, "decisions.json"), decisions); err != nil {
+		t.Fatal(err)
+	}
+	changed := append(tracks, testTrack("later", "Later", "Added"), testTrack("fuzzy", "Fuzzy Band", "Name"), testTrack("twice-a", "Twice", "Added"), testTrack("twice-b", "Twice", "Added"))
+	if _, err := s.RefreshCatalogue(changed); err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.ImportDecisions(changed)
+	if err != nil {
+		t.Fatalf("catalogue change rejected import: %v", err)
+	}
+	if result.Matched != 1 || result.NoMatch != 2 || result.AlreadyResolved != 1 || result.Invalid != 0 {
+		t.Fatalf("result=%#v", result)
+	}
+	if m := s.index.Matches[SourceKey("Later", "Added")]; m.Provenance != "auto" || m.TrackID != "later" {
+		t.Fatalf("decision overwrote a case resolved after export: %#v", m)
+	}
+	if m := s.index.Matches[SourceKey("Fuzzy", "Name")]; m.TrackID != "fuzzy" {
+		t.Fatalf("match to a track added after export not applied: %#v", m)
+	}
+	if s.index.Matches[SourceKey("Absent", "Song")].Status != "no_match" {
+		t.Fatal("no-match not applied")
+	}
+	if !s.unresolved(SourceKey("Twice", "Added")) {
+		t.Fatal("no-match kept although the catalogue gained its identity")
+	}
+	again, err := s.ImportDecisions(changed)
+	if err != nil || again.AlreadyResolved != 3 || again.Matched+again.NoMatch != 1 {
+		t.Fatalf("re-import=%#v err=%v", again, err)
 	}
 }
 

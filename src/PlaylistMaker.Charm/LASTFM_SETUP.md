@@ -51,7 +51,7 @@ Repeat each applies after selection, limiting and ordering. A count of 20 with r
 - `review.json` contains unresolved identities, ranked catalogue candidates, and catalogue evidence.
 - The agent writes `decisions.json`.
 
-Give the directory to the external agent, then choose `Import agent decisions`. PlaylistMaker accepts only the exported case IDs and current catalogue track IDs. A changed catalogue or old export ID rejects the document. Invalid rows are skipped; valid match and no-match decisions are saved together.
+Give the directory to the external agent, then choose `Import agent decisions`. PlaylistMaker accepts only the exported case IDs and current catalogue track IDs. An old export ID rejects the document. Invalid rows are skipped; valid match and no-match decisions are saved together. The catalogue may change between export and import: a decision for a case that was resolved in the meantime, or by an earlier import of the same file, is skipped and counted as already resolved.
 
 A match lasts while its track exists. A no-match lasts until the catalogue gains a track whose artist and title, or whose linked Spotify artist and title, normalize to the same identity; the identity is then matched again, and becomes unresolved if more than one track fits. Other catalogue changes leave no-match decisions in place.
 
