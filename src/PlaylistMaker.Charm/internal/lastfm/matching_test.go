@@ -1,6 +1,9 @@
 package lastfm
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"os"
 	"path/filepath"
 	"testing"
@@ -218,6 +221,78 @@ func TestCacheLoadOfflineAndMalformedOwnedFile(t *testing.T) {
 	if _, err = s.Load(tracks); err == nil {
 		t.Fatal("expected malformed cache error")
 	}
+}
+
+// A failed load leaves a partial index. Each failure must reach the Last.fm
+// screen, and no writer may replace the matches file from that index.
+func TestFailedLoadIsShownAndBlocksWriters(t *testing.T) {
+	agentMatch := Match{SourceKey: SourceKey("Alias", "Hit"), Status: "match", TrackID: "x", Provenance: "agent", Reason: "alias"}
+	cases := []struct {
+		name, file, content string
+	}{
+		{"corrupt scrobbles", ScrobblesFile, "{"},
+		{"corrupt matches", MatchesFile, "{"},
+		{"matches schema", MatchesFile, `{"schemaVersion":99,"matches":[]}`},
+		{"corrupt Spotify cache", SpotifyCacheFile, "{"},
+		{"Spotify cache schema", SpotifyCacheFile, `{"schemaVersion":99,"tracks":[]}`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := writeScrobbles(filepath.Join(dir, ScrobblesFile), []Scrobble{{Artist: "Alias", Title: "Hit", PlayedAtUTC: time.Unix(1, 0)}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := writeJSON(filepath.Join(dir, MatchesFile), MatchFile{SchemaVersion: SchemaVersion, Matches: []Match{agentMatch}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, c.file), []byte(c.content), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			matchesBefore, err := os.ReadFile(filepath.Join(dir, MatchesFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			tracks := []library.Track{testTrack("x", "Artist", "Song")}
+			offline := &Client{HTTP: &http.Client{Transport: refuseTransport{t}}}
+			s := Service{DataDirectory: dir, Username: "user", APIKey: "key", Client: offline}
+			if _, err := s.Load(tracks); err == nil {
+				t.Fatal("Load succeeded")
+			}
+			if s.Status().Error == "" {
+				t.Fatal("load error not shown in status")
+			}
+			if _, err := s.Sync(context.Background(), tracks, false, nil); !errors.Is(err, ErrCacheNotLoaded) {
+				t.Fatalf("Sync err=%v", err)
+			}
+			if _, err := s.ImportDecisions(tracks); !errors.Is(err, ErrCacheNotLoaded) {
+				t.Fatalf("ImportDecisions err=%v", err)
+			}
+			if _, err := s.ExportReview(tracks, time.Unix(2, 0)); !errors.Is(err, ErrCacheNotLoaded) {
+				t.Fatalf("ExportReview err=%v", err)
+			}
+			if err := s.ResetAgentDecisions(tracks); !errors.Is(err, ErrCacheNotLoaded) {
+				t.Fatalf("ResetAgentDecisions err=%v", err)
+			}
+			if _, err := s.RefreshCatalogue(tracks); err != nil {
+				t.Fatalf("RefreshCatalogue err=%v", err)
+			}
+			matchesAfter, err := os.ReadFile(filepath.Join(dir, MatchesFile))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(matchesAfter) != string(matchesBefore) {
+				t.Fatalf("matches file changed:\n%s", matchesAfter)
+			}
+		})
+	}
+}
+
+// refuseTransport fails any request, keeping a regressed guard off the real API.
+type refuseTransport struct{ t *testing.T }
+
+func (r refuseTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	r.t.Error("Last.fm request sent")
+	return nil, errors.New("offline")
 }
 
 func testTrack(id, artist, title string) library.Track {

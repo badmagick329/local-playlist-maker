@@ -97,6 +97,9 @@ func randomExportID() (string, error) {
 }
 
 func (s *Service) ExportReview(tracks []library.Track, now time.Time) (string, error) {
+	if err := s.requireLoaded(); err != nil {
+		return "", err
+	}
 	exportID, err := randomExportID()
 	if err != nil {
 		return "", err
@@ -193,6 +196,9 @@ func rankCandidates(id Identity, tracks []library.Track, cache map[string]Spotif
 // decision, and exact matching runs again afterwards so a no_match whose
 // identity the catalogue has since gained reopens straight away.
 func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) {
+	if err := s.requireLoaded(); err != nil {
+		return ImportResult{}, err
+	}
 	dir := s.path(ReviewDirectory)
 	var review Review
 	if err := readJSON(filepath.Join(dir, "review.json"), &review, "Last.fm review"); err != nil {

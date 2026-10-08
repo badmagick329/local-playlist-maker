@@ -36,26 +36,32 @@ func dedupeKey(v Scrobble) string {
 	return fmt.Sprintf("%d\x00%s\x00%s\x00%s", v.PlayedAtUTC.Unix(), videoname.Normalize(v.Artist), videoname.Normalize(v.Title), videoname.Normalize(v.Album))
 }
 
+// ErrCacheNotLoaded marks an action refused because Load failed. Writing from
+// the partial index would replace lastfm-matches.json with only what exact
+// matching recovers, losing every agent decision.
+var ErrCacheNotLoaded = errors.New("Last.fm cache did not load")
+
+// Load reads the owned cache files. Every failure lands in the index error, so
+// the Last.fm screen shows it and the writing actions refuse to run until the
+// file is fixed and the app restarts.
 func (s *Service) Load(tracks []library.Track) ([]library.Track, error) {
 	scrobbles, err := readScrobbles(s.path(ScrobblesFile))
 	if err != nil {
-		s.index = Index{Error: err.Error()}
-		return tracks, err
+		return tracks, s.loadFailed(nil, err)
 	}
 	var mf MatchFile
 	if err = readJSON(s.path(MatchesFile), &mf, "Last.fm matches"); err != nil {
-		s.index = Index{Scrobbles: scrobbles, Error: err.Error()}
-		return tracks, err
+		return tracks, s.loadFailed(scrobbles, err)
 	}
 	if mf.SchemaVersion != 0 && mf.SchemaVersion != SchemaVersion {
-		return tracks, fmt.Errorf("Last.fm matches schemaVersion is %d, want %d", mf.SchemaVersion, SchemaVersion)
+		return tracks, s.loadFailed(scrobbles, fmt.Errorf("Last.fm matches schemaVersion is %d, want %d", mf.SchemaVersion, SchemaVersion))
 	}
 	var cache SpotifyCache
 	if err = readJSON(s.path(SpotifyCacheFile), &cache, "Spotify track cache"); err != nil {
-		return tracks, err
+		return tracks, s.loadFailed(scrobbles, err)
 	}
 	if cache.SchemaVersion != 0 && cache.SchemaVersion != SchemaVersion {
-		return tracks, fmt.Errorf("Spotify track cache schemaVersion is %d, want %d", cache.SchemaVersion, SchemaVersion)
+		return tracks, s.loadFailed(scrobbles, fmt.Errorf("Spotify track cache schemaVersion is %d, want %d", cache.SchemaVersion, SchemaVersion))
 	}
 	s.index = buildIndex(scrobbles, mf.Matches, cache.Tracks)
 	if info, statErr := os.Stat(s.path(ScrobblesFile)); statErr == nil {
@@ -73,6 +79,19 @@ func (s *Service) Load(tracks []library.Track) ([]library.Track, error) {
 	}
 	s.resolve(tracks)
 	return s.Attach(tracks), nil
+}
+
+func (s *Service) loadFailed(scrobbles []Scrobble, err error) error {
+	s.index = Index{Scrobbles: scrobbles, Error: err.Error()}
+	return err
+}
+
+// requireLoaded guards every action that writes the cache.
+func (s *Service) requireLoaded() error {
+	if s.index.Error != "" {
+		return fmt.Errorf("%w: %s; fix or remove the file, then restart", ErrCacheNotLoaded, s.index.Error)
+	}
+	return nil
 }
 
 func buildIndex(scrobbles []Scrobble, matches []Match, spotifyValues []SpotifyMetadata) Index {
@@ -287,7 +306,13 @@ func (s *Service) Attach(tracks []library.Track) []library.Track {
 	return result
 }
 
+// RefreshCatalogue rematches after a catalogue reload. After a failed Load it
+// returns the tracks untouched rather than an error, so the library still
+// reloads; the Last.fm screen already shows the load error.
 func (s *Service) RefreshCatalogue(tracks []library.Track) ([]library.Track, error) {
+	if s.requireLoaded() != nil {
+		return tracks, nil
+	}
 	s.resolve(tracks)
 	if len(s.index.Identities) == 0 {
 		return s.Attach(tracks), nil
@@ -324,6 +349,9 @@ func (s *Service) Status() Status {
 func (s *Service) Sync(ctx context.Context, tracks []library.Track, full bool, report func(SyncProgress)) (SyncResult, error) {
 	if !s.Configured() {
 		return SyncResult{}, fmt.Errorf("Last.fm username and API key are not configured")
+	}
+	if err := s.requireLoaded(); err != nil {
+		return SyncResult{}, err
 	}
 	client := s.Client
 	if client == nil {
@@ -508,6 +536,9 @@ func (s *Service) saveSpotify() error {
 	return writeJSON(s.path(SpotifyCacheFile), SpotifyCache{SchemaVersion: SchemaVersion, Tracks: values})
 }
 func (s *Service) ResetAgentDecisions(tracks []library.Track) error {
+	if err := s.requireLoaded(); err != nil {
+		return err
+	}
 	for k, v := range s.index.Matches {
 		if v.Provenance == "agent" {
 			delete(s.index.Matches, k)

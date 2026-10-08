@@ -174,6 +174,8 @@ func (m Model) handleLastFMSync(message lastfmSyncMsg) (tea.Model, tea.Cmd) {
 	m.lastfmRunning, m.lastfmCancelling, m.lastfmRunner, m.lastfmCancel = false, false, nil, nil
 	if message.cancelled {
 		m.status = "Last.fm operation cancelled; saved progress will resume next time"
+	} else if errors.Is(message.err, lastfm.ErrCacheNotLoaded) {
+		m.status = "Last.fm sync refused: " + message.err.Error()
 	} else if message.err != nil {
 		m.status = "Last.fm sync failed: " + message.err.Error() + " Run the same sync action to resume."
 	} else {

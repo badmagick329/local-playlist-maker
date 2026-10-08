@@ -17,6 +17,8 @@ Press uppercase `L` to open the Last.fm screen. `Sync new plays` downloads the f
 
 PlaylistMaker stores completed scrobbles in `lastfm-scrobbles.jsonl` under the configured data directory. It skips Last.fm's currently playing entry. Each downloaded page is checkpointed. A failed or cancelled download leaves the existing cache untouched, and `Sync new plays` or `Rebuild full history` resumes the compatible checkpoint instead of starting again.
 
+If `lastfm-scrobbles.jsonl`, `lastfm-matches.json` or `spotify-track-cache.json` fails to load, the Last.fm screen shows a cache error. Until you fix or remove that file and restart, sync, review export, decision import and reset refuse to run, so a partial cache can never overwrite the saved matches.
+
 The integration is read-only. It never submits scrobbles and does not replace the Last.fm scrobbler. Last.fm events stay separate from `play-history.jsonl`.
 
 Scrobbles with the same normalized artist and title form one identity, and PlaylistMaker matches it to a catalogue track automatically when the names point to one song. A track fits when its artist and title, or its linked Spotify artist and title, normalize to the identity. Only when no track fits does it compare again with spaces removed, so `U-KISS` finds `UKISS`. Several tracks that fit count as one song when they share a Spotify link or ISRC, such as a single and the album that repeats it. Their plays all go to one track: the one with the most videos, then the earliest release, then the lowest track ID. Any other set of fitting tracks leaves the identity unresolved for review.
