@@ -42,14 +42,14 @@ type Identity struct {
 }
 
 type Match struct {
-	SourceKey            string `json:"sourceKey"`
-	Artist               string `json:"artist"`
-	Title                string `json:"title"`
-	Status               string `json:"status"`
-	TrackID              string `json:"trackId,omitempty"`
-	Provenance           string `json:"provenance"`
-	Reason               string `json:"reason"`
-	ExportID             string `json:"exportId,omitempty"`
+	SourceKey  string `json:"sourceKey"`
+	Artist     string `json:"artist"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+	TrackID    string `json:"trackId,omitempty"`
+	Provenance string `json:"provenance"`
+	Reason     string `json:"reason"`
+	ExportID   string `json:"exportId,omitempty"`
 }
 type MatchFile struct {
 	SchemaVersion int     `json:"schemaVersion"`

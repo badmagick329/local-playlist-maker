@@ -80,6 +80,7 @@ type Decisions struct {
 	ExportID      string     `json:"exportId"`
 	Decisions     []Decision `json:"decisions"`
 }
+
 // ImportResult counts decisions by outcome. AlreadyResolved counts valid
 // decisions on cases that gained a match or no_match after the export, which
 // import leaves untouched.
