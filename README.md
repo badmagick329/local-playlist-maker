@@ -40,7 +40,7 @@ The catalogue picker loads candidates once per opening and filters in memory aft
 
 The picker shows release date, album, video count, and the selected source. Missing album tags display as `No album metadata`; matching titles list earliest known releases first within each group. Before creating a track with an existing normalized artist and title, the picker offers existing records. Choose one to reuse it, or press `Ctrl+N` to explicitly create a separate track.
 
-Playback history is enabled by `playbackHistoryEnabled` and can be disabled for a run with `--disable-history`. History is read from `data/play-history.jsonl`; PlaylistMaker-launched playback records a `started` event and a terminal event for the same lifecycle.
+Playback history is enabled by `playbackHistoryEnabled` and can be disabled for a run with `--disable-history`. History is read from `data/play-history.jsonl`; PlaylistMaker-launched playback records a `started` event and a terminal event for the same lifecycle. Going straight back to the previous video within 20 seconds of watch time reverses the skip: neither video counts it as a skip or an attempt.
 
 ## Last.fm history
 

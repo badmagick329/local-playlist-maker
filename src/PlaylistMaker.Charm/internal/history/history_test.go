@@ -95,3 +95,43 @@ func TestReadUsesLaterCompletionForRevisitedEntry(t *testing.T) {
 		t.Fatalf("revisited summary = %#v", summary)
 	}
 }
+
+func writeSkipThenBack(t *testing.T, betweenWatched string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), HistoryFileName)
+	contents := strings.Join([]string{
+		`{"event":"started","eventAtUtc":"2026-01-01T00:00:00Z","sessionId":"s","entryId":"a","playId":"s:1","videoPath":"a.mkv"}`,
+		`{"event":"skipped","eventAtUtc":"2026-01-01T00:01:00Z","sessionId":"s","entryId":"a","playId":"s:1","videoPath":"a.mkv","watchedSeconds":60}`,
+		`{"event":"started","eventAtUtc":"2026-01-01T00:01:00Z","sessionId":"s","entryId":"b","playId":"s:4","videoPath":"b.mkv"}`,
+		`{"event":"skipped","eventAtUtc":"2026-01-01T00:01:00Z","sessionId":"s","entryId":"b","playId":"s:4","videoPath":"b.mkv","watchedSeconds":` + betweenWatched + `}`,
+		`{"event":"started","eventAtUtc":"2026-01-01T00:01:00Z","sessionId":"s","entryId":"a","playId":"s:7","videoPath":"a.mkv"}`,
+	}, "\n")
+	if err := os.WriteFile(path, []byte(contents), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+func TestReadIgnoresSkipReversedByGoingBack(t *testing.T) {
+	index, err := Read(writeSkipThenBack(t, "2"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	a, b := index.Videos["a.mkv"], index.Videos["b.mkv"]
+	if a.Skipped != 0 || b.Skipped != 0 {
+		t.Fatalf("skips = %d, %d, want 0, 0", a.Skipped, b.Skipped)
+	}
+	if b.LastAttempted != nil || len(b.Recent) != 1 || b.Recent[0].Outcome != "reversed" {
+		t.Fatalf("passed-over video = %#v", b)
+	}
+}
+
+func TestReadKeepsSkipsWhenInBetweenVideoWasWatched(t *testing.T) {
+	index, err := Read(writeSkipThenBack(t, "30"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b := index.Videos["a.mkv"], index.Videos["b.mkv"]; a.Skipped != 1 || b.Skipped != 1 || b.LastAttempted == nil {
+		t.Fatalf("summaries = %#v, %#v", a, b)
+	}
+}

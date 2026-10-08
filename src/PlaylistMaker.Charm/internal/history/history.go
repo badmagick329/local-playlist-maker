@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -14,6 +15,11 @@ import (
 )
 
 const HistoryFileName = "play-history.jsonl"
+
+// ReversalMaxWatchedSeconds bounds the in-between play of a reversed skip:
+// going back to the previous video within this much watch time marks both
+// skips as mistakes rather than judgements of either video.
+const ReversalMaxWatchedSeconds = 20.0
 
 type Event struct {
 	SchemaVersion    int       `json:"schemaVersion"`
@@ -66,6 +72,7 @@ func Read(path string) (Index, error) {
 	}
 	defer file.Close()
 	terminal := map[string]Event{}
+	plays := map[string]map[string]play{}
 	scanner := bufio.NewScanner(file)
 	buffer := make([]byte, 64*1024)
 	scanner.Buffer(buffer, 1024*1024)
@@ -75,10 +82,11 @@ func Read(path string) (Index, error) {
 			result.InvalidLines++
 			continue
 		}
+		recordPlay(plays, event)
 		if !isTerminal(event.Event) || event.SessionID == "" || event.EntryID == "" {
 			continue
 		}
-		key := event.SessionID + "\x00" + event.EntryID + "\x00" + event.PlayID
+		key := playKey(event)
 		if current, ok := terminal[key]; !ok || !event.EventAtUTC.Before(current.EventAtUTC) {
 			terminal[key] = event
 		}
@@ -86,13 +94,75 @@ func Read(path string) (Index, error) {
 	if err := scanner.Err(); err != nil {
 		return result, err
 	}
+	reversed := reversedSkips(plays, terminal)
 	normalized := make([]Normalized, 0, len(terminal))
-	for _, event := range terminal {
-		normalized = append(normalized, Normalize(event))
+	for key, event := range terminal {
+		item := Normalize(event)
+		if reversed[key] {
+			item.Outcome, item.Counted = "reversed", false
+		}
+		normalized = append(normalized, item)
 	}
 	result.Tracks = summarize(normalized, func(item Normalized) string { return item.Event.TrackID })
 	result.Videos = summarize(normalized, func(item Normalized) string { return item.Event.VideoPath })
 	return result, nil
+}
+
+func playKey(event Event) string {
+	return event.SessionID + "\x00" + event.EntryID + "\x00" + event.PlayID
+}
+
+type play struct {
+	sequence int
+	entryID  string
+	key      string
+}
+
+// recordPlay notes each play's start order. The mpv script derives play IDs
+// from its per-session event sequence, so the numeric suffix orders plays even
+// when second-resolution timestamps tie.
+func recordPlay(plays map[string]map[string]play, event Event) {
+	if event.SessionID == "" || event.EntryID == "" || event.PlayID == "" {
+		return
+	}
+	sequence, err := strconv.Atoi(strings.TrimPrefix(event.PlayID, event.SessionID+":"))
+	if err != nil {
+		return
+	}
+	if plays[event.SessionID] == nil {
+		plays[event.SessionID] = map[string]play{}
+	}
+	plays[event.SessionID][event.PlayID] = play{sequence: sequence, entryID: event.EntryID, key: playKey(event)}
+}
+
+// reversedSkips finds plays A, B, A in which B was skipped within
+// ReversalMaxWatchedSeconds: the user skipped A by mistake and went straight
+// back. B's skip and, when A was skipped, A's skip are not judgements of
+// either video, so they must not feed skip counts or mix cooldowns.
+func reversedSkips(plays map[string]map[string]play, terminal map[string]Event) map[string]bool {
+	reversed := map[string]bool{}
+	for _, session := range plays {
+		ordered := make([]play, 0, len(session))
+		for _, item := range session {
+			ordered = append(ordered, item)
+		}
+		sort.Slice(ordered, func(i, j int) bool { return ordered[i].sequence < ordered[j].sequence })
+		for i := 1; i+1 < len(ordered); i++ {
+			before, between, after := ordered[i-1], ordered[i], ordered[i+1]
+			if before.entryID != after.entryID || between.entryID == before.entryID || !briefSkip(terminal[between.key]) {
+				continue
+			}
+			reversed[between.key] = true
+			if terminal[before.key].Event == "skipped" {
+				reversed[before.key] = true
+			}
+		}
+	}
+	return reversed
+}
+
+func briefSkip(event Event) bool {
+	return event.Event == "skipped" && event.WatchedSeconds != nil && *event.WatchedSeconds < ReversalMaxWatchedSeconds
 }
 
 func Normalize(event Event) Normalized {
@@ -138,7 +208,7 @@ func summarize(events []Normalized, path func(Normalized) string) map[string]Sum
 					summary.LastPlayed = &value
 				}
 			}
-			if item.Outcome != "not_started" && summary.LastAttempted == nil {
+			if item.Outcome != "not_started" && item.Outcome != "reversed" && summary.LastAttempted == nil {
 				value := item.Event.EventAtUTC
 				summary.LastAttempted = &value
 			}
