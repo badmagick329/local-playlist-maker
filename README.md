@@ -85,4 +85,4 @@ The mpv loop regression tests run a synthetic silent clip and skip when mpv is u
 - [Spotify setup](src/PlaylistMaker.Charm/SPOTIFY_SETUP.md) and [Last.fm history](src/PlaylistMaker.Charm/LASTFM_SETUP.md): integration guides.
 - [Portable fixtures](testdata/library/README.md): loader test data.
 
-Ignored `notes/` and `.ignore/` hold local plans, feedback, and handovers, including material from the former C# implementation. They are retained as historical context, not maintained documentation.
+The maintainer's private notes and agent context live in the ignored `.ignore/docs/`.
