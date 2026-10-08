@@ -280,10 +280,10 @@ func Generate(trackCount, variantCount int) []Track {
 }
 
 func FilterAndSort(all []Track, query Query) []Track {
-	normalizedQuery := normalize(query.SearchText)
-	tokens := strings.Fields(normalizedQuery)
+	tokens := strings.Fields(normalize(query.SearchText))
 	type scored struct {
 		track    Track
+		tier     int
 		score    int
 		modified time.Time
 		video    time.Time
@@ -298,21 +298,24 @@ func FilterAndSort(all []Track, query Query) []Track {
 		if len(eligible) == 0 {
 			continue
 		}
-		candidate := track.BaseSearchText
+		videos := ""
 		for _, variant := range eligible {
-			candidate += " " + normalize(variant.Filename)
+			videos += " " + normalize(variant.Filename)
 		}
-		score, ok := fuzzyScore(candidate, tokens)
+		score, ok := fuzzyScore(track.BaseSearchText+videos, tokens)
 		if !ok {
 			continue
 		}
 		modified, video, _ := LatestEligibleDates(track, query)
-		matches = append(matches, scored{track: track, score: score, modified: modified, video: video})
+		matches = append(matches, scored{track: track, tier: searchTier(track.BaseSearchText, videos, tokens), score: score, modified: modified, video: video})
 	}
 
 	sort.SliceStable(matches, func(i, j int) bool {
 		left, right := matches[i], matches[j]
-		if normalizedQuery != "" && left.score != right.score {
+		if left.tier != right.tier {
+			return left.tier < right.tier
+		}
+		if query.Sort == Relevance && left.score != right.score {
 			return left.score > right.score
 		}
 		switch query.Sort {
@@ -340,6 +343,9 @@ func FilterAndSort(all []Track, query Query) []Track {
 			if !leftValue.Equal(rightValue) {
 				return leftValue.After(rightValue) == newest
 			}
+		}
+		if left.score != right.score {
+			return left.score > right.score
 		}
 		return left.track.ID < right.track.ID
 	})
@@ -386,6 +392,42 @@ func DefaultVariant(track Track, query Query) (Variant, bool) {
 
 func normalize(value string) string {
 	return videoname.Normalize(value)
+}
+
+// Search tiers, best first. FilterAndSort ranks by tier and lets the
+// chosen sort order tracks within one tier: the fine fuzzy score depends on
+// where a word sits in the text, so ranking by it scrambles a chronological
+// browse of a broad search such as "love". Only the Relevance sort uses it.
+const (
+	// Every search word starts a word of the track's artist or title.
+	tierTrackWord = iota
+	// Every word starts a word, some only in a video filename, such as a
+	// cover performance named after another artist.
+	tierVideoWord
+	// Some word occurs only inside a longer word ("love" in "hellovenus").
+	tierInsideWord
+	// Some word matches only as scattered letters.
+	tierFuzzy
+)
+
+// searchTier grades how well tokens match a track's normalized artist and title
+// (base) and its eligible video filenames (videos). A track takes the tier of
+// its worst-matching token.
+func searchTier(base, videos string, tokens []string) int {
+	base, videos = " "+base, " "+videos
+	tier := tierTrackWord
+	for _, token := range tokens {
+		switch {
+		case strings.Contains(base, " "+token):
+		case strings.Contains(videos, " "+token):
+			tier = max(tier, tierVideoWord)
+		case strings.Contains(base, token) || strings.Contains(videos, token):
+			tier = max(tier, tierInsideWord)
+		default:
+			return tierFuzzy
+		}
+	}
+	return tier
 }
 
 // FuzzyScore uses the same fzf-style matcher as library search.

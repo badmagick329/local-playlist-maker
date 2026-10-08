@@ -1,6 +1,7 @@
 package library
 
 import (
+	"slices"
 	"testing"
 	"time"
 )
@@ -52,7 +53,7 @@ func TestParseDateRangeIncludesRequestedPrecision(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceIsPrimaryForEverySort(t *testing.T) {
+func TestWordMatchesRankAboveFuzzyMatchesForEverySort(t *testing.T) {
 	enabled := map[Category]bool{MusicVideo: true}
 	tracks := []Track{
 		{ID: "delulu", Artist: "older", Title: "Delulu", ReleaseDate: time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC), Variants: []Variant{{ID: "delulu-video", Category: MusicVideo, Date: time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC), ModifiedAt: time.Date(2025, 2, 2, 0, 0, 0, 0, time.UTC)}}, BaseSearchText: "delulu", SearchTextByCategory: map[Category]string{}},
@@ -87,6 +88,54 @@ func TestSelectedSortOrdersEqualScoreSearchMatches(t *testing.T) {
 	}
 	if got := FilterAndSort(ties, Query{SearchText: "delu", Enabled: enabled, Sort: ModifiedNewest}); got[0].ID != "a" {
 		t.Fatalf("stable tie order = %q", got[0].ID)
+	}
+}
+
+func searchTrack(id, base string, released int, filenames ...string) Track {
+	track := Track{ID: id, BaseSearchText: base, ReleaseDate: time.Date(released, 1, 1, 0, 0, 0, 0, time.UTC), SearchTextByCategory: map[Category]string{}}
+	for _, filename := range filenames {
+		track.Variants = append(track.Variants, Variant{ID: id + "-" + filename, Filename: filename, Category: MusicVideo})
+	}
+	if len(track.Variants) == 0 {
+		track.Variants = []Variant{{ID: id + "-video", Category: MusicVideo}}
+	}
+	return track
+}
+
+func trackIDs(tracks []Track) []string {
+	ids := make([]string, len(tracks))
+	for i, track := range tracks {
+		ids[i] = track.ID
+	}
+	return ids
+}
+
+func TestChosenSortOrdersWordMatchesWhereverTheWordSits(t *testing.T) {
+	enabled := map[Category]bool{MusicVideo: true}
+	tracks := []Track{
+		searchTrack("lovelyz", "lovelyz obliviate", 2020),
+		searchTrack("hellovenus", "hellovenus venus", 2012),
+		searchTrack("exo", "exo love shot", 2018),
+	}
+	got := trackIDs(FilterAndSort(tracks, Query{SearchText: "love", Enabled: enabled, Sort: ReleaseOldest}))
+	if want := []string{"exo", "lovelyz", "hellovenus"}; !slices.Equal(got, want) {
+		t.Fatalf("release oldest = %v, want %v", got, want)
+	}
+	got = trackIDs(FilterAndSort(tracks, Query{SearchText: "love", Enabled: enabled, Sort: Relevance}))
+	if want := []string{"lovelyz", "exo", "hellovenus"}; !slices.Equal(got, want) {
+		t.Fatalf("relevance = %v, want %v", got, want)
+	}
+}
+
+func TestTrackNameMatchesRankAboveVideoFilenameMatches(t *testing.T) {
+	enabled := map[Category]bool{MusicVideo: true}
+	tracks := []Track{
+		searchTrack("gee", "girls generation gee", 2009, "160313 Twice - Gee (HD Live).mkv"),
+		searchTrack("woohoo", "twice woohoo", 2016, "TWICE - Woohoo (MV).mkv"),
+	}
+	got := trackIDs(FilterAndSort(tracks, Query{SearchText: "twice", Enabled: enabled, Sort: ReleaseOldest}))
+	if want := []string{"woohoo", "gee"}; !slices.Equal(got, want) {
+		t.Fatalf("release oldest = %v, want %v", got, want)
 	}
 }
 
@@ -177,7 +226,7 @@ func TestDateSortsRespectEligibilityDirectionsAndStableIDs(t *testing.T) {
 	}
 }
 
-func TestSearchRelevanceRemainsPrimaryOverEligibleDateSort(t *testing.T) {
+func TestWordMatchesRankAboveFuzzyMatchesOverEligibleDateSort(t *testing.T) {
 	old := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	tracks := []Track{
 		{ID: "relevant", Variants: []Variant{{ID: "relevant-mv", Category: MusicVideo, Date: old, ModifiedAt: old}}, BaseSearchText: "delulu", SearchTextByCategory: map[Category]string{}},

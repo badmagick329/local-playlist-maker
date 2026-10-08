@@ -25,7 +25,7 @@ The main controls are:
 
 - `j`/`k` or arrows move; `h`/`l` or `Enter` collapse or expand a track.
 - `Space` queues the current video; `o` plays the queue or highlighted media.
-- `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback and mixes.
+- `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback and mixes. Search results rank in tiers: artist or title words first, then video filename words, then partial-word and fuzzy matches. The chosen sort orders tracks within each tier; the Relevance sort orders them by search score.
 - `q` opens the queue; `Shift+J`/`Shift+K` reorder; `Delete` removes; `C` clears.
 - `m` on a video row opens the catalogue picker to change its track link; Enter saves and Esc cancels.
 - `u` updates video mappings; `U` updates Spotify links; `R` refreshes local history; uppercase `L` opens Last.fm sync and matching; `?` opens help; `Ctrl+Q` quits.
