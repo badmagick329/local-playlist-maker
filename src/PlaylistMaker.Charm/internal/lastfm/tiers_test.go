@@ -176,3 +176,37 @@ func TestArtistAliasesLearnedFromTwoAgreeingDecisions(t *testing.T) {
 		t.Fatalf("an artist matched to two catalogue artists was used: %#v", m)
 	}
 }
+
+func TestRemixesAndAlternateVersionsCountAsTheOriginal(t *testing.T) {
+	cases := []struct {
+		artist, title string
+		tracks        []library.Track
+		want          string
+	}{
+		{"Red Velvet", "Zimzalabim (Raiden Remix)", []library.Track{testTrack("zim", "Red Velvet", "Zimzalabim")}, "zim"},
+		{"Everglow", "Pirate (R3HAB Remix)", []library.Track{testTrack("pirate", "EVERGLOW", "Pirate")}, "pirate"},
+		{"BLACKPINK", "PLAYING WITH FIRE - Live", []library.Track{testTrack("fire", "BLACKPINK", "PLAYING WITH FIRE")}, "fire"},
+		{"소녀시대", "The Boys (Clinton Sparks & Disco Fries Remix)", []library.Track{testTrack("boys", "소녀시대", "The Boys")}, "boys"},
+		{"BLACKPINK", "WHISTLE (acoustic ver.) -KR ver.-", []library.Track{testTrack("original", "BLACKPINK", "WHISTLE"), testTrack("acoustic", "BLACKPINK", "WHISTLE - Acoustic Ver.")}, "acoustic"},
+		{"LE SSERAFIM", "CRAZY (David Guetta Remix) - Extended ver.", []library.Track{testTrack("original", "LE SSERAFIM", "CRAZY"), testTrack("remix", "LE SSERAFIM", "CRAZY (David Guetta Remix)")}, "remix"},
+		{"LE SSERAFIM", "CRAZY (David Guetta Remix) - Extended ver.", []library.Track{testTrack("original", "LE SSERAFIM", "CRAZY")}, "original"},
+	}
+	for _, c := range cases {
+		if m, ok := resolved(t, c.artist, c.title, c.tracks); !ok || m.TrackID != c.want {
+			t.Errorf("%s – %s: got %#v, want %s", c.artist, c.title, m, c.want)
+		}
+	}
+	unresolved := []struct {
+		name, artist, title string
+		tracks              []library.Track
+	}{
+		{"different songs share the base title", "T-ara", "거짓말 (Dance Version)", []library.Track{testTrack("one", "T-ara", "거짓말 Pt. 1"), testTrack("two", "T-ara", "거짓말 Pt. 2")}},
+		{"language versions are separate recordings", "T-ara", "MR.TAXI (Korean Ver.)", []library.Track{testTrack("jp", "T-ara", "MR.TAXI")}},
+		{"mashups of two songs", "Big Bang", "Chi Mat Ba Ram+Rollin' - Remix", []library.Track{testTrack("chi", "Big Bang", "Chi Mat Ba Ram")}},
+	}
+	for _, c := range unresolved {
+		if m, ok := resolved(t, c.artist, c.title, c.tracks); ok {
+			t.Errorf("%s: %s – %s matched %#v", c.name, c.artist, c.title, m)
+		}
+	}
+}

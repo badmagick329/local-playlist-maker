@@ -61,19 +61,91 @@ func matchTiers(aliases map[string][]string) []matchTier {
 		source:    func(id *Identity) []string { return parts(id.Artist, id.Title) },
 	}
 	tiers = append(tiers, split, spaceless(split, "one spelling of a title or artist written in two scripts or with a bracketed translation, ignoring spaces"))
+	aliasesOf := func(artist string) []string {
+		var artists []string
+		for _, part := range nameParts(cleanArtist(artist), true) {
+			artists = append(artists, aliases[part]...)
+		}
+		return artists
+	}
 	aliased := matchTier{
 		reason:    "learned artist alias",
 		catalogue: parts,
 		source: func(id *Identity) []string {
-			var artists []string
-			for _, part := range nameParts(cleanArtist(id.Artist), true) {
-				artists = append(artists, aliases[part]...)
-			}
-			return partKeys(artists, nameParts(cleanTitle(id.Title), false))
+			return partKeys(aliasesOf(id.Artist), nameParts(cleanTitle(id.Title), false))
 		},
 	}
-	return append(tiers, aliased, spaceless(aliased, "learned artist alias, ignoring spaces"))
+	tiers = append(tiers, aliased, spaceless(aliased, "learned artist alias, ignoring spaces"))
+	// Last, so a catalogue track carrying the scrobbled version is found by an
+	// earlier tier and wins over the plain title. One descriptor goes per
+	// tier, so "CRAZY (David Guetta Remix) - Extended ver." finds the remix
+	// before the original.
+	for depth := 1; depth <= maxVersionDescriptors; depth++ {
+		original := matchTier{
+			reason:    "original of a remix or alternate version",
+			catalogue: parts,
+			source: func(id *Identity) []string {
+				title, ok := withoutVersions(cleanTitle(id.Title), depth)
+				if !ok {
+					return nil
+				}
+				artists := append(nameParts(cleanArtist(id.Artist), true), aliasesOf(id.Artist)...)
+				return partKeys(artists, nameParts(title, false))
+			},
+		}
+		tiers = append(tiers, original, spaceless(original, "original of a remix or alternate version, ignoring spaces"))
+	}
+	return tiers
 }
+
+// maxVersionDescriptors bounds how many stacked descriptors matching strips.
+const maxVersionDescriptors = 3
+
+var (
+	trailingGroup  = regexp.MustCompile(`\s*[\(\[]([^()\[\]]*)[\)\]]$`)
+	trailingDash   = regexp.MustCompile(`\s+[-–—]\s+([^-–—]+)$`)
+	trailingRemix  = regexp.MustCompile(`(?i)\s+remixx?(\s.*)?$`)
+	strippedWord   = regexp.MustCompile(`\b(remix|remixx|ver|version|mix|edit|live|bootleg|acoustic|remaster|remastered|mashup|edm|club)\b`)
+	languageWord   = regexp.MustCompile(`\b(korean|japanese|english|chinese|mandarin|kr|kor|jp|jpn|eng|chn)\b`)
+	twoSongsMarker = regexp.MustCompile(`\+|\bmashup\b`)
+)
+
+// withoutVersions strips depth trailing version descriptors from a scrobbled
+// title, so "Zimzalabim (Raiden Remix)" and "PLAYING WITH FIRE - Live" become
+// the original: the owner counts remixes, live recordings and alternate
+// versions as plays of the original track. Language versions stay, since the
+// catalogue holds those as separate recordings, and a mashup of two songs is
+// left alone. It reports false when the title has fewer descriptors.
+func withoutVersions(title string, depth int) (string, bool) {
+	if twoSongsMarker.MatchString(strings.ToLower(title)) {
+		return "", false
+	}
+	for ; depth > 0; depth-- {
+		stripped, ok := withoutVersion(title)
+		if !ok {
+			return "", false
+		}
+		title = stripped
+	}
+	return title, true
+}
+
+func withoutVersion(title string) (string, bool) {
+	for _, pattern := range []*regexp.Regexp{trailingGroup, trailingDash} {
+		if match := pattern.FindStringSubmatchIndex(title); match != nil {
+			descriptor := matchName(title[match[2]:match[3]])
+			if strippedWord.MatchString(descriptor) && !languageWord.MatchString(descriptor) {
+				return nonEmpty(strings.TrimSpace(title[:match[0]]))
+			}
+		}
+	}
+	if match := trailingRemix.FindStringIndex(title); match != nil {
+		return nonEmpty(strings.TrimSpace(title[:match[0]]))
+	}
+	return "", false
+}
+
+func nonEmpty(title string) (string, bool) { return title, matchName(title) != "" }
 
 // minimumAliasDecisions is how many reviewed matches, on different songs,
 // must agree before a source artist becomes an alias of a catalogue artist.

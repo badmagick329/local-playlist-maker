@@ -44,7 +44,7 @@ Playback history is enabled by `playbackHistoryEnabled` and can be disabled for 
 
 ## Last.fm history
 
-Set `lastfmUsername` and `lastfmApiKey` to import completed scrobbles. PlaylistMaker caches the history for offline use, matches exact artist and title identities to catalogue tracks, and builds queues from one or two listening periods. It never writes to Last.fm and keeps these events separate from local playback history.
+Set `lastfmUsername` and `lastfmApiKey` to import completed scrobbles. PlaylistMaker caches the history for offline use, matches artist and title identities to catalogue tracks despite accents, credits, bilingual spellings and remix tags, and builds queues from one or two listening periods. It never writes to Last.fm and keeps these events separate from local playback history.
 
 Each sync reports which scrobbles it added are unresolved or have no Spotify link. Unresolved identities, all of them or only those played since the last sync or in a date range, can be exported for an external matching agent and imported through the Last.fm screen. See [`src/PlaylistMaker.Charm/LASTFM_SETUP.md`](src/PlaylistMaker.Charm/LASTFM_SETUP.md) for setup, sync behavior, period dates, and the review workflow.
 
