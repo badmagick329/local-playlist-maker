@@ -81,3 +81,37 @@ func TestCreditsVideoTagsAndTrackNumbersAreIgnored(t *testing.T) {
 		t.Fatalf("a title starting with a credit word lost its words: %#v", m)
 	}
 }
+
+func TestTitlesSpelledInTwoScriptsMatchEitherSpelling(t *testing.T) {
+	cases := []struct {
+		artist, title string
+		tracks        []library.Track
+		want          string
+	}{
+		{"TAEYEON", "불티 (Spark)", []library.Track{testTrack("spark", "TAEYEON", "Spark")}, "spark"},
+		{"aespa", "자각몽 Lucid Dream", []library.Track{testTrack("lucid", "aespa", "Lucid Dream")}, "lucid"},
+		{"SUNMI", "pporappippam 보라빛 밤", []library.Track{testTrack("ppo", "SUNMI", "pporappippam")}, "ppo"},
+		{"PSY", "강남스타일", []library.Track{testTrack("gangnam", "PSY", "Gangnam Style (강남스타일)")}, "gangnam"},
+		{"f(x)", "피노키오 (Danger)", []library.Track{testTrack("pino", "f(x)", "Pinocchio (Danger)")}, "pino"},
+		{"Red Velvet (레드벨벳)", "Umpah Umpah", []library.Track{testTrack("umpah", "Red Velvet", "Umpah Umpah")}, "umpah"},
+	}
+	for _, c := range cases {
+		if m, ok := resolved(t, c.artist, c.title, c.tracks); !ok || m.TrackID != c.want {
+			t.Errorf("%s – %s: got %#v, want %s", c.artist, c.title, m, c.want)
+		}
+	}
+	unresolved := []struct {
+		name, artist, title string
+		tracks              []library.Track
+	}{
+		{"version brackets are not translations", "STAYC", "POPPY", []library.Track{testTrack("kr", "STAYC", "Poppy (Korean Ver.)"), testTrack("jp", "STAYC", "POPPY - Japanese Ver.")}},
+		{"single-script titles do not split", "TAEYEON", "I Got Love", []library.Track{testTrack("i", "TAEYEON", "I")}},
+		{"a version run is not a translation", "Davichi", "사랑 Live", []library.Track{testTrack("love", "Davichi", "Live")}},
+		{"same-script artist brackets do not split", "Jennie (BLACKPINK)", "SOLO", []library.Track{testTrack("solo", "BLACKPINK", "SOLO")}},
+	}
+	for _, c := range unresolved {
+		if m, ok := resolved(t, c.artist, c.title, c.tracks); ok {
+			t.Errorf("%s: %s – %s matched %#v", c.name, c.artist, c.title, m)
+		}
+	}
+}

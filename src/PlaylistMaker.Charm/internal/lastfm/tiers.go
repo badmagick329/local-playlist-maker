@@ -51,7 +51,16 @@ func (s *Service) matchTiers() []matchTier {
 		catalogue: func(artist, title string) []string { return []string{cleanKey(artist, title)} },
 		source:    func(id *Identity) []string { return []string{cleanKey(id.Artist, id.Title)} },
 	}
-	return append(tiers, cleaned, spaceless(cleaned, "normalized alias without credits, video tags, track numbers or spaces"))
+	tiers = append(tiers, cleaned, spaceless(cleaned, "normalized alias without credits, video tags, track numbers or spaces"))
+	parts := func(artist, title string) []string {
+		return partKeys(nameParts(cleanArtist(artist), true), nameParts(cleanTitle(title), false))
+	}
+	split := matchTier{
+		reason:    "one spelling of a title or artist written in two scripts or with a bracketed translation",
+		catalogue: parts,
+		source:    func(id *Identity) []string { return parts(id.Artist, id.Title) },
+	}
+	return append(tiers, split, spaceless(split, "one spelling of a title or artist written in two scripts or with a bracketed translation, ignoring spaces"))
 }
 
 // spaceless derives a tier whose keys ignore spaces, which it tries only after
@@ -105,7 +114,14 @@ var (
 // "version" and "ver" become one word, so "Korean Ver." meets "Korean
 // Version". It folds first, so it also covers the folded tier's hits.
 func cleanKey(artist, title string) string {
-	return SourceKey(cleanArtist(artist), cleanTitle(title))
+	return nameKey(matchName(cleanArtist(artist)), matchName(cleanTitle(title)))
+}
+
+func nameKey(artist, title string) string { return artist + "\x00" + title }
+
+// matchName normalizes a cleaned name for the cleaned and later tiers.
+func matchName(value string) string {
+	return strings.TrimSpace(strings.ReplaceAll(" "+videoname.Normalize(value)+" ", " version ", " ver "))
 }
 
 func cleanArtist(artist string) string {
@@ -129,7 +145,110 @@ func cleanTitle(title string) string {
 	if videoname.Normalize(cleaned) == "" {
 		return title
 	}
-	return strings.TrimSpace(strings.ReplaceAll(" "+videoname.Normalize(cleaned)+" ", " version ", " ver "))
+	return cleaned
+}
+
+var (
+	trailingBracket = regexp.MustCompile(`\s+[\(\[]([^()\[\]]*)[\)\]]$`)
+	versionWord     = regexp.MustCompile(`\b(remix|ver|version|mix|edit|live|bootleg|acoustic|remaster|remastered|mashup|inst|mr)\b`)
+	versionEnding   = regexp.MustCompile(`\b(remix|ver|version|mix|edit|live|bootleg|acoustic|remaster|remastered|mashup|inst|mr)$`)
+)
+
+// nameParts returns a cleaned name and, when it is spelled twice, each
+// spelling: "불티 (Spark)" yields "불티" and "spark", "자각몽 Lucid Dream" yields
+// "자각몽" and "lucid dream". A bracket holding a version word is a different
+// recording, not a translation, so "Poppy (Korean Ver.)" stays whole, and a
+// script run ending in one ("사랑 Live") does not split either. A single
+// script never splits, so "I Got Love" cannot become "I". Artists split only
+// across scripts ("Red Velvet (레드벨벳)"), so "Jennie (BLACKPINK)" stays whole.
+func nameParts(value string, artist bool) []string {
+	whole := matchName(value)
+	parts := []string{whole}
+	if match := trailingBracket.FindStringSubmatchIndex(value); match != nil {
+		outside, inside := matchName(value[:match[0]]), matchName(value[match[2]:match[3]])
+		if outside == "" || inside == "" || versionWord.MatchString(inside) || artist && !differentScripts(outside, inside) {
+			return parts
+		}
+		return append(parts, outside, inside)
+	}
+	words := strings.Fields(whole)
+	split := 0
+	for i := 1; i < len(words); i++ {
+		if scriptOf(words[i]) != scriptOf(words[i-1]) {
+			if split > 0 {
+				return parts
+			}
+			split = i
+		}
+	}
+	if split == 0 {
+		return parts
+	}
+	first, second := strings.Join(words[:split], " "), strings.Join(words[split:], " ")
+	if !differentScripts(first, second) || versionEnding.MatchString(first) || versionEnding.MatchString(second) {
+		return parts
+	}
+	return append(parts, first, second)
+}
+
+type script int
+
+const (
+	otherScript script = iota
+	latinScript
+	cjkScript
+)
+
+// scriptOf classes a normalized word as Latin or CJK (Hangul, Han, kana);
+// digits and mixed words are neither, so they never split a name.
+func scriptOf(word string) script {
+	result := otherScript
+	for _, r := range word {
+		var current script
+		switch {
+		case unicode.In(r, unicode.Hangul, unicode.Han, unicode.Hiragana, unicode.Katakana):
+			current = cjkScript
+		case unicode.In(r, unicode.Latin):
+			current = latinScript
+		default:
+			return otherScript
+		}
+		if result != otherScript && current != result {
+			return otherScript
+		}
+		result = current
+	}
+	return result
+}
+
+// differentScripts reports whether one name is wholly Latin and the other
+// wholly CJK.
+func differentScripts(a, b string) bool {
+	sa, sb := nameScript(a), nameScript(b)
+	return sa != otherScript && sb != otherScript && sa != sb
+}
+
+func nameScript(name string) script {
+	result := otherScript
+	for i, word := range strings.Fields(name) {
+		s := scriptOf(word)
+		if s == otherScript || i > 0 && s != result {
+			return otherScript
+		}
+		result = s
+	}
+	return result
+}
+
+// partKeys pairs every artist part with every title part.
+func partKeys(artists, titles []string) []string {
+	keys := make([]string, 0, len(artists)*len(titles))
+	for _, a := range artists {
+		for _, t := range titles {
+			keys = append(keys, nameKey(a, t))
+		}
+	}
+	return keys
 }
 
 // dropCredits removes bracketed credits such as "(feat. Loopy, SOYEON
