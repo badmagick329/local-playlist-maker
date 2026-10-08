@@ -35,7 +35,13 @@ If `lastfm-scrobbles.jsonl`, `lastfm-matches.json`, `spotify-track-cache.json` o
 
 The integration is read-only. It never submits scrobbles and does not replace the Last.fm scrobbler. Last.fm events stay separate from `play-history.jsonl`.
 
-Scrobbles with the same normalized artist and title form one identity, and PlaylistMaker matches it to a catalogue track automatically when the names point to one song. A track fits when its artist and title, or its linked Spotify artist and title, normalize to the identity. Only when no track fits does it compare again with spaces removed, so `U-KISS` finds `UKISS`. Several tracks that fit count as one song when they share a Spotify link or ISRC, such as a single and the album that repeats it. Their plays all go to one track: the one with the most videos, then the earliest release, then the lowest track ID. Any other set of fitting tracks leaves the identity unresolved for review.
+Scrobbles with the same normalized artist and title form one identity, and PlaylistMaker matches it to a catalogue track automatically when the names point to one song. It compares the identity with each track's artist and title, and with its linked Spotify artist and title, in this order, and stops at the first comparison that finds any track:
+
+1. Normalized names, ignoring case and punctuation.
+2. The same with spaces removed, so `U-KISS` finds `UKISS`.
+3. With accents and character width ignored, so `Déjà Vu` finds `Deja Vu` and `ＭＡＭＡＭＯＯ` finds `MAMAMOO`; then also with spaces removed.
+
+Several tracks found together count as one song when they share a Spotify link or ISRC, such as a single and the album that repeats it. Their plays all go to one track: the one with the most videos, then the earliest release, then the lowest track ID. Any other set of tracks leaves the identity unresolved for review.
 
 ## Build a period mix
 
@@ -77,6 +83,6 @@ A limited export keeps each case's whole play history, and `review.json` names t
 
 Give the directory to the external agent, then choose `Import agent decisions`. PlaylistMaker accepts only the exported case IDs and current catalogue track IDs. An old export ID rejects the document. Invalid rows are skipped; valid match and no-match decisions are saved together. The catalogue may change between export and import: a decision for a case that was resolved in the meantime, or by an earlier import of the same file, is skipped and counted as already resolved.
 
-A match lasts while its track exists, so an automatic match keeps its track when a later duplicate would win the canonical choice. A no-match lasts until the catalogue gains a track that fits the identity, with or without spaces; the identity is then matched again, and becomes unresolved if the fitting tracks are not one song. Other catalogue changes leave no-match decisions in place.
+A match lasts while its track exists, so an automatic match keeps its track when a later duplicate would win the canonical choice. A no-match lasts until a matching comparison finds a track for the identity; the identity is then matched again. When the first two comparisons find tracks that are not one song, it becomes unresolved; a later comparison reopens it only when it finds one song, so a reviewed case does not return to review after every import. Other catalogue changes leave no-match decisions in place.
 
 `Reset agent decisions` removes imported decisions and runs exact matching again. It requires a second `Enter` press.

@@ -169,49 +169,48 @@ func buildIndex(scrobbles []Scrobble, matches []Match, spotifyValues []SpotifyMe
 }
 
 // resolve drops stored decisions the catalogue has outgrown and auto-matches
-// identities whose names point to one song. Exact keys come first; spaces are
-// ignored only when they miss. A no_match stays only while neither key finds a
-// track's normalized name or Spotify alias: such a track is the only catalogue
-// change that could answer it, so unrelated additions and relinks leave
-// reviewed cases closed.
+// identities whose names point to one song, trying the tiers of matchTiers in
+// order. A no_match stays while no tier finds a track's name or Spotify alias,
+// or while only a loose tier finds several songs: a fitting track is the only
+// catalogue change that could answer it, so unrelated additions and relinks
+// leave reviewed cases closed.
 func (s *Service) resolve(tracks []library.Track) {
 	byID := map[string]library.Track{}
-	exact := map[string]map[string]bool{}
-	spaceless := map[string]map[string]bool{}
-	add := func(key, trackID string) {
-		if exact[key] == nil {
-			exact[key] = map[string]bool{}
-		}
-		exact[key][trackID] = true
-		if spaceless[spacelessKey(key)] == nil {
-			spaceless[spacelessKey(key)] = map[string]bool{}
-		}
-		spaceless[spacelessKey(key)][trackID] = true
-	}
 	for _, t := range tracks {
 		byID[t.ID] = t
-		add(SourceKey(t.Artist, t.Title), t.ID)
-		if md, ok := s.index.Spotify[t.SpotifyURI]; ok && t.SpotifyURI != "" {
-			for _, artist := range md.Artists {
-				add(SourceKey(artist, md.Name), t.ID)
-			}
-		}
+	}
+	tiers := s.matchTiers()
+	lookups := make([]map[string]map[string]bool, len(tiers))
+	for i, tier := range tiers {
+		lookups[i] = tierLookup(tier, tracks, s.index.Spotify)
 	}
 	for key, id := range s.index.Identities {
-		ids, reason := exact[key], "exact normalized alias"
-		if len(ids) == 0 {
-			ids, reason = spaceless[spacelessKey(key)], "normalized alias ignoring spaces"
+		var ids map[string]bool
+		var tier matchTier
+		for i, t := range tiers {
+			ids = map[string]bool{}
+			for _, k := range t.source(id) {
+				for trackID := range lookups[i][k] {
+					ids[trackID] = true
+				}
+			}
+			if len(ids) > 0 {
+				tier = t
+				break
+			}
 		}
+		trackID, shared := s.songTrack(ids, byID)
 		if old, ok := s.index.Matches[key]; ok {
 			if _, exists := byID[old.TrackID]; old.Status == "match" && exists {
 				continue
 			}
-			if old.Status == "no_match" && len(ids) == 0 {
+			if old.Status == "no_match" && (len(ids) == 0 || trackID == "" && !tier.reopensAmbiguous) {
 				continue
 			}
 			delete(s.index.Matches, key)
 		}
-		if trackID, shared := s.songTrack(ids, byID); trackID != "" {
+		if trackID != "" {
+			reason := tier.reason
 			if shared == "" {
 				reason = "unique " + reason
 			} else {
@@ -223,8 +222,6 @@ func (s *Service) resolve(tracks []library.Track) {
 	s.rebuildTrackPlays()
 }
 
-// spacelessKey lets spellings that differ only in punctuation or spacing meet:
-// "U-KISS" normalizes to "u kiss" and "UKISS" to "ukiss".
 func spacelessKey(key string) string { return strings.ReplaceAll(key, " ", "") }
 
 // songTrack returns the track that candidate IDs resolve to, or "" when they
