@@ -153,3 +153,26 @@ func TestArtistAliasesLearnedFromScrobblesSpelledInBothScripts(t *testing.T) {
 		t.Fatalf("spellings differing only in spaces counted as a conflict: %#v", m)
 	}
 }
+
+func TestArtistAliasesLearnedFromTwoAgreeingDecisions(t *testing.T) {
+	tracks := []library.Track{testTrack("tears", "Son Dam Bi", "눈물이 주르륵"), testTrack("night", "Son Dam Bi", "Saturday Night"), testTrack("queen", "Son Dam Bi", "Queen"), testTrack("other", "Other", "Song")}
+	decision := func(title, trackID, provenance string) Match {
+		return Match{SourceKey: SourceKey("손담비", title), Artist: "손담비", Title: title, Status: "match", TrackID: trackID, Provenance: provenance}
+	}
+	queen := func(stored ...Match) (Match, bool) {
+		t.Helper()
+		return resolved(t, "손담비", "Queen", tracks, stored...)
+	}
+	if m, ok := queen(decision("눈물이 주르륵", "tears", "agent"), decision("Saturday Night", "night", "agent")); !ok || m.TrackID != "queen" {
+		t.Fatalf("two agreeing decisions did not teach the alias: %#v", m)
+	}
+	if m, ok := queen(decision("눈물이 주르륵", "tears", "agent")); ok {
+		t.Fatalf("one decision taught the alias: %#v", m)
+	}
+	if m, ok := queen(decision("눈물이 주르륵", "tears", "auto"), decision("Saturday Night", "night", "auto")); ok {
+		t.Fatalf("automatic matches taught the alias: %#v", m)
+	}
+	if m, ok := queen(decision("눈물이 주르륵", "tears", "agent"), decision("Saturday Night", "night", "agent"), decision("Song", "other", "agent")); ok {
+		t.Fatalf("an artist matched to two catalogue artists was used: %#v", m)
+	}
+}

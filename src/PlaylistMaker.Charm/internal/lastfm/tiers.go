@@ -75,31 +75,64 @@ func matchTiers(aliases map[string][]string) []matchTier {
 	return append(tiers, aliased, spaceless(aliased, "learned artist alias, ignoring spaces"))
 }
 
-// artistAliases learns which artist names mean the same act from scrobbles
-// spelled in both scripts, such as "Red Velvet (레드벨벳)", so a scrobble
-// credited only "레드벨벳" can find "Red Velvet". It is derived from the cache
-// on every resolve and never stored. A name with two different partners is
-// ambiguous, so none of its aliases is used.
-func (s *Service) artistAliases() map[string][]string {
-	partners := map[string]map[string]string{}
-	pair := func(a, b string) {
+// minimumAliasDecisions is how many reviewed matches, on different songs,
+// must agree before a source artist becomes an alias of a catalogue artist.
+// The owner chose two: one decision would turn a single wrong agent match
+// into a rule for every song by that artist.
+const minimumAliasDecisions = 2
+
+// artistAliases learns which artist names mean the same act. Scrobbles
+// spelled in both scripts, such as "Red Velvet (레드벨벳)", pair both names,
+// so a scrobble credited only "레드벨벳" can find "Red Velvet". Reviewed
+// matches teach names never scrobbled in both forms: two imported
+// matches of "손담비" songs to Son Dam Bi tracks map 손담비 to Son Dam Bi.
+// Automatic matches teach nothing, since they came from these aliases.
+// Aliases are derived on every resolve and never stored. A name with two
+// different partners is ambiguous, so none of its aliases is used.
+func (s *Service) artistAliases(byID map[string]library.Track) map[string][]string {
+	// partners maps a name to its partners keyed without spaces, so "Ji Yeon"
+	// and "Jiyeon" do not conflict. Every partner counts against ambiguity,
+	// but only a confirmed one becomes an alias.
+	type partner struct {
+		name      string
+		decisions int
+		confirmed bool
+	}
+	partners := map[string]map[string]*partner{}
+	add := func(a, b string) *partner {
 		if partners[a] == nil {
-			partners[a] = map[string]string{}
+			partners[a] = map[string]*partner{}
 		}
-		// Keyed without spaces, so "Ji Yeon" and "Jiyeon" do not conflict.
-		partners[a][spacelessKey(b)] = b
+		if partners[a][spacelessKey(b)] == nil {
+			partners[a][spacelessKey(b)] = &partner{name: b}
+		}
+		return partners[a][spacelessKey(b)]
 	}
 	for _, id := range s.index.Identities {
 		if parts := nameParts(cleanArtist(id.Artist), true); len(parts) == 3 {
-			pair(parts[1], parts[2])
-			pair(parts[2], parts[1])
+			add(parts[1], parts[2]).confirmed = true
+			add(parts[2], parts[1]).confirmed = true
+		}
+	}
+	for _, m := range s.index.Matches {
+		track, ok := byID[m.TrackID]
+		if m.Status != "match" || m.Provenance == "auto" || !ok {
+			continue
+		}
+		source, target := matchName(cleanArtist(m.Artist)), matchName(cleanArtist(track.Artist))
+		if spacelessKey(source) != spacelessKey(target) {
+			p := add(source, target)
+			p.decisions++
+			p.confirmed = p.confirmed || p.decisions >= minimumAliasDecisions
 		}
 	}
 	aliases := map[string][]string{}
 	for name, values := range partners {
 		if len(values) == 1 {
-			for _, v := range values {
-				aliases[name] = []string{v}
+			for _, p := range values {
+				if p.confirmed {
+					aliases[name] = []string{p.name}
+				}
 			}
 		}
 	}
