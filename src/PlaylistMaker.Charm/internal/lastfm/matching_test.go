@@ -9,7 +9,7 @@ import (
 	"playlistmaker/charm/internal/library"
 )
 
-func TestExactMatchingStoredPrecedenceAmbiguityAndFingerprintInvalidation(t *testing.T) {
+func TestExactMatchingStoredPrecedenceAndAmbiguity(t *testing.T) {
 	tracks := []library.Track{testTrack("one", "Artist", "Song"), testTrack("two", "Other", "Title")}
 	scrobbles := []Scrobble{{Artist: "ARTIST!", Title: "Song", PlayedAtUTC: time.Unix(1, 0)}, {Artist: "Alias", Title: "Hit", PlayedAtUTC: time.Unix(2, 0)}}
 	s := Service{DataDirectory: t.TempDir()}
@@ -25,16 +25,53 @@ func TestExactMatchingStoredPrecedenceAmbiguityAndFingerprintInvalidation(t *tes
 	if _, ok := s2.index.Matches[SourceKey("Artist", "Song")]; ok {
 		t.Fatal("ambiguous alias matched")
 	}
+}
+
+func TestNoMatchSurvivesUnrelatedCatalogueChanges(t *testing.T) {
 	key := SourceKey("Missing", "Song")
-	s3 := Service{}
-	s3.index = buildIndex([]Scrobble{{Artist: "Missing", Title: "Song", PlayedAtUTC: time.Unix(3, 0)}}, []Match{{SourceKey: key, Status: "no_match", Provenance: "agent", CatalogueFingerprint: CatalogueFingerprint(tracks)}}, nil)
-	s3.resolve(tracks)
-	if _, ok := s3.index.Matches[key]; !ok {
-		t.Fatal("current no-match was not retained")
+	unrelated := testTrack("one", "Artist", "Song")
+	s := Service{}
+	s.index = buildIndex([]Scrobble{{Artist: "Missing", Title: "Song", PlayedAtUTC: time.Unix(3, 0)}}, []Match{{SourceKey: key, Status: "no_match", Provenance: "agent"}}, []SpotifyMetadata{{URI: "spotify:track:other", Name: "Other", Artists: []string{"Someone"}}})
+	s.resolve([]library.Track{unrelated})
+	added := testTrack("two", "New", "Track")
+	relinked := unrelated
+	relinked.SpotifyURI = "spotify:track:other"
+	s.resolve([]library.Track{relinked, added})
+	if s.index.Matches[key].Status != "no_match" {
+		t.Fatalf("no-match dropped by unrelated change: %#v", s.index.Matches[key])
 	}
-	s3.resolve(append(tracks, testTrack("four", "Missing", "Song")))
-	if s3.index.Matches[key].Status != "match" {
-		t.Fatalf("stale no-match not reconsidered: %#v", s3.index.Matches[key])
+	if s.Status().Unresolved != 0 {
+		t.Fatal("kept no-match counted as unresolved")
+	}
+}
+
+func TestNoMatchReopensWhenCatalogueGainsItsIdentity(t *testing.T) {
+	key := SourceKey("Missing", "Song")
+	scrobbles := []Scrobble{{Artist: "Missing", Title: "Song", PlayedAtUTC: time.Unix(3, 0)}}
+	noMatch := []Match{{SourceKey: key, Status: "no_match", Provenance: "agent"}}
+	base := []library.Track{testTrack("one", "Artist", "Song")}
+
+	s := Service{}
+	s.index = buildIndex(scrobbles, noMatch, nil)
+	s.resolve(append(base, testTrack("two", "MISSING", "song!")))
+	if m := s.index.Matches[key]; m.Status != "match" || m.TrackID != "two" {
+		t.Fatalf("same normalized identity did not reopen and auto-match: %#v", m)
+	}
+
+	s = Service{}
+	s.index = buildIndex(scrobbles, noMatch, nil)
+	s.resolve(append(base, testTrack("two", "Missing", "Song"), testTrack("three", "Missing", "Song")))
+	if _, ok := s.index.Matches[key]; ok || s.Status().Unresolved != 1 {
+		t.Fatalf("ambiguous identity should be unresolved again: %#v", s.index.Matches[key])
+	}
+
+	linked := testTrack("two", "Local", "Name")
+	linked.SpotifyURI = "spotify:track:two"
+	s = Service{}
+	s.index = buildIndex(scrobbles, noMatch, []SpotifyMetadata{{URI: linked.SpotifyURI, Name: "Song", Artists: []string{"Missing"}}})
+	s.resolve(append(base, linked))
+	if m := s.index.Matches[key]; m.Status != "match" || m.TrackID != "two" {
+		t.Fatalf("Spotify alias did not reopen and auto-match: %#v", m)
 	}
 }
 
@@ -75,7 +112,7 @@ func TestResetAgentDecisionsRetainsAutomaticMatches(t *testing.T) {
 	tracks := []library.Track{testTrack("one", "A", "B")}
 	autoKey, agentKey := SourceKey("A", "B"), SourceKey("X", "Y")
 	s := Service{DataDirectory: t.TempDir()}
-	s.index = buildIndex([]Scrobble{{Artist: "A", Title: "B", PlayedAtUTC: day(1)}, {Artist: "X", Title: "Y", PlayedAtUTC: day(2)}}, []Match{{SourceKey: autoKey, Status: "match", TrackID: "one", Provenance: "auto"}, {SourceKey: agentKey, Status: "no_match", Provenance: "agent", CatalogueFingerprint: CatalogueFingerprint(tracks)}}, nil)
+	s.index = buildIndex([]Scrobble{{Artist: "A", Title: "B", PlayedAtUTC: day(1)}, {Artist: "X", Title: "Y", PlayedAtUTC: day(2)}}, []Match{{SourceKey: autoKey, Status: "match", TrackID: "one", Provenance: "auto"}, {SourceKey: agentKey, Status: "no_match", Provenance: "agent"}}, nil)
 	if err := s.ResetAgentDecisions(tracks); err != nil {
 		t.Fatal(err)
 	}

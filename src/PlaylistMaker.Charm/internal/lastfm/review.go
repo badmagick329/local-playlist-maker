@@ -246,7 +246,7 @@ func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) 
 			case "no_match":
 				invalid = d.TrackID != nil
 				if !invalid {
-					valid = append(valid, Match{SourceKey: c.Source.Key, Artist: c.Source.Artist, Title: c.Source.Title, Status: "no_match", Provenance: "agent", Reason: d.Reason, CatalogueFingerprint: review.CatalogueFingerprint, ExportID: review.ExportID})
+					valid = append(valid, Match{SourceKey: c.Source.Key, Artist: c.Source.Artist, Title: c.Source.Title, Status: "no_match", Provenance: "agent", Reason: d.Reason, ExportID: review.ExportID})
 					result.NoMatch++
 				}
 			case "needs_human":

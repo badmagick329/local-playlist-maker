@@ -49,7 +49,6 @@ type Match struct {
 	TrackID              string `json:"trackId,omitempty"`
 	Provenance           string `json:"provenance"`
 	Reason               string `json:"reason"`
-	CatalogueFingerprint string `json:"catalogueFingerprint,omitempty"`
 	ExportID             string `json:"exportId,omitempty"`
 }
 type MatchFile struct {
@@ -76,7 +75,6 @@ type Index struct {
 	Identities      map[string]*Identity
 	Matches         map[string]Match
 	TrackPlays      map[string][]time.Time
-	Fingerprint     string
 	Spotify         map[string]SpotifyMetadata
 	LastSyncUTC     *time.Time
 	SpotifyComplete bool

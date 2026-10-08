@@ -160,9 +160,12 @@ func CatalogueFingerprint(tracks []library.Track) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
+// resolve drops stored decisions the catalogue has outgrown and auto-matches
+// identities whose exact names point to exactly one track. A no_match stays
+// only while no track's normalized name or Spotify alias equals its source
+// key: such a track is the only catalogue change that could answer it, so
+// unrelated additions and relinks leave reviewed cases closed.
 func (s *Service) resolve(tracks []library.Track) {
-	fingerprint := CatalogueFingerprint(tracks)
-	s.index.Fingerprint = fingerprint
 	existing := map[string]bool{}
 	local := map[string]map[string]bool{}
 	aliases := map[string]map[string]bool{}
@@ -186,21 +189,21 @@ func (s *Service) resolve(tracks []library.Track) {
 		}
 	}
 	for key, id := range s.index.Identities {
-		if old, ok := s.index.Matches[key]; ok {
-			if old.Status == "match" && existing[old.TrackID] {
-				continue
-			}
-			if old.Status == "no_match" && old.CatalogueFingerprint == fingerprint {
-				continue
-			}
-			delete(s.index.Matches, key)
-		}
 		ids := map[string]bool{}
 		for trackID := range local[key] {
 			ids[trackID] = true
 		}
 		for trackID := range aliases[key] {
 			ids[trackID] = true
+		}
+		if old, ok := s.index.Matches[key]; ok {
+			if old.Status == "match" && existing[old.TrackID] {
+				continue
+			}
+			if old.Status == "no_match" && len(ids) == 0 {
+				continue
+			}
+			delete(s.index.Matches, key)
 		}
 		if len(ids) == 1 {
 			var trackID string
