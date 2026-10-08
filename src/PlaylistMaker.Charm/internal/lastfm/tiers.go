@@ -1,6 +1,8 @@
 package lastfm
 
 import (
+	"regexp"
+	"strings"
 	"unicode"
 
 	"golang.org/x/text/runes"
@@ -8,6 +10,7 @@ import (
 	"golang.org/x/text/unicode/norm"
 
 	"playlistmaker/charm/internal/library"
+	"playlistmaker/charm/internal/videoname"
 )
 
 // matchTier is one way of comparing an identity's names with the catalogue's.
@@ -42,7 +45,13 @@ func (s *Service) matchTiers() []matchTier {
 		catalogue: func(artist, title string) []string { return []string{SourceKey(fold(artist), fold(title))} },
 		source:    func(id *Identity) []string { return []string{SourceKey(fold(id.Artist), fold(id.Title))} },
 	}
-	return append(tiers, folded, spaceless(folded, "normalized alias ignoring accents, character width and spaces"))
+	tiers = append(tiers, folded, spaceless(folded, "normalized alias ignoring accents, character width and spaces"))
+	cleaned := matchTier{
+		reason:    "normalized alias without credits, video tags or track numbers",
+		catalogue: func(artist, title string) []string { return []string{cleanKey(artist, title)} },
+		source:    func(id *Identity) []string { return []string{cleanKey(id.Artist, id.Title)} },
+	}
+	return append(tiers, cleaned, spaceless(cleaned, "normalized alias without credits, video tags, track numbers or spaces"))
 }
 
 // spaceless derives a tier whose keys ignore spaces, which it tries only after
@@ -73,6 +82,89 @@ func fold(value string) string {
 		return value
 	}
 	return result
+}
+
+var (
+	creditStart   = regexp.MustCompile(`(?i)^\s*(feat|ft|featuring|with|prod)\b`)
+	trailingFeat  = regexp.MustCompile(`(?i)\s+(feat|ft|featuring)\b.*$`)
+	leadingNumber = regexp.MustCompile(`^\d{1,2}(\.|\s*-)\s+`)
+	// Tags that mark an upload or a release of the original recording. Korean
+	// and Japanese versions are not among them: the catalogue holds those as
+	// separate tracks, and dropping the marker would merge two recordings.
+	trailingTags = []*regexp.Regexp{
+		regexp.MustCompile(`(?i)\s*[\(\[]\s*official\s+(music\s+)?(video|audio|mv)\s*[\)\]]$`),
+		regexp.MustCompile(`(?i)\s*[\(\[]\s*(m/v|mv)\s*[\)\]]$`),
+		regexp.MustCompile(`(?i)\s+m/v$`),
+		regexp.MustCompile(`(?i)\s*-\s*kr\.?\s*ver(\.|sion)?\s*-?$`),
+		regexp.MustCompile(`(?i)\s*[\(\[-]?\s*bonus\s+track\s*[\)\]]?$`),
+	}
+)
+
+// cleanKey keys the artist and title without the text scrobblers add and the
+// catalogue lacks: feature credits, upload tags and album track numbers.
+// "version" and "ver" become one word, so "Korean Ver." meets "Korean
+// Version". It folds first, so it also covers the folded tier's hits.
+func cleanKey(artist, title string) string {
+	return SourceKey(cleanArtist(artist), cleanTitle(title))
+}
+
+func cleanArtist(artist string) string {
+	artist = fold(artist)
+	if cleaned := strings.TrimSpace(trailingFeat.ReplaceAllString(dropCredits(artist), "")); cleaned != "" {
+		return cleaned
+	}
+	return artist
+}
+
+func cleanTitle(title string) string {
+	title = fold(title)
+	cleaned := strings.TrimSpace(trailingFeat.ReplaceAllString(dropCredits(title), ""))
+	for before := ""; before != cleaned; {
+		before = cleaned
+		for _, tag := range trailingTags {
+			cleaned = strings.TrimSpace(tag.ReplaceAllString(cleaned, ""))
+		}
+	}
+	cleaned = leadingNumber.ReplaceAllString(cleaned, "")
+	if videoname.Normalize(cleaned) == "" {
+		return title
+	}
+	return strings.TrimSpace(strings.ReplaceAll(" "+videoname.Normalize(cleaned)+" ", " version ", " ver "))
+}
+
+// dropCredits removes bracketed credits such as "(feat. Loopy, SOYEON
+// ((G)I-DLE))", nested brackets included.
+func dropCredits(value string) string {
+	var out strings.Builder
+	for i := 0; i < len(value); {
+		if value[i] == '(' || value[i] == '[' {
+			if end := closingBracket(value, i); end > 0 && creditStart.MatchString(value[i+1:end]) {
+				i = end + 1
+				continue
+			}
+		}
+		out.WriteByte(value[i])
+		i++
+	}
+	return out.String()
+}
+
+// closingBracket returns the index of the bracket closing the one at open, or
+// -1 when it is unbalanced.
+func closingBracket(value string, open int) int {
+	depth := 0
+	for i := open; i < len(value); i++ {
+		switch value[i] {
+		case '(', '[':
+			depth++
+		case ')', ']':
+			depth--
+			if depth == 0 {
+				return i
+			}
+		}
+	}
+	return -1
 }
 
 // tierLookup indexes the catalogue under one tier's keys.

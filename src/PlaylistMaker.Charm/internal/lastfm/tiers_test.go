@@ -47,3 +47,37 @@ func TestNoMatchReopensOnLooseTierOnlyForOneSong(t *testing.T) {
 		t.Fatalf("folded hit on one song did not reopen the no_match: %#v", m)
 	}
 }
+
+func TestCreditsVideoTagsAndTrackNumbersAreIgnored(t *testing.T) {
+	boombayah := func() []library.Track {
+		album, single := testTrack("album", "BLACKPINK", "BOOMBAYAH"), testTrack("single", "BLACKPINK", "BOOMBAYAH")
+		album.SpotifyURI, single.SpotifyURI = "spotify:track:b", "spotify:track:b"
+		album.Variants = append(album.Variants, album.Variants[0])
+		return []library.Track{album, single}
+	}
+	cases := []struct {
+		artist, title string
+		tracks        []library.Track
+		want          string
+	}{
+		{"HYO", "DESSERT (feat. Loopy, SOYEON ((G)I-DLE))", []library.Track{testTrack("dessert", "HYO", "DESSERT")}, "dessert"},
+		{"bts feat. halsey", "boy with luv", []library.Track{testTrack("luv", "BTS", "Boy With Luv")}, "luv"},
+		{"Red Velvet", "05. Oh Boy", []library.Track{testTrack("oh", "Red Velvet", "Oh Boy")}, "oh"},
+		{"Davichi", "4- 봐 (Look)", []library.Track{testTrack("look", "Davichi", "봐 (Look)")}, "look"},
+		{"momoland, CHROMANCE", "Wrap Me In Plastic (Official Video)", []library.Track{testTrack("wrap", "MOMOLAND, CHROMANCE", "Wrap Me In Plastic")}, "wrap"},
+		{"마마무", "눈누난나 (Nun Nu Nan Na) M/V", []library.Track{testTrack("nun", "마마무", "눈누난나 (Nun Nu Nan Na)")}, "nun"},
+		{"BLACKPINK", "BOOMBAYAH -KR ver.-", boombayah(), "album"},
+		{"T-ara", "MR.TAXI (Korean Ver.)", []library.Track{testTrack("jp", "T-ara", "MR.TAXI"), testTrack("kr", "T-ara", "MR.TAXI - Korean Version")}, "kr"},
+	}
+	for _, c := range cases {
+		if m, ok := resolved(t, c.artist, c.title, c.tracks); !ok || m.TrackID != c.want {
+			t.Errorf("%s – %s: got %#v, want %s", c.artist, c.title, m, c.want)
+		}
+	}
+	if m, ok := resolved(t, "T-ara", "MR.TAXI (Korean Ver.)", []library.Track{testTrack("jp", "T-ara", "MR.TAXI")}); ok {
+		t.Fatalf("Korean version matched the Japanese recording: %#v", m)
+	}
+	if m, ok := resolved(t, "IU", "With You (Official Video)", []library.Track{testTrack("with", "IU", "With You"), testTrack("you", "IU", "You")}); !ok || m.TrackID != "with" {
+		t.Fatalf("a title starting with a credit word lost its words: %#v", m)
+	}
+}

@@ -40,6 +40,7 @@ Scrobbles with the same normalized artist and title form one identity, and Playl
 1. Normalized names, ignoring case and punctuation.
 2. The same with spaces removed, so `U-KISS` finds `UKISS`.
 3. With accents and character width ignored, so `Déjà Vu` finds `Deja Vu` and `ＭＡＭＡＭＯＯ` finds `MAMAMOO`; then also with spaces removed.
+4. Also without feature credits (`(feat. …)`, `ft.`, `with`, `prod.`), upload tags (`(Official Video)`, `M/V`, `Bonus Track`, `-KR ver.-`) and leading track numbers (`05. Oh Boy`, `4- 봐`), with `Ver.` and `Version` treated alike; then also with spaces removed. `Korean Ver.` and `Japanese Ver.` stay, because the catalogue holds those versions as separate tracks.
 
 Several tracks found together count as one song when they share a Spotify link or ISRC, such as a single and the album that repeats it. Their plays all go to one track: the one with the most videos, then the earliest release, then the lowest track ID. Any other set of tracks leaves the identity unresolved for review.
 
