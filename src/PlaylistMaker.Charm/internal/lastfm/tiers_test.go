@@ -115,3 +115,41 @@ func TestTitlesSpelledInTwoScriptsMatchEitherSpelling(t *testing.T) {
 		}
 	}
 }
+
+// resolvedAmong matches several scrobbled spellings and returns the match of
+// the last one.
+func resolvedAmong(t *testing.T, spellings [][2]string, tracks []library.Track) (Match, bool) {
+	t.Helper()
+	var scrobbles []Scrobble
+	for i, v := range spellings {
+		scrobbles = append(scrobbles, Scrobble{Artist: v[0], Title: v[1], PlayedAtUTC: time.Unix(int64(i+1), 0)})
+	}
+	s := Service{}
+	s.index = buildIndex(scrobbles, nil, nil)
+	s.resolve(tracks)
+	last := spellings[len(spellings)-1]
+	m, ok := s.index.Matches[SourceKey(last[0], last[1])]
+	return m, ok && m.Status == "match"
+}
+
+func TestArtistAliasesLearnedFromScrobblesSpelledInBothScripts(t *testing.T) {
+	umpah := []library.Track{testTrack("umpah", "Red Velvet", "Umpah Umpah")}
+	if m, ok := resolvedAmong(t, [][2]string{{"Red Velvet (레드벨벳)", "Psycho"}, {"레드벨벳", "Umpah Umpah"}}, umpah); !ok || m.TrackID != "umpah" || m.Reason != "unique learned artist alias" {
+		t.Fatalf("Hangul artist did not use the learned alias: %#v", m)
+	}
+	if _, ok := resolvedAmong(t, [][2]string{{"레드벨벳", "Umpah Umpah"}}, umpah); ok {
+		t.Fatal("matched without any scrobble teaching the alias")
+	}
+	two := append(umpah, testTrack("other", "Red Velvet", "Umpah Umpah"))
+	if _, ok := resolvedAmong(t, [][2]string{{"Red Velvet (레드벨벳)", "Psycho"}, {"레드벨벳", "Umpah Umpah"}}, two); ok {
+		t.Fatal("alias hit on several songs matched")
+	}
+	conflict := [][2]string{{"Ji Yeon (지연)", "A"}, {"Park Jiyeon (지연)", "B"}, {"지연", "Song"}}
+	if m, ok := resolvedAmong(t, conflict, []library.Track{testTrack("song", "Park Jiyeon", "Song")}); ok {
+		t.Fatalf("conflicting alias was used: %#v", m)
+	}
+	spacing := [][2]string{{"Ji Yeon (지연)", "A"}, {"Jiyeon (지연)", "B"}, {"지연", "Song"}}
+	if m, ok := resolvedAmong(t, spacing, []library.Track{testTrack("song", "Jiyeon", "Song")}); !ok || m.TrackID != "song" {
+		t.Fatalf("spellings differing only in spaces counted as a conflict: %#v", m)
+	}
+}

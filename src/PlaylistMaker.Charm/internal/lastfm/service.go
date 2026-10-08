@@ -179,7 +179,7 @@ func (s *Service) resolve(tracks []library.Track) {
 	for _, t := range tracks {
 		byID[t.ID] = t
 	}
-	tiers := s.matchTiers()
+	tiers := matchTiers(s.artistAliases())
 	lookups := make([]map[string]map[string]bool, len(tiers))
 	for i, tier := range tiers {
 		lookups[i] = tierLookup(tier, tracks, s.index.Spotify)

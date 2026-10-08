@@ -32,7 +32,7 @@ type matchTier struct {
 	reopensAmbiguous bool
 }
 
-func (s *Service) matchTiers() []matchTier {
+func matchTiers(aliases map[string][]string) []matchTier {
 	tiers := []matchTier{{
 		reason:           "exact normalized alias",
 		catalogue:        func(artist, title string) []string { return []string{SourceKey(artist, title)} },
@@ -60,7 +60,50 @@ func (s *Service) matchTiers() []matchTier {
 		catalogue: parts,
 		source:    func(id *Identity) []string { return parts(id.Artist, id.Title) },
 	}
-	return append(tiers, split, spaceless(split, "one spelling of a title or artist written in two scripts or with a bracketed translation, ignoring spaces"))
+	tiers = append(tiers, split, spaceless(split, "one spelling of a title or artist written in two scripts or with a bracketed translation, ignoring spaces"))
+	aliased := matchTier{
+		reason:    "learned artist alias",
+		catalogue: parts,
+		source: func(id *Identity) []string {
+			var artists []string
+			for _, part := range nameParts(cleanArtist(id.Artist), true) {
+				artists = append(artists, aliases[part]...)
+			}
+			return partKeys(artists, nameParts(cleanTitle(id.Title), false))
+		},
+	}
+	return append(tiers, aliased, spaceless(aliased, "learned artist alias, ignoring spaces"))
+}
+
+// artistAliases learns which artist names mean the same act from scrobbles
+// spelled in both scripts, such as "Red Velvet (레드벨벳)", so a scrobble
+// credited only "레드벨벳" can find "Red Velvet". It is derived from the cache
+// on every resolve and never stored. A name with two different partners is
+// ambiguous, so none of its aliases is used.
+func (s *Service) artistAliases() map[string][]string {
+	partners := map[string]map[string]string{}
+	pair := func(a, b string) {
+		if partners[a] == nil {
+			partners[a] = map[string]string{}
+		}
+		// Keyed without spaces, so "Ji Yeon" and "Jiyeon" do not conflict.
+		partners[a][spacelessKey(b)] = b
+	}
+	for _, id := range s.index.Identities {
+		if parts := nameParts(cleanArtist(id.Artist), true); len(parts) == 3 {
+			pair(parts[1], parts[2])
+			pair(parts[2], parts[1])
+		}
+	}
+	aliases := map[string][]string{}
+	for name, values := range partners {
+		if len(values) == 1 {
+			for _, v := range values {
+				aliases[name] = []string{v}
+			}
+		}
+	}
+	return aliases
 }
 
 // spaceless derives a tier whose keys ignore spaces, which it tries only after
