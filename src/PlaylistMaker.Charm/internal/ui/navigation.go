@@ -64,7 +64,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.status = "Last.fm is unavailable"
 			return m, nil
 		}
-		m.mode, m.overlayCursor, m.lastfmResetArmed = modeLastFM, 0, false
+		m.mode, m.overlayCursor, m.lastfmResetArmed, m.lastfmReport = modeLastFM, 0, false, nil
 		m.lastfmStatus = m.lastfm.Status()
 		return m, nil
 	}

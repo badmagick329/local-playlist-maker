@@ -76,7 +76,7 @@ type Index struct {
 	Matches         map[string]Match
 	TrackPlays      map[string][]time.Time
 	Spotify         map[string]SpotifyMetadata
-	LastSyncUTC     *time.Time
+	LastSync        *SyncReport
 	SpotifyComplete bool
 	Error           string
 }
@@ -101,8 +101,9 @@ type SyncProgress struct {
 	Resumed                                                           bool
 }
 type SyncResult struct {
-	PagesFetched, TotalPages, Scrobbles, Matched, Unresolved int
-	SpotifyComplete                                          bool
+	PagesFetched, TotalPages, Scrobbles int
+	SpotifyComplete                     bool
+	Report                              SyncReport
 }
 
 type SyncCheckpoint struct {

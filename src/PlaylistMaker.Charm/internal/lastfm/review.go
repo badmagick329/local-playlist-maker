@@ -65,6 +65,7 @@ type Review struct {
 	SchemaVersion  int           `json:"schemaVersion"`
 	ExportID       string        `json:"exportId"`
 	GeneratedAtUTC time.Time     `json:"generatedAtUtc"`
+	Period         string        `json:"period,omitempty"`
 	Cases          []ReviewCase  `json:"cases"`
 	Catalogue      []ReviewTrack `json:"catalogue"`
 }
@@ -96,7 +97,11 @@ func randomExportID() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (s *Service) ExportReview(tracks []library.Track, now time.Time) (string, error) {
+// ExportReview writes the unresolved identities for an external agent. A
+// non-nil period keeps only identities with a scrobble inside it, so the owner
+// can check what one sync or one stretch of listening left unresolved without
+// the whole backlog; each case still carries its full play history.
+func (s *Service) ExportReview(tracks []library.Track, now time.Time, period *library.DateRange) (string, error) {
 	if err := s.requireLoaded(); err != nil {
 		return "", err
 	}
@@ -105,8 +110,14 @@ func (s *Service) ExportReview(tracks []library.Track, now time.Time) (string, e
 		return "", err
 	}
 	review := Review{SchemaVersion: SchemaVersion, ExportID: exportID, GeneratedAtUTC: now.UTC(), Cases: []ReviewCase{}, Catalogue: []ReviewTrack{}}
+	if period != nil {
+		review.Period = period.Label
+	}
 	for key, id := range s.index.Identities {
 		if m, ok := s.index.Matches[key]; ok && (m.Status == "match" || m.Status == "no_match") {
+			continue
+		}
+		if period != nil && !playedIn(id.PlayedAtUTC, *period) {
 			continue
 		}
 		review.Cases = append(review.Cases, ReviewCase{CaseID: CaseID(key), Source: ReviewSource{Key: key, Artist: id.Artist, Title: id.Title, PlayCount: id.PlayCount, FirstPlayedAtUTC: id.FirstPlayedAtUTC, LastPlayedAtUTC: id.LastPlayedAtUTC, Albums: nonNilAlbums(id.Albums), MBIDs: nonNilStrings(id.MBIDs)}, Candidates: rankCandidates(*id, tracks, s.index.Spotify)})
@@ -295,6 +306,14 @@ func (s *Service) ImportDecisions(tracks []library.Track) (ImportResult, error) 
 		}
 	}
 	return result, nil
+}
+func playedIn(values []time.Time, period library.DateRange) bool {
+	for _, v := range values {
+		if period.Contains(v) {
+			return true
+		}
+	}
+	return false
 }
 func (s *Service) unresolved(key string) bool {
 	if s.index.Identities[key] == nil {

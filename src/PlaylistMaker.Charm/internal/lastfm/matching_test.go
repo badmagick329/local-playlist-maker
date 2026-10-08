@@ -235,6 +235,8 @@ func TestFailedLoadIsShownAndBlocksWriters(t *testing.T) {
 		{"matches schema", MatchesFile, `{"schemaVersion":99,"matches":[]}`},
 		{"corrupt Spotify cache", SpotifyCacheFile, "{"},
 		{"Spotify cache schema", SpotifyCacheFile, `{"schemaVersion":99,"tracks":[]}`},
+		{"corrupt sync report", filepath.Join(SyncLogDirectory, "20261008T120000Z.json"), "{"},
+		{"sync report schema", filepath.Join(SyncLogDirectory, "20261008T120000Z.json"), `{"schemaVersion":99}`},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -243,6 +245,9 @@ func TestFailedLoadIsShownAndBlocksWriters(t *testing.T) {
 				t.Fatal(err)
 			}
 			if err := writeJSON(filepath.Join(dir, MatchesFile), MatchFile{SchemaVersion: SchemaVersion, Matches: []Match{agentMatch}}); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.MkdirAll(filepath.Dir(filepath.Join(dir, c.file)), 0o755); err != nil {
 				t.Fatal(err)
 			}
 			if err := os.WriteFile(filepath.Join(dir, c.file), []byte(c.content), 0o600); err != nil {
@@ -267,7 +272,7 @@ func TestFailedLoadIsShownAndBlocksWriters(t *testing.T) {
 			if _, err := s.ImportDecisions(tracks); !errors.Is(err, ErrCacheNotLoaded) {
 				t.Fatalf("ImportDecisions err=%v", err)
 			}
-			if _, err := s.ExportReview(tracks, time.Unix(2, 0)); !errors.Is(err, ErrCacheNotLoaded) {
+			if _, err := s.ExportReview(tracks, time.Unix(2, 0), nil); !errors.Is(err, ErrCacheNotLoaded) {
 				t.Fatalf("ExportReview err=%v", err)
 			}
 			if err := s.ResetAgentDecisions(tracks); !errors.Is(err, ErrCacheNotLoaded) {

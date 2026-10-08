@@ -36,6 +36,7 @@
 **/lastfm-sync-checkpoint.jsonl
 **/spotify-track-cache.json
 **/lastfm-review/
+**/lastfm-syncs/
 **/flac-cache.json
 **/flac_cache.json
 

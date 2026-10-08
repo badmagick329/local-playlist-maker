@@ -17,7 +17,21 @@ Press uppercase `L` to open the Last.fm screen. `Sync new plays` downloads the f
 
 PlaylistMaker stores completed scrobbles in `lastfm-scrobbles.jsonl` under the configured data directory. It skips Last.fm's currently playing entry. Each downloaded page is checkpointed. A failed or cancelled download leaves the existing cache untouched, and `Sync new plays` or `Rebuild full history` resumes the compatible checkpoint instead of starting again.
 
-If `lastfm-scrobbles.jsonl`, `lastfm-matches.json` or `spotify-track-cache.json` fails to load, the Last.fm screen shows a cache error. Until you fix or remove that file and restart, sync, review export, decision import and reset refuse to run, so a partial cache can never overwrite the saved matches.
+After the download, the step `Caching Spotify metadata for linked catalogue tracks` fetches Spotify artist, title and ISRC for catalogue tracks that already have a Spotify link, so matching can use them as aliases. It never links a scrobble or a track to Spotify; `U` does that.
+
+## Check what a sync added
+
+When a sync finishes, the Last.fm screen opens its report. The report covers every cached scrobble played after the latest one cached before the sync; the first sync covers the whole history, and `Rebuild full history` reports only scrobbles after the previous latest one. It shows how many scrobbles were added and how many belong to songs with a Spotify link, then lists the songs whose added scrobbles have none, each with its count of added scrobbles:
+
+- `Unresolved`: no match or no-match decision yet. Export them for review.
+- `No match in catalogue`: a no-match decision says the song is not in the library.
+- `Matched without a Spotify link`: matched to a track whose Spotify link is ignored or not set yet.
+
+`j/k` scroll the report, `Enter` or `Esc` returns to the actions, and `L` closes the screen. `Last sync report` reopens the newest report under the current matches, so it shrinks as decisions are imported.
+
+Each sync also writes its report, as matched at sync time, to its own file under `lastfm-syncs` in the data directory, named by the sync time in UTC, such as `20261008T155447Z.json`. The newest file supplies `Last successful sync` and the start of `since last sync`; before the first recorded sync, both are unknown. The report is saved even when the Spotify step fails or is cancelled. If the report file cannot be written, the status says so; the scrobbles and matches are still saved.
+
+If `lastfm-scrobbles.jsonl`, `lastfm-matches.json`, `spotify-track-cache.json` or the newest sync report fails to load, the Last.fm screen shows a cache error. Until you fix or remove that file and restart, sync, review export, decision import and reset refuse to run, so a partial cache can never overwrite the saved matches.
 
 The integration is read-only. It never submits scrobbles and does not replace the Last.fm scrobbler. Last.fm events stay separate from `play-history.jsonl`.
 
@@ -49,7 +63,13 @@ Repeat each applies after selection, limiting and ordering. A count of 20 with r
 
 ## Review unresolved matches
 
-`Export unresolved matches` writes these files under `lastfm-review` in the data directory:
+On the `Export unresolved` row, `h/l` choose which unresolved identities to export:
+
+- `all`: every unresolved identity.
+- `since last sync`: identities with a scrobble the newest recorded sync added.
+- `range`: identities with a scrobble in a typed UTC date range. It accepts `YYYY`, `YYYY-MM`, `YYYY-MM-DD` or `START..END`; Backspace deletes a character and `Ctrl+U` clears the range.
+
+A limited export keeps each case's whole play history, and `review.json` names the period. Each export replaces the previous one's files under `lastfm-review` in the data directory:
 
 - `instructions.md` tells an external matching agent what to do.
 - `review.json` contains unresolved identities, ranked catalogue candidates, and catalogue evidence.

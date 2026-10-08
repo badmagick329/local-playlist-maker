@@ -152,6 +152,10 @@ type Model struct {
 	lastfmRunner       *lastfmSyncRunner
 	lastfmCancel       context.CancelFunc
 	lastfmResetArmed   bool
+	lastfmReport       *lastfm.SyncReport
+	lastfmReportOffset int
+	lastfmExportScope  exportScope
+	lastfmExportRange  string
 }
 
 func New(tracks []library.Track, playback ...PlaybackLauncher) Model {

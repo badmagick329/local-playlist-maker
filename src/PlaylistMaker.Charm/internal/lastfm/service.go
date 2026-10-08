@@ -63,11 +63,12 @@ func (s *Service) Load(tracks []library.Track) ([]library.Track, error) {
 	if cache.SchemaVersion != 0 && cache.SchemaVersion != SchemaVersion {
 		return tracks, s.loadFailed(scrobbles, fmt.Errorf("Spotify track cache schemaVersion is %d, want %d", cache.SchemaVersion, SchemaVersion))
 	}
-	s.index = buildIndex(scrobbles, mf.Matches, cache.Tracks)
-	if info, statErr := os.Stat(s.path(ScrobblesFile)); statErr == nil {
-		value := info.ModTime().UTC()
-		s.index.LastSyncUTC = &value
+	lastSync, err := readLatestSyncReport(s.path(SyncLogDirectory))
+	if err != nil {
+		return tracks, s.loadFailed(scrobbles, err)
 	}
+	s.index = buildIndex(scrobbles, mf.Matches, cache.Tracks)
+	s.index.LastSync = lastSync
 	s.index.SpotifyComplete = true
 	for _, track := range tracks {
 		if track.SpotifyURI != "" {
@@ -323,7 +324,11 @@ func (s *Service) RefreshCatalogue(tracks []library.Track) ([]library.Track, err
 	return s.Attach(tracks), nil
 }
 func (s *Service) Status() Status {
-	v := Status{Configured: s.Configured(), Scrobbles: len(s.index.Scrobbles), LastSyncUTC: s.index.LastSyncUTC, SpotifyComplete: s.index.SpotifyComplete, Error: s.index.Error}
+	v := Status{Configured: s.Configured(), Scrobbles: len(s.index.Scrobbles), SpotifyComplete: s.index.SpotifyComplete, Error: s.index.Error}
+	if s.index.LastSync != nil {
+		value := s.index.LastSync.SyncedAtUTC
+		v.LastSyncUTC = &value
+	}
 	var checkpoint SyncCheckpoint
 	if readJSON(s.path(SyncCheckpointFile), &checkpoint, "Last.fm sync checkpoint") == nil && checkpoint.SchemaVersion == SchemaVersion && checkpoint.Username == s.Username && checkpoint.NextPage > 1 {
 		v.CheckpointPages = checkpoint.NextPage - 1
@@ -358,10 +363,15 @@ func (s *Service) Sync(ctx context.Context, tracks []library.Track, full bool, r
 		client = &Client{}
 	}
 	var from *int64
+	var after *time.Time
 	old := s.index.Scrobbles
-	if !full && len(old) > 0 {
-		v := old[len(old)-1].PlayedAtUTC.Unix()
-		from = &v
+	if len(old) > 0 {
+		latest := old[len(old)-1].PlayedAtUTC
+		after = &latest
+		if !full {
+			v := latest.Unix()
+			from = &v
+		}
 	}
 	checkpoint, collected, resumed, err := s.prepareSyncCheckpoint(client.now().Unix(), from)
 	if err != nil {
@@ -424,18 +434,28 @@ func (s *Service) Sync(ctx context.Context, tracks []library.Track, full bool, r
 	for _, v := range s.index.Spotify {
 		priorSpotify = append(priorSpotify, v)
 	}
+	lastSync := s.index.LastSync
 	s.index = buildIndex(unique, priorMatches, priorSpotify)
+	s.index.LastSync = lastSync
 	s.resolve(tracks)
 	_ = s.saveMatches()
 	enrichErr := s.enrichSpotify(ctx, tracks, report)
 	spotifyComplete := enrichErr == nil
 	s.index.SpotifyComplete = spotifyComplete
-	now := client.now().UTC()
-	s.index.LastSyncUTC = &now
-	st := s.Status()
-	result := SyncResult{PagesFetched: totalPages, TotalPages: totalPages, Scrobbles: len(unique), Matched: st.Matched, Unresolved: st.Unresolved, SpotifyComplete: spotifyComplete}
+	// The report is saved even when enrichment fails or is cancelled: the
+	// scrobbles are already cached, so a later sync would start after them and
+	// could no longer say which scrobbles this one added.
+	syncReport := s.report(tracks, client.now(), full, after)
+	logErr := s.saveSyncReport(syncReport)
+	if logErr == nil {
+		s.index.LastSync = &syncReport
+	}
+	result := SyncResult{PagesFetched: totalPages, TotalPages: totalPages, Scrobbles: len(unique), SpotifyComplete: spotifyComplete, Report: syncReport}
 	if errors.Is(enrichErr, context.Canceled) {
 		return result, enrichErr
+	}
+	if logErr != nil {
+		return result, fmt.Errorf("%w: %v", ErrSyncLogNotSaved, logErr)
 	}
 	return result, nil
 }

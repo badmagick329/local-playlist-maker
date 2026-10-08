@@ -17,10 +17,31 @@ type LastFMService interface {
 	Sync(context.Context, []library.Track, bool, func(lastfm.SyncProgress)) (lastfm.SyncResult, error)
 	Attach([]library.Track) []library.Track
 	BuildMix(lastfm.MixRequest) (lastfm.MixResult, error)
-	ExportReview([]library.Track, time.Time) (string, error)
+	ExportReview([]library.Track, time.Time, *library.DateRange) (string, error)
 	ImportDecisions([]library.Track) (lastfm.ImportResult, error)
 	ResetAgentDecisions([]library.Track) error
+	LastSyncReport([]library.Track) (lastfm.SyncReport, bool)
+	LastSyncPeriod() (*library.DateRange, error)
 }
+
+// Last.fm screen rows. The export row carries its scope, cycled with h/l.
+const (
+	lastfmSyncRow = iota
+	lastfmRebuildRow
+	lastfmReportRow
+	lastfmExportRow
+	lastfmImportRow
+	lastfmResetRow
+)
+
+type exportScope int
+
+const (
+	exportAll exportScope = iota
+	exportSinceLastSync
+	exportRange
+	exportScopeCount
+)
 
 type lastfmProgressMsg struct{ progress lastfm.SyncProgress }
 
@@ -63,29 +84,53 @@ func (m Model) handleLastFMKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	switch key.String() {
+	if m.lastfmReport != nil {
+		return m.handleLastFMReportKey(key)
+	}
+	k := key.String()
+	switch k {
 	case "esc", "L", "shift+l":
 		m.mode = modeNavigate
 		m.lastfmResetArmed = false
 	case "j", "down":
-		m.overlayCursor = min(m.overlayCursor+1, 4)
+		m.overlayCursor = min(m.overlayCursor+1, lastfmResetRow)
 		m.lastfmResetArmed = false
 	case "k", "up":
 		m.overlayCursor = max(m.overlayCursor-1, 0)
 		m.lastfmResetArmed = false
+	case "h", "left", "l", "right":
+		if m.overlayCursor == lastfmExportRow {
+			step := exportScope(1)
+			if k == "h" || k == "left" {
+				step = exportScopeCount - 1
+			}
+			m.lastfmExportScope = (m.lastfmExportScope + step) % exportScopeCount
+		}
 	case "enter":
 		switch m.overlayCursor {
-		case 0, 1:
+		case lastfmSyncRow, lastfmRebuildRow:
 			if !m.lastfmStatus.Configured {
 				m.status = "Last.fm sync is disabled because username and API key are not configured"
 				return m, nil
 			}
-			return m.beginLastFMSync(m.overlayCursor == 1)
-		case 2:
-			return m, m.lastfmExportCmd()
-		case 3:
+			return m.beginLastFMSync(m.overlayCursor == lastfmRebuildRow)
+		case lastfmReportRow:
+			report, ok := m.lastfm.LastSyncReport(m.all)
+			if !ok {
+				m.status = "No Last.fm sync is recorded yet"
+				return m, nil
+			}
+			m.lastfmReport, m.lastfmReportOffset = &report, 0
+		case lastfmExportRow:
+			period, err := m.lastfmExportPeriod()
+			if err != nil {
+				m.status = "Last.fm export: " + err.Error()
+				return m, nil
+			}
+			return m, m.lastfmExportCmd(period)
+		case lastfmImportRow:
 			return m, m.lastfmImportCmd()
-		case 4:
+		case lastfmResetRow:
 			if !m.lastfmResetArmed {
 				m.lastfmResetArmed = true
 				m.status = "Press Enter again to reset all agent decisions"
@@ -93,6 +138,59 @@ func (m Model) handleLastFMKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, m.lastfmResetCmd()
 		}
+	default:
+		if m.overlayCursor == lastfmExportRow && m.lastfmExportScope == exportRange {
+			m.editLastFMExportRange(k, key.Text)
+		}
+	}
+	return m, nil
+}
+
+// editLastFMExportRange accepts only date characters, so navigation keys and
+// dictated words cannot land in the range.
+func (m *Model) editLastFMExportRange(k, text string) {
+	switch k {
+	case "ctrl+u":
+		m.lastfmExportRange = ""
+		return
+	case "backspace":
+		if m.lastfmExportRange != "" {
+			m.lastfmExportRange = m.lastfmExportRange[:len(m.lastfmExportRange)-1]
+		}
+		return
+	}
+	for _, r := range text {
+		if r >= '0' && r <= '9' || r == '-' || r == '.' {
+			m.lastfmExportRange += string(r)
+		}
+	}
+}
+
+func (m Model) lastfmExportPeriod() (*library.DateRange, error) {
+	switch m.lastfmExportScope {
+	case exportSinceLastSync:
+		return m.lastfm.LastSyncPeriod()
+	case exportRange:
+		period, err := library.ParseDateRange(m.lastfmExportRange)
+		if err == nil && period == nil {
+			err = errors.New("type a date range, such as 2026-09 or 2026-09-08..2026-10-08")
+		}
+		return period, err
+	}
+	return nil, nil
+}
+
+func (m Model) handleLastFMReportKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch key.String() {
+	case "esc", "enter":
+		m.lastfmReport = nil
+	case "L", "shift+l":
+		m.lastfmReport = nil
+		m.mode = modeNavigate
+	case "j", "down":
+		m.lastfmReportOffset = min(m.lastfmReportOffset+1, max(len(lastfmReportLines(*m.lastfmReport))-1, 0))
+	case "k", "up":
+		m.lastfmReportOffset = max(m.lastfmReportOffset-1, 0)
 	}
 	return m, nil
 }
@@ -127,10 +225,10 @@ func (m Model) waitLastFMSyncCmd() tea.Cmd {
 	}
 }
 
-func (m Model) lastfmExportCmd() tea.Cmd {
+func (m Model) lastfmExportCmd(period *library.DateRange) tea.Cmd {
 	service, tracks := m.lastfm, append([]library.Track(nil), m.all...)
 	return func() tea.Msg {
-		path, err := service.ExportReview(tracks, time.Now())
+		path, err := service.ExportReview(tracks, time.Now(), period)
 		return lastfmActionMsg{action: "export", path: path, err: err}
 	}
 }
@@ -176,12 +274,17 @@ func (m Model) handleLastFMSync(message lastfmSyncMsg) (tea.Model, tea.Cmd) {
 		m.status = "Last.fm operation cancelled; saved progress will resume next time"
 	} else if errors.Is(message.err, lastfm.ErrCacheNotLoaded) {
 		m.status = "Last.fm sync refused: " + message.err.Error()
-	} else if message.err != nil {
+	} else if message.err != nil && !errors.Is(message.err, lastfm.ErrSyncLogNotSaved) {
 		m.status = "Last.fm sync failed: " + message.err.Error() + " Run the same sync action to resume."
 	} else {
 		m.all = m.lastfm.Attach(m.all)
 		m.refreshResults()
-		m.status = fmt.Sprintf("Last.fm sync complete: %d scrobbles, %d matched, %d unresolved", message.result.Scrobbles, message.result.Matched, message.result.Unresolved)
+		report := message.result.Report
+		m.lastfmReport, m.lastfmReportOffset = &report, 0
+		m.status = fmt.Sprintf("Last.fm sync added %d scrobbles: %d with a Spotify link, %d unresolved, %d no match, %d without a Spotify link", report.Added, report.Linked, lastfm.ScrobbleTotal(report.Unresolved), lastfm.ScrobbleTotal(report.NoMatch), lastfm.ScrobbleTotal(report.NoSpotifyLink))
+		if message.err != nil {
+			m.status = "Last.fm sync saved its scrobbles, but " + message.err.Error()
+		}
 	}
 	m.lastfmStatus = m.lastfm.Status()
 	return m, nil
@@ -202,7 +305,7 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 		if m.lastfmCancelling {
 			lines = []string{"Cancelling Last.fm operation…", "", "Please wait"}
 		} else if m.lastfmProgress.Phase == "spotify" {
-			lines = []string{"Enriching Spotify evidence", fmt.Sprintf("Track %d of %d", m.lastfmProgress.SpotifyCurrent, m.lastfmProgress.SpotifyTotal), "", "Esc cancel"}
+			lines = []string{"Caching Spotify metadata for linked catalogue tracks", fmt.Sprintf("Track %d of %d", m.lastfmProgress.SpotifyCurrent, m.lastfmProgress.SpotifyTotal), "", "Esc cancel"}
 		} else {
 			operation := "Fetching Last.fm scrobbles"
 			if m.lastfmProgress.Resumed {
@@ -211,6 +314,13 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 			lines = []string{operation, fmt.Sprintf("Page %d of %d", m.lastfmProgress.PagesFetched, m.lastfmProgress.TotalPages), fmt.Sprintf("Checkpointed: %d", m.lastfmProgress.Scrobbles), "", "Esc cancel"}
 		}
 		return title, lines
+	}
+	if m.lastfmReport != nil {
+		body := lastfmReportLines(*m.lastfmReport)
+		visible := overlayListCapacity(height)
+		start := min(m.lastfmReportOffset, max(len(body)-visible, 0))
+		lines = append(lines, body[start:min(start+visible, len(body))]...)
+		return "Last.fm sync report", append(lines, "", "j/k scroll • enter/esc back • L close")
 	}
 	configured := "disabled"
 	if m.lastfmStatus.Configured {
@@ -224,11 +334,18 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 	if m.lastfmStatus.FirstPlayedAtUTC != nil && m.lastfmStatus.LastPlayedAtUTC != nil {
 		rangeLabel = m.lastfmStatus.FirstPlayedAtUTC.Format("2006-01-02") + " to " + m.lastfmStatus.LastPlayedAtUTC.Format("2006-01-02")
 	}
-	syncLabel := "never"
+	syncLabel := "not recorded"
 	if m.lastfmStatus.LastSyncUTC != nil {
 		syncLabel = m.lastfmStatus.LastSyncUTC.Format(time.RFC3339)
 	}
-	actions := []string{fmt.Sprintf("%s Sync new plays", cursorMark(m.overlayCursor, 0)), fmt.Sprintf("%s Rebuild full history", cursorMark(m.overlayCursor, 1)), fmt.Sprintf("%s Export unresolved matches", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Import agent decisions", cursorMark(m.overlayCursor, 3)), fmt.Sprintf("%s Reset agent decisions", cursorMark(m.overlayCursor, 4))}
+	actions := []string{
+		fmt.Sprintf("%s Sync new plays", cursorMark(m.overlayCursor, lastfmSyncRow)),
+		fmt.Sprintf("%s Rebuild full history", cursorMark(m.overlayCursor, lastfmRebuildRow)),
+		fmt.Sprintf("%s Last sync report", cursorMark(m.overlayCursor, lastfmReportRow)),
+		fmt.Sprintf("%s Export unresolved: %s", cursorMark(m.overlayCursor, lastfmExportRow), m.lastfmExportScopeLabel()),
+		fmt.Sprintf("%s Import agent decisions", cursorMark(m.overlayCursor, lastfmImportRow)),
+		fmt.Sprintf("%s Reset agent decisions", cursorMark(m.overlayCursor, lastfmResetRow)),
+	}
 	if height < 20 {
 		summary := fmt.Sprintf("%d scrobbles • %d matched • %d unresolved", m.lastfmStatus.Scrobbles, m.lastfmStatus.Matched, m.lastfmStatus.Unresolved)
 		if m.lastfmStatus.CheckpointPages > 0 {
@@ -249,7 +366,51 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 		if m.lastfmStatus.Error != "" {
 			lines = append(lines, m.theme.warning.Render("Cache error: "+m.lastfmStatus.Error))
 		}
-		lines = append(lines, "", "j/k move • enter activate • L/esc close")
+		lines = append(lines, "", "j/k move • h/l export scope • enter activate • L/esc close")
 	}
 	return title, lines
+}
+
+func (m Model) lastfmExportScopeLabel() string {
+	switch m.lastfmExportScope {
+	case exportSinceLastSync:
+		return "‹ since last sync ›"
+	case exportRange:
+		value := m.lastfmExportRange
+		if value == "" {
+			value = "type YYYY, YYYY-MM, YYYY-MM-DD or START..END"
+		}
+		return "‹ range " + value + " ›"
+	}
+	return "‹ all ›"
+}
+
+func lastfmReportLines(r lastfm.SyncReport) []string {
+	kind := "new plays"
+	if r.Full {
+		kind = "full rebuild"
+	}
+	scope := fmt.Sprintf("Scrobbles added: %d (cache was empty)", r.Added)
+	if r.AfterUTC != nil {
+		scope = fmt.Sprintf("Scrobbles after %s: %d", r.AfterUTC.Format("2006-01-02 15:04 UTC"), r.Added)
+	}
+	lines := []string{"Synced " + r.SyncedAtUTC.Format("2006-01-02 15:04 UTC") + " (" + kind + ")", scope, fmt.Sprintf("With a Spotify link: %d", r.Linked)}
+	section := func(heading string, songs []lastfm.ReportSong) {
+		lines = append(lines, "", fmt.Sprintf("%s: %d scrobbles, %d songs", heading, lastfm.ScrobbleTotal(songs), len(songs)))
+		for _, song := range songs {
+			line := fmt.Sprintf("  %s – %s • %d", song.Artist, song.Title, song.Scrobbles)
+			if song.TrackID != "" {
+				reason := "not linked"
+				if song.SpotifyIgnored {
+					reason = "Spotify ignored"
+				}
+				line += " • " + reason
+			}
+			lines = append(lines, line)
+		}
+	}
+	section("Unresolved", r.Unresolved)
+	section("No match in catalogue", r.NoMatch)
+	section("Matched without a Spotify link", r.NoSpotifyLink)
+	return lines
 }

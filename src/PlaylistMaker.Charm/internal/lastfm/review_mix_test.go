@@ -15,7 +15,7 @@ func TestReviewExportAndDecisionImportRoundTrip(t *testing.T) {
 	s := Service{DataDirectory: t.TempDir()}
 	s.index = buildIndex([]Scrobble{{Artist: "Source", Title: "Song", Album: "Album", MBID: "m", PlayedAtUTC: time.Unix(1, 0)}, {Artist: "Absent", Title: "None", PlayedAtUTC: time.Unix(2, 0)}, {Artist: "Maybe", Title: "Unsure", PlayedAtUTC: time.Unix(3, 0)}}, nil, nil)
 	s.resolve(tracks)
-	dir, err := s.ExportReview(tracks, time.Unix(99, 0))
+	dir, err := s.ExportReview(tracks, time.Unix(99, 0), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +49,7 @@ func TestDecisionImportRejectsStaleEnvelopeAndSkipsInvalidRows(t *testing.T) {
 	s := Service{DataDirectory: t.TempDir()}
 	s.index = buildIndex([]Scrobble{{Artist: "X", Title: "Y", PlayedAtUTC: time.Unix(1, 0)}}, nil, nil)
 	s.resolve(tracks)
-	dir, _ := s.ExportReview(tracks, time.Now())
+	dir, _ := s.ExportReview(tracks, time.Now(), nil)
 	var review Review
 	_ = readJSON(filepath.Join(dir, "review.json"), &review, "review")
 	bad := Decisions{SchemaVersion: 1, ExportID: "stale"}
@@ -75,7 +75,7 @@ func TestDecisionImportAppliesToCasesStillUnresolvedAfterCatalogueChanges(t *tes
 	s := Service{DataDirectory: t.TempDir()}
 	s.index = buildIndex([]Scrobble{{Artist: "Absent", Title: "Song", PlayedAtUTC: day(1)}, {Artist: "Later", Title: "Added", PlayedAtUTC: day(2)}, {Artist: "Fuzzy", Title: "Name", PlayedAtUTC: day(3)}, {Artist: "Twice", Title: "Added", PlayedAtUTC: day(4)}}, nil, nil)
 	s.resolve(tracks)
-	dir, err := s.ExportReview(tracks, time.Now())
+	dir, err := s.ExportReview(tracks, time.Now(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,7 +185,7 @@ func TestReviewJSONHasDeterministicArrayOrdering(t *testing.T) {
 	s.index = buildIndex([]Scrobble{{Artist: "Z", Title: "Z", PlayedAtUTC: day(2)}, {Artist: "A", Title: "A", PlayedAtUTC: day(1)}}, nil, nil)
 	tracks := []library.Track{testTrack("z", "Z", "Z"), testTrack("a", "A", "A")}
 	s.resolve(nil)
-	dir, err := s.ExportReview(tracks, time.Unix(1, 0))
+	dir, err := s.ExportReview(tracks, time.Unix(1, 0), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
