@@ -19,6 +19,8 @@ PlaylistMaker stores completed scrobbles in `lastfm-scrobbles.jsonl` under the c
 
 The integration is read-only. It never submits scrobbles and does not replace the Last.fm scrobbler. Last.fm events stay separate from `play-history.jsonl`.
 
+Scrobbles with the same normalized artist and title form one identity, and PlaylistMaker matches it to a catalogue track automatically when the names point to one song. A track fits when its artist and title, or its linked Spotify artist and title, normalize to the identity. Only when no track fits does it compare again with spaces removed, so `U-KISS` finds `UKISS`. Several tracks that fit count as one song when they share a Spotify link or ISRC, such as a single and the album that repeats it. Their plays all go to one track: the one with the most videos, then the earliest release, then the lowest track ID. Any other set of fitting tracks leaves the identity unresolved for review.
+
 ## Build a period mix
 
 Press `p` and choose `Listening period` in the Mix row. The primary period accepts `YYYY`, `YYYY-MM`, `YYYY-MM-DD`, or `START..END`. Leave it blank to use all cached history. Add a secondary period and percentage to blend two periods.
@@ -53,6 +55,6 @@ Repeat each applies after selection, limiting and ordering. A count of 20 with r
 
 Give the directory to the external agent, then choose `Import agent decisions`. PlaylistMaker accepts only the exported case IDs and current catalogue track IDs. An old export ID rejects the document. Invalid rows are skipped; valid match and no-match decisions are saved together. The catalogue may change between export and import: a decision for a case that was resolved in the meantime, or by an earlier import of the same file, is skipped and counted as already resolved.
 
-A match lasts while its track exists. A no-match lasts until the catalogue gains a track whose artist and title, or whose linked Spotify artist and title, normalize to the same identity; the identity is then matched again, and becomes unresolved if more than one track fits. Other catalogue changes leave no-match decisions in place.
+A match lasts while its track exists, so an automatic match keeps its track when a later duplicate would win the canonical choice. A no-match lasts until the catalogue gains a track that fits the identity, with or without spaces; the identity is then matched again, and becomes unresolved if the fitting tracks are not one song. Other catalogue changes leave no-match decisions in place.
 
 `Reset agent decisions` removes imported decisions and runs exact matching again. It requires a second `Enter` press.

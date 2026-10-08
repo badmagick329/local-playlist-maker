@@ -149,43 +149,41 @@ func buildIndex(scrobbles []Scrobble, matches []Match, spotifyValues []SpotifyMe
 }
 
 // resolve drops stored decisions the catalogue has outgrown and auto-matches
-// identities whose exact names point to exactly one track. A no_match stays
-// only while no track's normalized name or Spotify alias equals its source
-// key: such a track is the only catalogue change that could answer it, so
-// unrelated additions and relinks leave reviewed cases closed.
+// identities whose names point to one song. Exact keys come first; spaces are
+// ignored only when they miss. A no_match stays only while neither key finds a
+// track's normalized name or Spotify alias: such a track is the only catalogue
+// change that could answer it, so unrelated additions and relinks leave
+// reviewed cases closed.
 func (s *Service) resolve(tracks []library.Track) {
-	existing := map[string]bool{}
-	local := map[string]map[string]bool{}
-	aliases := map[string]map[string]bool{}
-	for _, t := range tracks {
-		existing[t.ID] = true
-		k := SourceKey(t.Artist, t.Title)
-		if local[k] == nil {
-			local[k] = map[string]bool{}
+	byID := map[string]library.Track{}
+	exact := map[string]map[string]bool{}
+	spaceless := map[string]map[string]bool{}
+	add := func(key, trackID string) {
+		if exact[key] == nil {
+			exact[key] = map[string]bool{}
 		}
-		local[k][t.ID] = true
-		if t.SpotifyURI != "" {
-			if md, ok := s.index.Spotify[t.SpotifyURI]; ok {
-				for _, artist := range md.Artists {
-					k = SourceKey(artist, md.Name)
-					if aliases[k] == nil {
-						aliases[k] = map[string]bool{}
-					}
-					aliases[k][t.ID] = true
-				}
+		exact[key][trackID] = true
+		if spaceless[spacelessKey(key)] == nil {
+			spaceless[spacelessKey(key)] = map[string]bool{}
+		}
+		spaceless[spacelessKey(key)][trackID] = true
+	}
+	for _, t := range tracks {
+		byID[t.ID] = t
+		add(SourceKey(t.Artist, t.Title), t.ID)
+		if md, ok := s.index.Spotify[t.SpotifyURI]; ok && t.SpotifyURI != "" {
+			for _, artist := range md.Artists {
+				add(SourceKey(artist, md.Name), t.ID)
 			}
 		}
 	}
 	for key, id := range s.index.Identities {
-		ids := map[string]bool{}
-		for trackID := range local[key] {
-			ids[trackID] = true
-		}
-		for trackID := range aliases[key] {
-			ids[trackID] = true
+		ids, reason := exact[key], "exact normalized alias"
+		if len(ids) == 0 {
+			ids, reason = spaceless[spacelessKey(key)], "normalized alias ignoring spaces"
 		}
 		if old, ok := s.index.Matches[key]; ok {
-			if old.Status == "match" && existing[old.TrackID] {
+			if _, exists := byID[old.TrackID]; old.Status == "match" && exists {
 				continue
 			}
 			if old.Status == "no_match" && len(ids) == 0 {
@@ -193,14 +191,67 @@ func (s *Service) resolve(tracks []library.Track) {
 			}
 			delete(s.index.Matches, key)
 		}
-		if len(ids) == 1 {
-			var trackID string
-			for trackID = range ids {
+		if trackID, shared := s.songTrack(ids, byID); trackID != "" {
+			if shared == "" {
+				reason = "unique " + reason
+			} else {
+				reason += "; canonical track of those sharing a " + shared
 			}
-			s.index.Matches[key] = Match{SourceKey: key, Artist: id.Artist, Title: id.Title, Status: "match", TrackID: trackID, Provenance: "auto", Reason: "unique exact normalized alias"}
+			s.index.Matches[key] = Match{SourceKey: key, Artist: id.Artist, Title: id.Title, Status: "match", TrackID: trackID, Provenance: "auto", Reason: reason}
 		}
 	}
 	s.rebuildTrackPlays()
+}
+
+// spacelessKey lets spellings that differ only in punctuation or spacing meet:
+// "U-KISS" normalizes to "u kiss" and "UKISS" to "ukiss".
+func spacelessKey(key string) string { return strings.ReplaceAll(key, " ", "") }
+
+// songTrack returns the track that candidate IDs resolve to, or "" when they
+// are distinct songs. Duplicate tracks of one song (single, album, compilation)
+// share a Spotify link or ISRC; all plays go to one canonical track so counts
+// and mixes see the song once. The canonical track has the most videos, then
+// the earliest release, then the lowest ID: the owner mostly watches it, and
+// every load picks it again. shared names the evidence that merged them.
+func (s *Service) songTrack(ids map[string]bool, byID map[string]library.Track) (trackID, shared string) {
+	candidates := make([]library.Track, 0, len(ids))
+	for v := range ids {
+		candidates = append(candidates, byID[v])
+	}
+	if len(candidates) == 0 {
+		return "", ""
+	}
+	if len(candidates) > 1 {
+		uri := candidates[0].SpotifyURI
+		isrc := s.index.Spotify[uri].ISRC
+		for _, t := range candidates[1:] {
+			if t.SpotifyURI != uri {
+				uri = ""
+			}
+			if t.SpotifyURI == "" || s.index.Spotify[t.SpotifyURI].ISRC != isrc {
+				isrc = ""
+			}
+		}
+		switch {
+		case uri != "":
+			shared = "Spotify link"
+		case isrc != "":
+			shared = "ISRC"
+		default:
+			return "", ""
+		}
+	}
+	sort.Slice(candidates, func(i, j int) bool {
+		a, b := candidates[i], candidates[j]
+		if len(a.Variants) != len(b.Variants) {
+			return len(a.Variants) > len(b.Variants)
+		}
+		if !a.ReleaseDate.Equal(b.ReleaseDate) {
+			return a.ReleaseDate.Before(b.ReleaseDate)
+		}
+		return a.ID < b.ID
+	})
+	return candidates[0].ID, shared
 }
 func (s *Service) rebuildTrackPlays() {
 	s.index.TrackPlays = map[string][]time.Time{}

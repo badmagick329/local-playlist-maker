@@ -75,6 +75,80 @@ func TestNoMatchReopensWhenCatalogueGainsItsIdentity(t *testing.T) {
 	}
 }
 
+func TestDuplicateTracksOfOneSongResolveToCanonicalTrack(t *testing.T) {
+	scrobbles := []Scrobble{{Artist: "BLACKPINK", Title: "BOOMBAYAH", PlayedAtUTC: time.Unix(5, 0)}}
+	key := SourceKey("BLACKPINK", "BOOMBAYAH")
+	album, single := testTrack("b-album", "BLACKPINK", "BOOMBAYAH"), testTrack("a-single", "BLACKPINK", "BOOMBAYAH")
+	album.SpotifyURI, single.SpotifyURI = "spotify:track:album", "spotify:track:album"
+	album.Variants = append(album.Variants, album.Variants[0])
+	for _, tracks := range [][]library.Track{{album, single}, {single, album}} {
+		s := Service{}
+		s.index = buildIndex(scrobbles, nil, nil)
+		s.resolve(tracks)
+		if m := s.index.Matches[key]; m.TrackID != "b-album" || m.Provenance != "auto" {
+			t.Fatalf("shared Spotify link did not pick the track with most videos: %#v", m)
+		}
+	}
+
+	album.Variants = album.Variants[:1]
+	album.ReleaseDate = single.ReleaseDate.AddDate(1, 0, 0)
+	s := Service{}
+	s.index = buildIndex(scrobbles, nil, nil)
+	s.resolve([]library.Track{album, single})
+	if s.index.Matches[key].TrackID != "a-single" {
+		t.Fatalf("equal video counts did not pick the earliest release: %#v", s.index.Matches[key])
+	}
+
+	single.SpotifyURI = "spotify:track:single"
+	metadata := []SpotifyMetadata{{URI: album.SpotifyURI, ISRC: "KRA401600169"}, {URI: single.SpotifyURI, ISRC: "KRA401600169"}}
+	s = Service{}
+	s.index = buildIndex(scrobbles, nil, metadata)
+	s.resolve([]library.Track{album, single})
+	if s.index.Matches[key].TrackID != "a-single" {
+		t.Fatalf("shared ISRC did not merge the duplicates: %#v", s.index.Matches[key])
+	}
+
+	metadata[1].ISRC = "KRA401700001"
+	s = Service{}
+	s.index = buildIndex(scrobbles, nil, metadata)
+	s.resolve([]library.Track{album, single})
+	if _, ok := s.index.Matches[key]; ok {
+		t.Fatal("tracks with different Spotify links and ISRCs matched")
+	}
+}
+
+func TestSpellingThatDiffersOnlyInSpacingMatchesUniqueHit(t *testing.T) {
+	scrobbles := []Scrobble{{Artist: "U-KISS", Title: "NEVERLAND", PlayedAtUTC: time.Unix(6, 0)}}
+	key := SourceKey("U-KISS", "NEVERLAND")
+	s := Service{}
+	s.index = buildIndex(scrobbles, nil, nil)
+	s.resolve([]library.Track{testTrack("ukiss", "UKISS", "NEVERLAND")})
+	if s.index.Matches[key].TrackID != "ukiss" {
+		t.Fatalf("spacing variant did not match: %#v", s.index.Matches[key])
+	}
+
+	s = Service{}
+	s.index = buildIndex(scrobbles, nil, nil)
+	s.resolve([]library.Track{testTrack("ukiss", "UKISS", "NEVERLAND"), testTrack("other", "UKiss", "Never-Land")})
+	if _, ok := s.index.Matches[key]; ok {
+		t.Fatal("two spacing hits matched")
+	}
+
+	s = Service{}
+	s.index = buildIndex(scrobbles, nil, nil)
+	s.resolve([]library.Track{testTrack("exact", "U KISS", "NEVERLAND"), testTrack("ukiss", "UKISS", "NEVERLAND")})
+	if s.index.Matches[key].TrackID != "exact" {
+		t.Fatalf("spacing hit overrode the exact hit: %#v", s.index.Matches[key])
+	}
+
+	s = Service{}
+	s.index = buildIndex(scrobbles, []Match{{SourceKey: key, Status: "no_match", Provenance: "agent"}}, nil)
+	s.resolve([]library.Track{testTrack("ukiss", "UKISS", "NEVERLAND")})
+	if s.index.Matches[key].TrackID != "ukiss" {
+		t.Fatalf("spacing hit did not reopen the no_match: %#v", s.index.Matches[key])
+	}
+}
+
 func TestSpotifyAliasMatchesUniquelyAndAttachDoesNotAlterHistory(t *testing.T) {
 	track := testTrack("one", "Local", "Name")
 	track.SpotifyURI = "spotify:track:1"
