@@ -54,7 +54,7 @@ func TestPlannedCountAppliesQueueRulesInOrder(t *testing.T) {
 	}
 }
 
-func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
+func TestPlaybackOptionsEditCloseAndPreview(t *testing.T) {
 	m := New(library.Generate(4, 8))
 	m = updateKey(t, m, "A")
 	m = updateKey(t, m, "p")
@@ -99,19 +99,13 @@ func TestPlaybackOptionsEditSaveCancelAndPreview(t *testing.T) {
 	}
 	m.overlayCursor = 2
 	m = updateKey(t, m, "2")
-	m.overlayCursor = 12
-	m = updateKey(t, m, "enter")
+	m = updateKey(t, m, "esc")
 	if m.mode != modeNavigate || m.playbackOptions.RepeatEach != 2 {
-		t.Fatal("valid options did not save")
+		t.Fatal("closing did not keep valid options")
 	}
 	m = updateKey(t, m, "p")
 	if m.draftOptions.RepeatEach != 2 {
-		t.Fatal("reopened options did not use saved values")
-	}
-	m = updateKey(t, m, "3")
-	m = updateKey(t, m, "esc")
-	if m.playbackOptions.RepeatEach != 2 {
-		t.Fatal("escape changed saved options")
+		t.Fatal("reopened options did not use kept values")
 	}
 }
 

@@ -43,7 +43,7 @@ func (m Model) playbackRows() []int {
 	if m.draftMix != 0 {
 		rows = append(rows, 11)
 	}
-	return append(rows, 12)
+	return rows
 }
 
 func (m Model) handlePlaybackPanelKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
@@ -54,7 +54,11 @@ func (m Model) handlePlaybackPanelKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		return m.runPlaybackPanel(k == "a")
 	}
+	// Closing keeps every change, like the Categories toggles. The drafts only
+	// ever hold valid values, so a half-typed number falls back to the last
+	// valid one rather than blocking the close.
 	if k == "esc" || k == "p" {
+		m.savePlaybackPanel()
 		m.mode = modeNavigate
 		return m, nil
 	}
@@ -78,12 +82,6 @@ func (m Model) handlePlaybackPanelKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) 
 		}
 		if m.overlayCursor == 10 || m.overlayCursor == 11 {
 			return m.runPlaybackPanel(m.overlayCursor == 11)
-		}
-		if m.overlayCursor == 12 {
-			m.savePlaybackPanel()
-			m.mode = modeNavigate
-			m.status = "Playback settings saved"
-			return m, nil
 		}
 		return m, nil
 	}
@@ -189,12 +187,20 @@ func (m *Model) commitPanelEdit() bool {
 }
 func (m *Model) savePlaybackPanel() {
 	m.playbackOptions = m.draftOptions
-	if m.draftMix != 0 {
-		m.playbackOptions.MaximumItems = 0
-		m.playbackOptions.OneVideoPerTrack = false
-	}
 	m.playbackMix, m.mixTrackCount = m.draftMix, m.draftTrackCount
 	m.savedPeriod, m.savedMethod = m.periodDraft, m.draftMethod
+}
+
+// launchOptions applies the mix's locks at launch rather than at save, so
+// closing the panel on a mix keeps the manual queue's own play-first-N and
+// one-video-per-track choices for when the owner switches back.
+func (m Model) launchOptions() backend.PlaybackOptions {
+	options := m.playbackOptions
+	if m.playbackMix != 0 {
+		options.MaximumItems = 0
+		options.OneVideoPerTrack = false
+	}
+	return options
 }
 
 // A generated mix becomes a concrete queue once. Launching that queue must not
@@ -293,7 +299,7 @@ func (m Model) playbackPanelLines(height int) []string {
 	if m.optionEditField == 3 {
 		length = m.optionEdit
 	}
-	labels := map[int]string{5: "Mix: " + mixNames[m.draftMix], 4: "Performances: " + performance, 3: label + ": " + length, 0: "Order: " + order, 1: "One video per track: " + unique, 2: "Repeat each: " + m.optionDisplay(2), 6: "Primary period: " + emptyAny(m.periodDraft[0]), 7: "Secondary period: " + emptyAny(m.periodDraft[1]), 8: "Secondary percentage: " + m.periodDraft[2], 9: "Selection: " + m.draftMethod.String(), 10: "Play", 11: "Add to queue", 12: "Save settings"}
+	labels := map[int]string{5: "Mix: " + mixNames[m.draftMix], 4: "Performances: " + performance, 3: label + ": " + length, 0: "Order: " + order, 1: "One video per track: " + unique, 2: "Repeat each: " + m.optionDisplay(2), 6: "Primary period: " + emptyAny(m.periodDraft[0]), 7: "Secondary period: " + emptyAny(m.periodDraft[1]), 8: "Secondary percentage: " + m.periodDraft[2], 9: "Selection: " + m.draftMethod.String(), 10: "Play", 11: "Add to queue"}
 	rows := m.playbackRows()
 	lines := []string{}
 	for _, id := range rows {
@@ -324,5 +330,5 @@ func (m Model) playbackPanelLines(height int) []string {
 	if m.optionError != "" {
 		lines = append(lines, m.optionError)
 	}
-	return append(lines, "o play · a add mix · j/k move · h/l change · Esc cancel")
+	return append(lines, "o play · a add mix · j/k move · h/l change · p/Esc close")
 }

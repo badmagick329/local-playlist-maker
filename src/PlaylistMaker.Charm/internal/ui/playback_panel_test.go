@@ -116,11 +116,62 @@ func TestPlaybackPanelLockedSettingsAndExplicitShuffle(t *testing.T) {
 	if !m.draftOptions.Shuffle {
 		t.Fatal("explicit shuffle ignored")
 	}
-	m.overlayCursor = 12
-	m = updateKey(t, m, "enter")
+	m = updateKey(t, m, "p")
 	m = updateKey(t, m, "p")
 	if !m.draftOptions.Shuffle || m.draftMix != 1 {
-		t.Fatal("saved preset lost")
+		t.Fatal("closing lost the preset")
+	}
+}
+
+func TestPlaybackPanelKeepsChangesOnClose(t *testing.T) {
+	for _, closeKey := range []string{"esc", "p"} {
+		m := New(library.Generate(2, 2))
+		m = updateKey(t, m, "p")
+		m.overlayCursor = 3
+		m = updateKey(t, m, "5")
+		m.overlayCursor = 1
+		m = updateKey(t, m, "space")
+		// A half-typed repeat count is invalid; closing keeps the last valid value.
+		m.overlayCursor = 2
+		m = updateKey(t, m, "4")
+		m = updateKey(t, m, "backspace")
+		m = updateKey(t, m, closeKey)
+		if m.mode != modeNavigate {
+			t.Fatalf("%s did not close the panel", closeKey)
+		}
+		want := backend.PlaybackOptions{MaximumItems: 5, OneVideoPerTrack: true, RepeatEach: 4}
+		if m.playbackOptions != want {
+			t.Fatalf("%s kept %+v, want %+v", closeKey, m.playbackOptions, want)
+		}
+		m = updateKey(t, m, "p")
+		if m.draftOptions != want || m.optionError != "" {
+			t.Fatalf("%s reopened with %+v, error %q", closeKey, m.draftOptions, m.optionError)
+		}
+	}
+}
+
+func TestClosingOnMixKeepsManualQueueSettings(t *testing.T) {
+	player := &playbackStub{result: backend.PlaybackResult{Succeeded: true}}
+	m := New(library.Generate(2, 2), player)
+	m = updateKey(t, m, "space")
+	m.playbackOptions = backend.PlaybackOptions{MaximumItems: 1, OneVideoPerTrack: true, RepeatEach: 1}
+	m = updateKey(t, m, "p")
+	m = updateKey(t, m, "right")
+	m = updateKey(t, m, "esc")
+	next, cmd := m.Update(tea.KeyPressMsg{Code: 'o', Text: "o"})
+	if cmd == nil {
+		t.Fatalf("queue did not launch: %s", next.(Model).status)
+	}
+	cmd()
+	if player.request.Options.MaximumItems != 0 || player.request.Options.OneVideoPerTrack {
+		t.Fatalf("mix launch kept manual limits: %+v", player.request.Options)
+	}
+	m = next.(Model)
+	m.launching = false
+	m = updateKey(t, m, "p")
+	m = updateKey(t, m, "left")
+	if m.draftOptions.MaximumItems != 1 || !m.draftOptions.OneVideoPerTrack {
+		t.Fatalf("manual queue settings lost: %+v", m.draftOptions)
 	}
 }
 
@@ -131,14 +182,14 @@ func TestPlaybackPanelKeepsFocusedActionsVisible(t *testing.T) {
 		m.height = height
 		m.openPlaybackPanel()
 		m.draftMix = 3
-		for _, row := range []int{5, 6, 10, 11, 12} {
+		for _, row := range []int{5, 6, 10, 11} {
 			m.overlayCursor = row
 			lines := m.playbackPanelLines(height)
 			if !strings.Contains(strings.Join(lines, "\n"), cursorMark(row, row)) {
 				t.Fatalf("focused row missing at height %d", height)
 			}
 			rendered := stripStyles(m.render())
-			label := map[int]string{5: "Mix:", 6: "Primary period:", 10: "Play", 11: "Add to queue", 12: "Save settings"}[row]
+			label := map[int]string{5: "Mix:", 6: "Primary period:", 10: "Play", 11: "Add to queue"}[row]
 			if !strings.Contains(rendered, label) {
 				t.Fatalf("%s clipped at height %d: %s", label, height, rendered)
 			}

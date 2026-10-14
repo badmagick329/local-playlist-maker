@@ -165,7 +165,7 @@ func (m *Model) moveQueue(delta int) {
 
 func (m Model) queueOverlay(height int) (string, []string) {
 	var lines []string
-	queued, planned := len(m.queueOrder), plannedCount(m.queueOrder, m.queued, m.playbackOptions)
+	queued, planned := len(m.queueOrder), plannedCount(m.queueOrder, m.queued, m.launchOptions())
 	title := fmt.Sprintf("Queue (%d)", queued)
 	if planned != queued {
 		title += fmt.Sprintf(" → %d plays", planned)

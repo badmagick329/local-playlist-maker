@@ -55,7 +55,7 @@ Date ranges include both endpoints and apply to scrobble timestamps. The builder
 
 ## Playback presets and controls
 
-The `p` panel contains manual queue playback, Familiar songs/unseen performances, Balanced rotation, Forgotten favourites, Current obsessions, and listening-period mixes. Move with `j/k`, change choices with `h/l`, and use digits or Backspace for numbers. Period dates accept typed dates and ranges; `Ctrl+U` clears a date field. Press `o` or select Play to replace the queue with a generated mix and launch it, or press `a` or select Add to queue to append without repeating tracks already queued. Save settings remembers choices for this application session without building a queue. Escape cancels edits.
+The `p` panel contains manual queue playback, Familiar songs/unseen performances, Balanced rotation, Forgotten favourites, Current obsessions, and listening-period mixes. Move with `j/k`, change choices with `h/l`, and use digits or Backspace for numbers. Period dates accept typed dates and ranges; `Ctrl+U` clears a date field. Press `o` or select Play to replace the queue with a generated mix and launch it, or press `a` or select Add to queue to append without repeating tracks already queued. Changes are kept for this application session as they are made; `p` or Escape closes the panel without building a queue.
 
 Familiar songs/unseen performances requires at least three cached Last.fm plays and an eligible video with no counted local play. It never falls back to a watched video. Song selection is weighted by Last.fm play count.
 
@@ -67,7 +67,7 @@ Current obsessions uses the latest cached scrobble date across the whole history
 
 Generated mixes select one video per track. Performances chooses that video, except the familiar/unseen preset fixes it to Unseen only. Track count limits the generated selection; fewer tracks are returned when the filters or history leave too few candidates. All mixes respect the current filtered library and eligible video categories and dates.
 
-Order defaults to Mix order for generated mixes. Explicitly choosing Shuffle changes the playback order. Manual queues offer Queue order or Shuffle, an optional One video per track setting, and Play first N, where zero means all. With Shuffle, the whole selected queue is shuffled before the manual limit is applied. Version choice resolves multiple queued performances when One video per track is enabled.
+Order defaults to Mix order for generated mixes. Explicitly choosing Shuffle changes the playback order. Manual queues offer Queue order or Shuffle, an optional One video per track setting, and Play first N, where zero means all. Generated mixes ignore those two settings without changing them, so they return when you switch back to Manual queue. With Shuffle, the whole selected queue is shuffled before the manual limit is applied. Version choice resolves multiple queued performances when One video per track is enabled.
 
 Repeat each applies after selection, limiting and ordering. A count of 20 with repeat 2 produces up to 40 plays, with each pair consecutive. Generated queues contain concrete videos; changing Performances later does not replace them. The `o` shortcut plays the existing queue or highlighted media without generating another mix.
 

@@ -113,11 +113,12 @@ func (m Model) launchIDs(ids []string, queued bool) (tea.Model, tea.Cmd) {
 	if !queued {
 		variants = m.variantIndex()
 	}
-	m.status = fmt.Sprintf("Launching %d planned video(s)…", plannedCount(ids, variants, m.playbackOptions))
+	options := m.launchOptions()
+	m.status = fmt.Sprintf("Launching %d planned video(s)…", plannedCount(ids, variants, options))
 	return m, func() tea.Msg {
 		result, err := m.playback.Launch(context.Background(), backend.PlaybackRequest{
 			VideoIDs: ids,
-			Options:  m.playbackOptions,
+			Options:  options,
 		})
 		if err == nil && !result.Succeeded {
 			err = fmt.Errorf("%s", result.UserSafeError)

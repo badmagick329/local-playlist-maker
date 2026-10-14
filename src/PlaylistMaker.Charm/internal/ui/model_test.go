@@ -164,7 +164,7 @@ func TestCapitalCClearsSearchFromNavigation(t *testing.T) {
 	}
 }
 
-func TestOpeningKeysCloseEveryModeAndDiscardDrafts(t *testing.T) {
+func TestOpeningKeysCloseEveryMode(t *testing.T) {
 	for _, test := range []struct {
 		open string
 		mode mode
@@ -190,8 +190,9 @@ func TestOpeningKeysCloseEveryModeAndDiscardDrafts(t *testing.T) {
 			if test.mode == modeFilters && m.trackDate != nil {
 				t.Fatal("filter close applied draft")
 			}
-			if test.mode == modePlaybackOptions && m.playbackOptions.Shuffle {
-				t.Fatal("options close applied draft")
+			// Playback options keep changes on close; every other draft is discarded.
+			if test.mode == modePlaybackOptions && !m.playbackOptions.Shuffle {
+				t.Fatal("options close discarded a change")
 			}
 		})
 	}
