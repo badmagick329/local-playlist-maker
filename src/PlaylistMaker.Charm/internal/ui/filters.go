@@ -2,18 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"unicode"
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
-	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
 )
-
-func (m Model) WithCategoryPresets(presets []config.CategoryPreset) Model {
-	m.categoryPresets = append([]config.CategoryPreset(nil), presets...)
-	return m
-}
 
 func (m Model) handleFiltersKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
@@ -72,6 +67,9 @@ func (m *Model) resetFilters() {
 	for _, c := range library.Categories {
 		m.enabled[c] = c == library.MusicVideo
 	}
+	// A reset starts fresh, so Shift+m on the reset Music Video set must not
+	// resurrect a set from before it.
+	m.preSoloCategories = nil
 	m.mode = modeNavigate
 	m.cursor = 0
 	m.refreshResults()
@@ -111,68 +109,98 @@ func (m Model) handleSearchKey(key tea.KeyPressMsg) Model {
 	return m
 }
 
-func (m Model) handleCategoryKey(key tea.KeyPressMsg) Model {
-	presetCount := len(m.categoryPresets)
-	categoryCount := len(library.Categories)
-	total := presetCount + categoryCount
-	if key.Text >= "0" && key.Text <= "4" {
-		index := int(key.Text[0] - '0')
-		if index < presetCount {
-			m.applyCategoryPreset(index)
-		}
-		return m
+// categoryKeys is the Categories view's letter for each category; the letter
+// toggles it and Shift+letter shows only it. The letters avoid every key the
+// view already handles (j/k move, c closes), so they need no mode switch.
+var categoryKeys = map[library.Category]rune{
+	library.MusicVideo:   'm',
+	library.BandLive:     'b',
+	library.Performance:  'p',
+	library.Choreography: 'h',
+	library.Relay:        'r',
+	library.BeOriginal:   'o',
+	library.Fancam:       'f',
+	library.Concert:      'n',
+	library.MusicShow:    's',
+	library.Remix:        'x',
+	library.LiveAudio:    'a',
+}
+
+// categoryKeyPress reports which category a letter key names and whether
+// Shift was held. Bubble Tea's legacy and Windows console decoders deliver
+// Shift+letter as the uppercase letter in Text, and String() returns that Text
+// ("X", not "shift+x"), so the case of Text is the test. Caps Lock also
+// uppercases Text, so with it on a letter solos.
+func categoryKeyPress(key tea.KeyPressMsg) (category library.Category, solo bool, ok bool) {
+	if key.Mod.Contains(tea.ModCtrl) || key.Mod.Contains(tea.ModAlt) || utf8.RuneCountInString(key.Text) != 1 {
+		return "", false, false
 	}
+	pressed, _ := utf8.DecodeRuneInString(key.Text)
+	letter := unicode.ToLower(pressed)
+	for category, bound := range categoryKeys {
+		if bound == letter {
+			return category, pressed != letter, true
+		}
+	}
+	return "", false, false
+}
+
+func (m Model) handleCategoryKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
 	case "j", "down", "ctrl+j":
-		m.overlayCursor = min(m.overlayCursor+1, total-1)
+		m.overlayCursor = min(m.overlayCursor+1, len(library.Categories)-1)
+		return m
 	case "k", "up", "ctrl+k":
 		m.overlayCursor = max(m.overlayCursor-1, 0)
+		return m
 	case "space", "enter":
-		if m.overlayCursor < presetCount {
-			m.applyCategoryPreset(m.overlayCursor)
-			return m
-		}
-		category := library.Categories[m.overlayCursor-presetCount]
-		m.enabled[category] = !m.enabled[category]
-		m.refreshResults()
+		m.toggleCategory(library.Categories[m.overlayCursor])
+		return m
 	case "c", "esc":
 		m.mode = modeNavigate
+		return m
+	}
+	if category, solo, ok := categoryKeyPress(key); ok {
+		if solo {
+			m.soloCategory(category)
+		} else {
+			m.toggleCategory(category)
+		}
 	}
 	return m
 }
 
-func (m *Model) applyCategoryPreset(index int) {
-	if index < 0 || index >= len(m.categoryPresets) {
+func (m *Model) toggleCategory(category library.Category) {
+	m.enabled[category] = !m.enabled[category]
+	m.refreshResults()
+}
+
+// soloCategory shows only one category, remembering the set it replaced so a
+// second solo of the same category can bring that set back. Each new solo
+// overwrites the memory, so restore always returns to the set active just
+// before the latest solo.
+func (m *Model) soloCategory(category library.Category) {
+	if m.onlyCategoryEnabled(category) {
+		if m.preSoloCategories == nil {
+			return
+		}
+		m.enabled, m.preSoloCategories = m.preSoloCategories, nil
+		m.refreshResults()
 		return
 	}
-	preset := m.categoryPresets[index]
-	m.enabled = presetCategories(preset)
-	m.refreshResults()
-	m.mode = modeNavigate
-	m.status = "Category preset: " + preset.Name
-}
-
-func presetCategories(preset config.CategoryPreset) map[library.Category]bool {
-	enabled := make(map[library.Category]bool, len(library.Categories))
-	if len(preset.Include) > 0 {
-		for _, category := range preset.Include {
-			enabled[category] = true
-		}
-	} else {
-		for _, category := range library.Categories {
-			enabled[category] = true
-		}
-		for _, category := range preset.Exclude {
-			delete(enabled, category)
-		}
+	// A fresh map, not in-place edits: the remembered set must not alias the
+	// live one that later toggles mutate.
+	m.preSoloCategories = m.enabled
+	m.enabled = make(map[library.Category]bool, len(library.Categories))
+	for _, each := range library.Categories {
+		m.enabled[each] = each == category
 	}
-	return enabled
+	m.refreshResults()
 }
 
-func (m Model) categoryPresetActive(preset config.CategoryPreset) bool {
-	target := presetCategories(preset)
-	for _, category := range library.Categories {
-		if m.enabled[category] != target[category] {
+func (m Model) onlyCategoryEnabled(category library.Category) bool {
+	for _, each := range library.Categories {
+		if m.enabled[each] != (each == category) {
 			return false
 		}
 	}
@@ -200,38 +228,36 @@ func (m Model) handleSortKey(key tea.KeyPressMsg) Model {
 func (m Model) categoriesOverlay(width int, height int) (string, []string) {
 	var lines []string
 	title := "Categories"
-	items := make([]string, 0, len(m.categoryPresets)+len(library.Categories))
-	for index, preset := range m.categoryPresets {
-		prefix := "  "
-		if index == m.overlayCursor {
-			prefix = "› "
-		}
-		marker := " "
-		if m.categoryPresetActive(preset) {
-			marker = "●"
-		}
-		items = append(items, fmt.Sprintf("%s%s %d  %s", prefix, marker, index, preset.Name))
-	}
+	items := make([]string, 0, len(library.Categories))
 	for index, category := range library.Categories {
 		check := "○"
 		if m.enabled[category] {
 			check = "●"
 		}
 		prefix := "  "
-		if index+len(m.categoryPresets) == m.overlayCursor {
+		if index == m.overlayCursor {
 			prefix = "› "
 		}
-		items = append(items, fmt.Sprintf("%s%s  %s", prefix, check, category))
+		items = append(items, fmt.Sprintf("%s%s %c  %s", prefix, check, categoryKeys[category], category))
 	}
-	footer := "j/k move  •  space/enter toggle  •  c/esc close"
-	if len(m.categoryPresets) > 0 {
-		footer = "j/k move  •  0-4 preset  •  space/enter apply/toggle  •  c/esc close"
-		if width < 60 {
-			footer = "0-4 preset  •  c close"
+	lines = append(overlayWindow(items, m.overlayCursor, height), "", categoriesFooter(overlayContentWidth(width)))
+	return title, lines
+}
+
+// categoriesFooter picks the longest hint that fits whole, because a truncated
+// hint would cut off the Shift-solo part that the rows themselves do not show.
+func categoriesFooter(contentWidth int) string {
+	footers := []string{
+		"j/k move  •  space/letter toggle  •  Shift+letter solo  •  c/esc close",
+		"letter toggle • Shift+letter solo • c/esc close",
+		"key toggle  Shift solo",
+	}
+	for _, footer := range footers[:len(footers)-1] {
+		if utf8.RuneCountInString(footer) <= contentWidth {
+			return footer
 		}
 	}
-	lines = append(overlayWindow(items, m.overlayCursor, height), "", footer)
-	return title, lines
+	return footers[len(footers)-1]
 }
 
 func (m Model) sortOverlay(height int) (string, []string) {

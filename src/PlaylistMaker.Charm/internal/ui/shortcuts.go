@@ -4,12 +4,13 @@ type shortcut struct{ section, key, description string }
 
 var shortcuts = []shortcut{
 	{"Navigation", "j/k, arrows", "move"}, {"Navigation", "Ctrl+U/D, PgUp/Dn", "page"}, {"Navigation", "gg/G", "first/last"}, {"Navigation", "h/l, left/right, Enter", "collapse, expand, or queue a video"},
-	{"Views", "/", "search"}, {"Views", "C", "clear active search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Categories", "0-4", "apply configured preset from Categories view"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green • Spotify linked, blue • local audio only, grey • video only"},
+	{"Views", "/", "search"}, {"Views", "C", "clear active search"}, {"Views", "c / s / f / p", "categories / sort / filters / playback options"}, {"Views", "?", "shortcut help"}, {"Views", "Source badges", "green • Spotify linked, blue • local audio only, grey • video only"},
 	{"Views", "d", "selected media details"},
 	{"Views", "m", "relink selected video"}, {"Views", "u", "update mappings"}, {"Catalogue picker", "Ctrl+O", "show or hide unused catalogue tracks"}, {"Catalogue picker", "Ctrl+U", "clear search"}, {"Catalogue picker", "Ctrl+N", "create separately when existing matches are offered"}, {"Mapping updates", "i / I", "ignore current video / show ignored videos"},
 	{"Views", "U", "update Spotify links"}, {"Spotify updates", "enter / search / skip / ignore", "confirm, find, defer, or persistently ignore a link"},
 	{"Views", "R", "refresh history"},
 	{"Views", "L", "Last.fm sync and matching"},
+	{"Categories", "letter shown on the row", "toggle that category"}, {"Categories", "Shift+letter", "show only that category; again to restore the previous set"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a", "all videos from current track"}, {"Queue", "A", "one video per filtered track"}, {"Queue", "Ctrl+A", "all videos from all filtered tracks"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
 	{"Options", "o / a", "play / add generated mix to queue"}, {"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or track count"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / p, Esc", "reset / activate / close, keeping changes"},
 	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / f / Esc", "apply / cancel"},
@@ -48,7 +49,11 @@ func footerHint(current mode, width int) string {
 	case modeSearch:
 		hint = "type search  •  space inserts space  •  ctrl+j/k or arrows move  •  ctrl+u clear  •  enter, /, esc nav"
 	case modeCategories:
-		hint = "j/k move  •  space/enter toggle  •  c/esc close"
+		if width < 80 {
+			hint = "letter toggle  •  Shift+letter solo  •  c/esc close"
+		} else {
+			hint = "j/k move  •  space/enter or letter toggle  •  Shift+letter solo  •  c/esc close"
+		}
 	case modeSort:
 		hint = "j/k move  •  enter/space apply  •  s/esc close"
 	case modeQueue:

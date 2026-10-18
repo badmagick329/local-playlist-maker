@@ -26,6 +26,7 @@ The main controls are:
 - `j`/`k` or arrows move; `h`/`l` or `Enter` collapse or expand a track.
 - `Space` queues the current video; `o` plays the queue or highlighted media.
 - `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback and mixes. Search results rank in tiers: artist or title words first, then video filename words, then partial-word and fuzzy matches. The chosen sort orders tracks within each tier; the Relevance sort orders them by search score.
+- In the Categories view, press the letter shown on a row to turn that category on or off. `Shift` with the letter shows only that category; press it again to bring back the categories you had before.
 - `q` opens the queue; `Shift+J`/`Shift+K` reorder; `Delete` removes; `C` clears.
 - `m` on a video row opens the catalogue picker to change its track link; Enter saves and Esc cancels.
 - `u` updates video mappings; `U` updates Spotify links; `R` refreshes local history; uppercase `L` opens Last.fm sync and matching; `?` opens help; `Ctrl+Q` quits.
@@ -81,7 +82,6 @@ The mpv loop regression tests run a synthetic silent clip and skip when mpv is u
 ## Documentation
 
 - [Architecture](ARCHITECTURE.md): catalogue identity, playback process ownership, and the two history stores.
-- [Category presets](src/PlaylistMaker.Charm/README.md#category-presets): configuration semantics and source of category names.
 - [Spotify setup](src/PlaylistMaker.Charm/SPOTIFY_SETUP.md) and [Last.fm history](src/PlaylistMaker.Charm/LASTFM_SETUP.md): integration guides.
 - [Portable fixtures](testdata/library/README.md): loader test data.
 

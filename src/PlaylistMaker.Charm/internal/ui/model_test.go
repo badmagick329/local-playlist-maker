@@ -13,7 +13,6 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"playlistmaker/charm/internal/backend"
-	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/spotifylink"
 	"playlistmaker/charm/internal/updater"
@@ -646,56 +645,159 @@ func TestCategoryChangesApplyImmediately(t *testing.T) {
 	}
 }
 
-func TestCategoryPresetsApplyByDigitAndPreserveSelection(t *testing.T) {
-	tracks := []library.Track{
-		{ID: "one", Artist: "One", Title: "One", Variants: []library.Variant{{ID: "one-video", Category: library.MusicVideo}}},
-		{ID: "two", Artist: "Two", Title: "Two", Variants: []library.Variant{{ID: "two-live", Category: library.BandLive}}},
+func categoryTestTracks() []library.Track {
+	return []library.Track{
+		{ID: "video", Artist: "One", Title: "One", Variants: []library.Variant{{ID: "one-video", Category: library.MusicVideo}}},
+		{ID: "live", Artist: "Two", Title: "Two", Variants: []library.Variant{{ID: "two-live", Category: library.BandLive}}},
+		{ID: "remix", Artist: "Three", Title: "Three", Variants: []library.Variant{{ID: "three-remix", Category: library.Remix}}},
 	}
-	presets := []config.CategoryPreset{
-		{Name: "Video only", Include: []library.Category{library.MusicVideo}},
-		{Name: "Live", Include: []library.Category{library.BandLive}},
+}
+
+// shiftLetter builds Shift+letter the way Bubble Tea's legacy decoder does:
+// lowercase Code, Shift modifier, uppercase Text.
+func shiftLetter(t *testing.T, m Model, letter rune) Model {
+	t.Helper()
+	next, _ := m.Update(tea.KeyPressMsg{Code: letter, Mod: tea.ModShift, Text: strings.ToUpper(string(letter))})
+	return next.(Model)
+}
+
+func enabledCategories(m Model) []library.Category {
+	var enabled []library.Category
+	for _, category := range library.Categories {
+		if m.enabled[category] {
+			enabled = append(enabled, category)
+		}
 	}
-	m := New(tracks).WithCategoryPresets(presets)
-	m.cursor = 1
+	return enabled
+}
+
+func filteredIDs(m Model) []string {
+	ids := make([]string, 0, len(m.filtered))
+	for _, track := range m.filtered {
+		ids = append(ids, track.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+func TestCategoryLetterTogglesCategoryAndKeepsViewOpen(t *testing.T) {
+	m := New(categoryTestTracks())
 	m = updateKey(t, m, "c")
-	m = updateKey(t, m, "1")
-	if m.mode != modeNavigate || m.status != "Category preset: Live" {
-		t.Fatalf("preset application state = mode %v status %q", m.mode, m.status)
+	m = updateKey(t, m, "b")
+	if m.mode != modeCategories || !slices.Equal(enabledCategories(m), []library.Category{library.MusicVideo, library.BandLive}) {
+		t.Fatalf("after b: mode %s, enabled %v", m.mode, enabledCategories(m))
 	}
-	if !m.enabled[library.BandLive] || m.enabled[library.MusicVideo] {
-		t.Fatalf("enabled categories = %#v", m.enabled)
+	if got := filteredIDs(m); !slices.Equal(got, []string{"live", "video"}) {
+		t.Fatalf("results not refreshed after b: %v", got)
 	}
-	if len(m.filtered) != 1 || m.filtered[0].ID != "two" {
-		t.Fatalf("filtered tracks = %#v", m.filtered)
-	}
-}
-
-func TestCategoryPresetExcludeEnablesCategoriesAddedToLibrary(t *testing.T) {
-	preset := config.CategoryPreset{Name: "No remix", Exclude: []library.Category{library.Remix}}
-	m := New(library.Generate(4, 8)).WithCategoryPresets([]config.CategoryPreset{preset})
-	m.applyCategoryPreset(0)
-	if m.enabled[library.Remix] || !m.enabled[library.Concert] || !m.categoryPresetActive(preset) {
-		t.Fatalf("exclude preset result = %#v", m.enabled)
+	m = updateKey(t, m, "m")
+	if !slices.Equal(enabledCategories(m), []library.Category{library.BandLive}) || !slices.Equal(filteredIDs(m), []string{"live"}) {
+		t.Fatalf("after m: enabled %v, results %v", enabledCategories(m), filteredIDs(m))
 	}
 }
 
-func TestCategoriesOverlayShowsPresetsAndResponsiveFooter(t *testing.T) {
-	m := New(library.Generate(4, 8)).WithCategoryPresets([]config.CategoryPreset{{Name: "No remixes", Exclude: []library.Category{library.Remix}}})
-	m.mode = modeCategories
-	content := stripStyles(m.renderOverlay("", 40, 12))
-	if !strings.Contains(content, "0  No remixes") || !strings.Contains(content, "0-4 preset") {
-		t.Fatalf("categories overlay = %q", content)
+func TestShiftLetterSolosCategoryAndSecondPressRestoresPriorSet(t *testing.T) {
+	m := New(categoryTestTracks())
+	m = updateKey(t, m, "c")
+	m = updateKey(t, m, "b")
+	prior := []library.Category{library.MusicVideo, library.BandLive}
+
+	m = shiftLetter(t, m, 'x')
+	if m.mode != modeCategories || !slices.Equal(enabledCategories(m), []library.Category{library.Remix}) || !slices.Equal(filteredIDs(m), []string{"remix"}) {
+		t.Fatalf("solo Remix: mode %s, enabled %v, results %v", m.mode, enabledCategories(m), filteredIDs(m))
 	}
-	for _, line := range strings.Split(content, "\n") {
-		if ansi.StringWidth(line) > 40 {
-			t.Fatalf("overlay line exceeds width: %q", line)
+	m = shiftLetter(t, m, 'x')
+	if !slices.Equal(enabledCategories(m), prior) || !slices.Equal(filteredIDs(m), []string{"live", "video"}) {
+		t.Fatalf("restore: enabled %v, results %v", enabledCategories(m), filteredIDs(m))
+	}
+
+	// A solo while another is active remembers that solo, not the older set.
+	m = shiftLetter(t, m, 'x')
+	m = shiftLetter(t, m, 'b')
+	m = shiftLetter(t, m, 'b')
+	if !slices.Equal(enabledCategories(m), []library.Category{library.Remix}) {
+		t.Fatalf("chained solo restored %v, want the Remix solo it replaced", enabledCategories(m))
+	}
+}
+
+func TestShiftLetterOnOnlyEnabledCategoryWithNothingRememberedIsNoOp(t *testing.T) {
+	m := New(categoryTestTracks())
+	m = updateKey(t, m, "c")
+	m = shiftLetter(t, m, 'm')
+	if m.mode != modeCategories || !slices.Equal(enabledCategories(m), []library.Category{library.MusicVideo}) {
+		t.Fatalf("mode %s, enabled %v", m.mode, enabledCategories(m))
+	}
+	// Restoring consumes the memory: once the owner is back to a lone category
+	// by toggling, Shift+letter must not resurrect the set from an old solo.
+	m = updateKey(t, m, "b")
+	m = shiftLetter(t, m, 'x')
+	m = shiftLetter(t, m, 'x')
+	m = updateKey(t, m, "b")
+	m = shiftLetter(t, m, 'm')
+	if !slices.Equal(enabledCategories(m), []library.Category{library.MusicVideo}) {
+		t.Fatalf("enabled %v after consumed restore", enabledCategories(m))
+	}
+}
+
+func TestResetFiltersForgetsTheSetASoloReplaced(t *testing.T) {
+	m := New(categoryTestTracks())
+	m = updateKey(t, m, "c")
+	m = updateKey(t, m, "b")
+	m = shiftLetter(t, m, 'x')
+	m = updateKey(t, m, "c")
+	m = updateKey(t, m, "f")
+	m = updateKey(t, m, "r")
+	m = updateKey(t, m, "c")
+	m = shiftLetter(t, m, 'm')
+	if !slices.Equal(enabledCategories(m), []library.Category{library.MusicVideo}) {
+		t.Fatalf("enabled %v after reset, want the reset Music Video set kept", enabledCategories(m))
+	}
+}
+
+func TestCategoriesViewClosesWithCAndEscape(t *testing.T) {
+	for _, key := range []string{"c", "esc"} {
+		m := New(categoryTestTracks())
+		m = updateKey(t, m, "c")
+		m = updateKey(t, m, key)
+		if m.mode != modeNavigate {
+			t.Fatalf("%s left mode %s", key, m.mode)
 		}
 	}
 }
 
-func TestHelpIncludesCategoryPresetShortcut(t *testing.T) {
-	if !strings.Contains(strings.Join(helpLines(), "\n"), "0-4  —  apply configured preset from Categories view") {
-		t.Fatal("help does not describe category presets")
+func TestCategoryKeysCoverEveryCategoryWithoutCollidingWithViewKeys(t *testing.T) {
+	seen := map[rune]library.Category{}
+	for _, category := range library.Categories {
+		letter, ok := categoryKeys[category]
+		if !ok {
+			t.Fatalf("%s has no letter", category)
+		}
+		if letter < 'a' || letter > 'z' || strings.ContainsRune("jkc", letter) {
+			t.Fatalf("%s letter %q is not a free lowercase letter", category, letter)
+		}
+		if other, dup := seen[letter]; dup {
+			t.Fatalf("%s and %s share %q", category, other, letter)
+		}
+		seen[letter] = category
+	}
+}
+
+func TestCategoriesOverlayShowsLettersAndFittingFooter(t *testing.T) {
+	for _, size := range []struct {
+		width int
+		want  string
+	}{{40, "key toggle  Shift solo"}, {80, "letter toggle • Shift+letter solo • c/esc close"}, {120, "j/k move  •  space/letter toggle  •  Shift+letter solo  •  c/esc close"}} {
+		m := New(categoryTestTracks())
+		m.mode = modeCategories
+		content := stripStyles(m.renderOverlay("", size.width, 24))
+		if !strings.Contains(content, "● m  Music Video") || !strings.Contains(content, "○ x  Remix") || !strings.Contains(content, size.want) {
+			t.Fatalf("width %d overlay = %q", size.width, content)
+		}
+		for _, line := range strings.Split(content, "\n") {
+			if ansi.StringWidth(line) > size.width {
+				t.Fatalf("overlay line exceeds width %d: %q", size.width, line)
+			}
+		}
 	}
 }
 
@@ -996,6 +1098,8 @@ func updateKey(t *testing.T, m Model, key string) Model {
 		message = tea.KeyPressMsg{Code: ' ', Text: " "}
 	case "enter":
 		message = tea.KeyPressMsg{Code: tea.KeyEnter}
+	case "esc":
+		message = tea.KeyPressMsg{Code: tea.KeyEscape}
 	case "backspace":
 		message = tea.KeyPressMsg{Code: tea.KeyBackspace}
 	case "delete":

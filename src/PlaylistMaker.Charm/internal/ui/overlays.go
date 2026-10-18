@@ -61,7 +61,7 @@ func (m *Model) clampOverlayState() {
 	m.helpOffset = min(max(m.helpOffset, 0), m.helpMaxOffset())
 	switch m.mode {
 	case modeCategories:
-		m.overlayCursor = min(max(m.overlayCursor, 0), max(len(m.categoryPresets)+len(library.Categories)-1, 0))
+		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Categories)-1)
 	case modeSort:
 		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Sorts)-1)
 	case modeQueue:
@@ -133,7 +133,7 @@ func (m Model) overlayContent(width, height int) (string, []string) {
 func (m Model) renderOverlay(base string, width, height int) string {
 	title, lines := m.overlayContent(width, height)
 
-	overlayWidth := min(max(width*2/3, 28), min(88, width))
+	overlayWidth := overlayBoxWidth(width)
 	if m.mode == modePlaybackOptions {
 		overlayWidth = min(88, width)
 	}
@@ -150,6 +150,16 @@ func (m Model) renderOverlay(base string, width, height int) string {
 	content := m.theme.overlayTitle.Render(title) + separator + strings.Join(lines, "\n")
 	overlay := m.theme.overlay.Width(overlayWidth).Render(content)
 	return placeOverlay(base, overlay, width, height)
+}
+
+func overlayBoxWidth(width int) int {
+	return min(max(width*2/3, 28), min(88, width))
+}
+
+// overlayContentWidth is the text width inside a standard overlay box, so
+// overlays can choose copy that fits rather than be truncated.
+func overlayContentWidth(width int) int {
+	return max(overlayBoxWidth(width)-6, 1)
 }
 
 func overlayWindow(items []string, cursor, height int) []string {

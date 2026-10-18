@@ -169,7 +169,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "PlaylistMaker config failed: %v\n", err)
 		os.Exit(1)
 	}
-	categoryPresets := goConfig.CategoryPresets
 	if goConfig.SpotifyClientID != "" && !*check {
 		auth := &spotify.Auth{ClientID: goConfig.SpotifyClientID, RedirectURI: goConfig.SpotifyRedirectURI, TokenPath: filepath.Join(goConfig.DataDirectory, "spotify-auth.json")}
 		if err := spotify.Recover(context.Background(), &spotify.Client{Auth: auth}, filepath.Join(goConfig.DataDirectory, "spotify-active-session.json")); err != nil {
@@ -241,7 +240,7 @@ func main() {
 		return
 	}
 
-	model := ui.New(tracks, playback).WithCategoryPresets(categoryPresets).WithTrackingErrors(filepath.Join(goConfig.DataDirectory, "tracking-error.txt"))
+	model := ui.New(tracks, playback).WithTrackingErrors(filepath.Join(goConfig.DataDirectory, "tracking-error.txt"))
 	model = model.WithMappingUpdater(updates)
 	model = model.WithSpotifyUpdater(updates)
 	model = model.WithLastFM(lastfmService)

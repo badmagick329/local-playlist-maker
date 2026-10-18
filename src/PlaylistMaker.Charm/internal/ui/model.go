@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"playlistmaker/charm/internal/backend"
-	"playlistmaker/charm/internal/config"
 	"playlistmaker/charm/internal/lastfm"
 	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/spotifylink"
@@ -78,7 +77,9 @@ type Model struct {
 	queued             map[string]library.Variant
 	queueOrder         []string
 	enabled            map[library.Category]bool
-	categoryPresets    []config.CategoryPreset
+	// preSoloCategories is the enabled set a Shift+letter solo replaced;
+	// nil when there is nothing to restore.
+	preSoloCategories  map[library.Category]bool
 	query              string
 	sort               library.Sort
 	trackDate          *library.DateRange
