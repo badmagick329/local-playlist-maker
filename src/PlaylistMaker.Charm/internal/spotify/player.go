@@ -48,13 +48,16 @@ type Player struct {
 	lastRepeatState    string
 	lastStateTimestamp int64
 	lastProgress       int
-	maxProgress        int
-	lastProgressLogged int
-	playDurationMS     int
-	staleLogged        bool
-	candidateLogged    bool
-	diagnostic         func(string)
-	Now                func() time.Time
+	// Spotify timestamp of the sample that set lastProgress.
+	lastProgressTimestamp int64
+	rewind                *rewindEvidence
+	maxProgress           int
+	lastProgressLogged    int
+	playDurationMS        int
+	staleLogged           bool
+	candidateLogged       bool
+	diagnostic            func(string)
+	Now                   func() time.Time
 }
 
 func (p *Player) SetDiagnostic(write func(string)) { p.diagnostic = write }
@@ -103,8 +106,15 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 	}
 	// The session queue owns repetitions; inherited Spotify repeat would prevent
 	// a play from finishing and hold every later video in the tracking queue.
+	repeatDeferred := false
 	if err := p.Client.DisableRepeat(ctx, p.deviceID); err != nil {
-		return err
+		if !p.idleRepeatRejection(ctx, err) {
+			return err
+		}
+		// Completion still requires an observed repeat-off state, and Finished
+		// re-requests it once the device has a context.
+		repeatDeferred = true
+		p.report("repeat off deferred: device has no loaded context; verifying after start")
 	}
 	p.trackURI, p.stateTrackURI = track.SpotifyURI, track.SpotifyURI
 	if err := p.writeState(ActiveState{SessionID: p.SessionID, HelperPID: p.HelperPID, DeviceID: p.deviceID, TrackURI: p.stateTrackURI}); err != nil {
@@ -120,13 +130,28 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 	p.repeatConfirmed, p.repeatRetryAt, p.repeatAttempts = false, time.Time{}, 1
 	p.lastRepeatState, p.lastStateTimestamp = "", 0
 	p.lastProgress, p.maxProgress, p.lastProgressLogged, p.playDurationMS = 0, 0, 0, 0
+	p.lastProgressTimestamp, p.rewind = 0, nil
 	p.staleLogged, p.candidateLogged = false, false
 	if err := p.Client.Play(ctx, p.deviceID, track.SpotifyURI); err != nil {
 		return p.block("Spotify start acceptance is uncertain: " + err.Error())
 	}
 	p.startAccepted = true
-	p.report("repeat disable requested before playback; awaiting observed repeat state")
+	if !repeatDeferred {
+		p.report("repeat disable requested before playback; awaiting observed repeat state")
+	}
 	return nil
+}
+
+// An idle librespot device answers repeat changes with 403 until it has a
+// playback context. Any other rejection, or one from a device that already has
+// a loaded item, still means the inherited repeat state cannot be controlled.
+func (p *Player) idleRepeatRejection(ctx context.Context, err error) bool {
+	var responseErr *ResponseError
+	if !errors.As(err, &responseErr) || responseErr.StatusCode != http.StatusForbidden {
+		return false
+	}
+	state, stateErr := p.Client.CurrentPlayback(ctx)
+	return stateErr == nil && (state.Device.ID != p.deviceID || state.Item == nil)
 }
 
 // Finished uses Spotify's actual state so a short video cannot truncate its
@@ -271,12 +296,13 @@ func (p *Player) finished(ctx context.Context) (bool, error) {
 		}
 		p.playDurationMS = state.Item.DurationMS
 		p.lastProgress, p.maxProgress = state.ProgressMS, state.ProgressMS
+		p.lastProgressTimestamp = state.Timestamp
 		p.completionDeadline = now.Add(time.Duration(max(0, state.Item.DurationMS-state.ProgressMS))*time.Millisecond + time.Minute)
 		p.report(fmt.Sprintf("playback observed: position=%dms, duration=%dms, completionDeadline=%s", state.ProgressMS, state.Item.DurationMS, p.completionDeadline.UTC().Format(time.RFC3339)))
 	} else if matching && (state.IsPlaying || state.ProgressMS >= p.lastProgress) {
 		// A stopped response can reset position to zero. Only a playing
 		// backward jump invalidates the prior play's near-end evidence.
-		p.recordProgress(state.ProgressMS)
+		p.recordProgress(state.ProgressMS, state.Timestamp)
 	}
 	if !matching || !state.IsPlaying {
 		if matching && p.repeatConfirmed && p.completedResume(state) {
@@ -285,6 +311,11 @@ func (p *Player) finished(ctx context.Context) (bool, error) {
 		}
 		if p.repeatConfirmed && p.nearEnd() && !p.control.deliberateStop {
 			p.report(fmt.Sprintf("completion decision: accepted observed transition after reaching %dms of %dms", p.maxProgress, p.playDurationMS))
+			return true, nil
+		}
+		// Must precede controlPlayback: resuming here would replay the song.
+		if matching && p.rewoundToEnd(state) {
+			p.report(fmt.Sprintf("completion decision: accepted rewind-to-start endpoint after reaching %dms of %dms", p.rewind.reached, p.rewind.duration))
 			return true, nil
 		}
 		if !matching && state.Item != nil && state.Device.ID != "" {
@@ -318,20 +349,45 @@ func (p *Player) finished(ctx context.Context) (bool, error) {
 	return false, nil
 }
 
-func (p *Player) recordProgress(progress int) {
+// librespot ends a song by rewinding it to the start, still reported as
+// playing, and only later reports the pause. The rewind discards near-end
+// progress, so what the occurrence reached is kept for that pause to prove.
+type rewindEvidence struct {
+	reached, duration int
+	// The last pre-rewind sample's timestamp; only a newer stopped sample can
+	// end the occurrence, so a pause left by an earlier one cannot.
+	timestamp int64
+}
+
+const startWindowMS = 2_000
+
+func (p *Player) recordProgress(progress int, timestamp int64) {
 	if progress+2_000 < p.lastProgress {
+		p.rewind = nil
+		if progress <= startWindowMS && p.nearEnd() {
+			p.rewind = &rewindEvidence{reached: p.maxProgress, duration: p.playDurationMS, timestamp: p.lastProgressTimestamp}
+		}
 		p.report(fmt.Sprintf("significant progress change: backward from %dms to %dms; not treated as completion", p.lastProgress, progress))
 		p.maxProgress = progress
 		p.lastProgressLogged = progress
 		p.candidateLogged = false
 	} else {
+		if progress > startWindowMS {
+			// Progress past the start window is a genuine replay, not an ending.
+			p.rewind = nil
+		}
 		p.maxProgress = max(p.maxProgress, progress)
 		if progress-p.lastProgressLogged >= 30_000 || p.nearEnd() && p.lastProgressLogged+2_000 < progress {
 			p.report(fmt.Sprintf("significant progress change: position=%dms, duration=%dms", progress, p.playDurationMS))
 			p.lastProgressLogged = progress
 		}
 	}
-	p.lastProgress = progress
+	p.lastProgress, p.lastProgressTimestamp = progress, timestamp
+}
+
+func (p *Player) rewoundToEnd(state PlaybackState) bool {
+	return p.rewind != nil && !state.IsPlaying && state.RepeatState == "off" && p.repeatConfirmed &&
+		state.ProgressMS <= startWindowMS && !p.control.deliberateStop && state.Timestamp > p.rewind.timestamp
 }
 
 func (p *Player) nearEnd() bool {

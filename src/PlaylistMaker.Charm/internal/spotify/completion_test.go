@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"playlistmaker/charm/internal/tracking"
 	"strings"
 	"testing"
@@ -334,5 +336,94 @@ func TestFinishedIgnoresPlaybackResponseOlderThanStart(t *testing.T) {
 	player := &Player{Client: &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}, deviceID: "device", trackURI: "spotify:track:song", startedAt: now, Now: func() time.Time { return now }}
 	if done, err := player.Finished(context.Background()); done || err != nil || player.observed {
 		t.Fatalf("stale response changed completion state: done=%v observed=%v err=%v", done, player.observed, err)
+	}
+}
+
+func (f *controlFixture) sample(t *testing.T, playing bool, progress int, after time.Duration) bool {
+	t.Helper()
+	f.now = f.now.Add(after)
+	f.state.IsPlaying, f.state.ProgressMS, f.state.Timestamp = playing, progress, f.now.UnixMilli()
+	return f.check(t, 0)
+}
+
+// librespot's end of "Looks Can Kill": near the end, then rewound to the start
+// while still reported as playing.
+func rewoundAtEnd(t *testing.T) (*controlFixture, *[]string) {
+	t.Helper()
+	f := newControlFixture(t)
+	diagnostics := []string{}
+	f.player.SetDiagnostic(func(message string) { diagnostics = append(diagnostics, message) })
+	f.state.Item.DurationMS, f.player.playDurationMS = 195559, 195559
+	if f.sample(t, true, 192729, 0) || f.sample(t, true, 647, 3*time.Second) {
+		t.Fatal("playing sample completed the occurrence")
+	}
+	return f, &diagnostics
+}
+
+func TestFinishedAcceptsRewindToStartThenPauseAfterNearEnd(t *testing.T) {
+	f, diagnostics := rewoundAtEnd(t)
+	if !f.sample(t, false, 211, 5*time.Second) {
+		t.Fatal("rewound and paused ending was not accepted")
+	}
+	if len(f.commands) != 0 {
+		t.Fatalf("finished song was resumed: %v", f.commands)
+	}
+	if !strings.Contains(strings.Join(*diagnostics, "\n"), "completion decision: accepted rewind-to-start endpoint after reaching 192729ms of 195559ms") {
+		t.Fatalf("missing rewind completion diagnostic: %v", *diagnostics)
+	}
+}
+
+func TestRewindFollowedByReplayIsNotCompletion(t *testing.T) {
+	for _, stopped := range []int{3200, 200} {
+		t.Run(fmt.Sprint(stopped), func(t *testing.T) {
+			f, _ := rewoundAtEnd(t)
+			if f.sample(t, true, 3000, 3*time.Second) || f.sample(t, false, stopped, time.Second) {
+				t.Fatal("replayed song completed the occurrence")
+			}
+			if f.player.control.phase != "recovering" || len(f.commands) != 1 || f.commands[0] != "/me/player/play:" {
+				t.Fatalf("interrupted replay was not recovered in place: phase=%s commands=%v", f.player.control.phase, f.commands)
+			}
+		})
+	}
+}
+
+func TestMidSongRewindThenPauseIsRecovered(t *testing.T) {
+	f := newControlFixture(t)
+	if f.sample(t, true, 50000, 0) || f.sample(t, true, 819, 3*time.Second) || f.sample(t, false, 211, 5*time.Second) {
+		t.Fatal("mid-song rewind completed the occurrence")
+	}
+	if len(f.commands) != 1 || f.commands[0] != "/me/player/play:" {
+		t.Fatalf("mid-song stop was not recovered in place: %v", f.commands)
+	}
+}
+
+func TestDeliberatePauseAfterRewindIsNotCompletion(t *testing.T) {
+	f, _ := rewoundAtEnd(t)
+	f.player.Intent(true, nil)
+	if f.sample(t, true, 700, time.Second) || f.sample(t, false, 211, time.Second) {
+		t.Fatal("our own pause after a rewind was mistaken for completion")
+	}
+	if len(f.commands) != 1 || f.commands[0] != "/me/player/pause:" || f.player.control.phase != "paused" {
+		t.Fatalf("deliberate hold not kept: phase=%s commands=%v", f.player.control.phase, f.commands)
+	}
+}
+
+func TestNewOccurrenceDoesNotInheritRewindEvidence(t *testing.T) {
+	f, _ := rewoundAtEnd(t)
+	p := f.player
+	p.prepared, p.SessionID, p.StatePath = true, "rewind", filepath.Join(t.TempDir(), "owner.json")
+	p.requestedTrack = *f.state.Item
+	if err := p.Start(context.Background(), tracking.Track{SpotifyURI: f.state.Item.URI}); err != nil {
+		t.Fatal(err)
+	}
+	f.commands = nil
+	if f.sample(t, true, 1000, time.Second) || !p.observed {
+		t.Fatal("new occurrence was not observed")
+	}
+	if f.sample(t, false, 211, time.Second) {
+		t.Fatal("previous occurrence's rewind completed the new one")
+	}
+	if len(f.commands) != 1 || f.commands[0] != "/me/player/play:" {
+		t.Fatalf("early stop was not recovered in place: %v", f.commands)
 	}
 }

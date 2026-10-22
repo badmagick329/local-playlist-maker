@@ -193,6 +193,74 @@ func TestPlayerDoesNotStartWhenRepeatControlFails(t *testing.T) {
 	}
 }
 
+// librespot rejects repeat changes with 403 until it has a playback context.
+func repeatRejectingServer(t *testing.T, playback string) (*Player, *[]string, *[]string) {
+	t.Helper()
+	requests, diagnostics := []string{}, []string{}
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		requests = append(requests, request.Method+" "+request.URL.Path)
+		switch request.URL.Path {
+		case "/me/player/devices":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "device", "name": "Room"}}})
+		case "/tracks/song":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"uri": "spotify:track:song", "name": "Song", "artists": []map[string]any{{"name": "Artist"}}})
+		case "/me/player/repeat":
+			writer.WriteHeader(http.StatusForbidden)
+			_, _ = writer.Write([]byte(`{"error":{"status":403,"message":"Player command failed: Restriction violated"}}`))
+		case "/me/player":
+			if playback == "" {
+				writer.WriteHeader(http.StatusNoContent)
+				return
+			}
+			_, _ = writer.Write([]byte(playback))
+		default:
+			writer.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	t.Cleanup(server.Close)
+	player := &Player{Client: &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}, StatePath: filepath.Join(t.TempDir(), "state.json")}
+	player.SetDiagnostic(func(message string) { diagnostics = append(diagnostics, message) })
+	if err := player.Preflight(context.Background(), "Room"); err != nil {
+		t.Fatal(err)
+	}
+	return player, &requests, &diagnostics
+}
+
+func TestPlayerStartsIdleDeviceThatRejectsRepeatControl(t *testing.T) {
+	for name, playback := range map[string]string{
+		"no-playback":  "",
+		"other-device": `{"is_playing":true,"device":{"id":"other"},"item":{"uri":"spotify:track:other"}}`,
+		"no-item":      `{"is_playing":false,"device":{"id":"device"}}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			player, requests, diagnostics := repeatRejectingServer(t, playback)
+			if err := player.Start(context.Background(), tracking.Track{SpotifyURI: "spotify:track:song"}); err != nil {
+				t.Fatalf("idle device start = %v", err)
+			}
+			joined := strings.Join(*requests, "\n")
+			if !strings.Contains(joined, "GET /me/player\n") || !strings.HasSuffix(joined, "PUT /me/player/play") {
+				t.Fatalf("idle device was not started: %v", *requests)
+			}
+			if !strings.Contains(strings.Join(*diagnostics, "\n"), "repeat off deferred") {
+				t.Fatalf("missing deferral diagnostic: %v", *diagnostics)
+			}
+		})
+	}
+}
+
+func TestPlayerDoesNotStartLoadedDeviceThatRejectsRepeatControl(t *testing.T) {
+	player, requests, _ := repeatRejectingServer(t, `{"is_playing":false,"device":{"id":"device"},"item":{"uri":"spotify:track:previous"}}`)
+	if err := player.Start(context.Background(), tracking.Track{SpotifyURI: "spotify:track:song"}); err == nil || !strings.Contains(err.Error(), "repeat control") {
+		t.Fatalf("loaded-device repeat failure = %v", err)
+	}
+	if strings.Contains(strings.Join(*requests, "\n"), "PUT /me/player/play") {
+		t.Fatalf("play started without repeat control: %v", *requests)
+	}
+	if _, err := os.Stat(player.StatePath); !os.IsNotExist(err) {
+		t.Fatalf("failed startup retained active state: %v", err)
+	}
+}
+
 func TestPlaybackRateLimitReturnsImmediatelyWithoutRetry(t *testing.T) {
 	requests := 0
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
