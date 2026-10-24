@@ -125,7 +125,7 @@ func (m Model) overlayContent(width, height int) (string, []string) {
 	case modeSpotifySearch:
 		return m.spotifySearchOverlay()
 	case modeLastFM:
-		return m.lastFMOverlay(height)
+		return m.lastFMOverlay(width, height)
 	}
 	return "", nil
 }

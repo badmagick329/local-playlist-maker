@@ -13,7 +13,9 @@ Both fields are optional. Leave both blank to disable network access. Cached his
 
 ## Import listening history
 
-Press uppercase `L` to open the Last.fm screen. `Sync new plays` downloads the full history when no cache exists. Later runs request only scrobbles at or after the latest cached timestamp. `Rebuild full history` downloads every page again.
+Press uppercase `L` to open the Last.fm screen; `L` or `Esc` closes it. Move with `j/k` and press `Enter`, or press the letter shown on a row to run it: `s` Sync new plays, `b` Rebuild full history, `r` Last sync report, `e` Export unresolved, `i` Import agent decisions, `x` Reset agent decisions. `Shift` and Caps Lock make no difference, so `S` still syncs only new plays. While a sync runs, only `Esc` or `L` work, and they cancel it.
+
+`Sync new plays` downloads the full history when no cache exists. Later runs request only scrobbles at or after the latest cached timestamp. `Rebuild full history` downloads every page again.
 
 PlaylistMaker stores completed scrobbles in `lastfm-scrobbles.jsonl` under the configured data directory. It skips Last.fm's currently playing entry. Each downloaded page is checkpointed. A failed or cancelled download leaves the existing cache untouched, and `Sync new plays` or `Rebuild full history` resumes the compatible checkpoint instead of starting again.
 
@@ -89,4 +91,4 @@ Give the directory to the external agent, then choose `Import agent decisions`. 
 
 A match lasts while its track exists, so an automatic match keeps its track when a later duplicate would win the canonical choice. A no-match lasts until a matching comparison finds a track for the identity; the identity is then matched again. When the first two comparisons find tracks that are not one song, it becomes unresolved; a later comparison reopens it only when it finds one song, so a reviewed case does not return to review after every import. Other catalogue changes leave no-match decisions in place.
 
-`Reset agent decisions` removes imported decisions and runs exact matching again. It requires a second `Enter` press.
+`Reset agent decisions` removes imported decisions and runs exact matching again. The first `x` or `Enter` on the row only asks for confirmation; a second `x` or `Enter` runs it. Moving with `j/k` or pressing another letter first cancels it.

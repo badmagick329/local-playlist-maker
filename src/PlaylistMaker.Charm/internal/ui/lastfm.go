@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -107,41 +108,69 @@ func (m Model) handleLastFMKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.lastfmExportScope = (m.lastfmExportScope + step) % exportScopeCount
 		}
 	case "enter":
-		switch m.overlayCursor {
-		case lastfmSyncRow, lastfmRebuildRow:
-			if !m.lastfmStatus.Configured {
-				m.status = "Last.fm sync is disabled because username and API key are not configured"
-				return m, nil
-			}
-			return m.beginLastFMSync(m.overlayCursor == lastfmRebuildRow)
-		case lastfmReportRow:
-			report, ok := m.lastfm.LastSyncReport(m.all)
-			if !ok {
-				m.status = "No Last.fm sync is recorded yet"
-				return m, nil
-			}
-			m.lastfmReport, m.lastfmReportOffset = &report, 0
-		case lastfmExportRow:
-			period, err := m.lastfmExportPeriod()
-			if err != nil {
-				m.status = "Last.fm export: " + err.Error()
-				return m, nil
-			}
-			return m, m.lastfmExportCmd(period)
-		case lastfmImportRow:
-			return m, m.lastfmImportCmd()
-		case lastfmResetRow:
-			if !m.lastfmResetArmed {
-				m.lastfmResetArmed = true
-				m.status = "Press Enter again to reset all agent decisions"
-				return m, nil
-			}
-			return m, m.lastfmResetCmd()
-		}
+		return m.activateLastFMRow()
 	default:
+		// Letters come before the range field, which takes no letters, so a
+		// letter always runs its row even while a range is being typed.
+		if letter, _, ok := letterKeyPress(key); ok {
+			// No row has a reverse, so Shift+letter (and Caps Lock) acts as
+			// the plain letter; that is why Rebuild is b rather than S.
+			row := slices.Index(lastfmRowKeys[:], letter)
+			// Any letter but x disarms a pending reset, so only a deliberate
+			// second x or Enter on the Reset row runs it.
+			if row != lastfmResetRow {
+				m.lastfmResetArmed = false
+			}
+			if row < 0 {
+				return m, nil
+			}
+			m.overlayCursor = row
+			return m.activateLastFMRow()
+		}
 		if m.overlayCursor == lastfmExportRow && m.lastfmExportScope == exportRange {
 			m.editLastFMExportRange(k, key.Text)
 		}
+	}
+	return m, nil
+}
+
+// lastfmRowKeys is the Last.fm screen's letter for each row, by row constant.
+// They avoid every key the screen already handles (j/k move, h/l cycle the
+// export scope, L closes).
+var lastfmRowKeys = [...]rune{'s', 'b', 'r', 'e', 'i', 'x'}
+
+// activateLastFMRow runs the row under the cursor, for Enter and row letters.
+func (m Model) activateLastFMRow() (tea.Model, tea.Cmd) {
+	switch m.overlayCursor {
+	case lastfmSyncRow, lastfmRebuildRow:
+		if !m.lastfmStatus.Configured {
+			m.status = "Last.fm sync is disabled because username and API key are not configured"
+			return m, nil
+		}
+		return m.beginLastFMSync(m.overlayCursor == lastfmRebuildRow)
+	case lastfmReportRow:
+		report, ok := m.lastfm.LastSyncReport(m.all)
+		if !ok {
+			m.status = "No Last.fm sync is recorded yet"
+			return m, nil
+		}
+		m.lastfmReport, m.lastfmReportOffset = &report, 0
+	case lastfmExportRow:
+		period, err := m.lastfmExportPeriod()
+		if err != nil {
+			m.status = "Last.fm export: " + err.Error()
+			return m, nil
+		}
+		return m, m.lastfmExportCmd(period)
+	case lastfmImportRow:
+		return m, m.lastfmImportCmd()
+	case lastfmResetRow:
+		if !m.lastfmResetArmed {
+			m.lastfmResetArmed = true
+			m.status = "Press x or Enter again to reset all agent decisions"
+			return m, nil
+		}
+		return m, m.lastfmResetCmd()
 	}
 	return m, nil
 }
@@ -294,7 +323,7 @@ func (m Model) handleLastFMProgress(message lastfmProgressMsg) (tea.Model, tea.C
 	return m, nil
 }
 
-func (m Model) lastFMOverlay(height int) (string, []string) {
+func (m Model) lastFMOverlay(width, height int) (string, []string) {
 	var lines []string
 	title := "Last.fm history"
 	if m.lastfmRunning {
@@ -334,14 +363,12 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 	if m.lastfmStatus.LastSyncUTC != nil {
 		syncLabel = m.lastfmStatus.LastSyncUTC.Format(time.RFC3339)
 	}
-	actions := []string{
-		fmt.Sprintf("%s Sync new plays", cursorMark(m.overlayCursor, lastfmSyncRow)),
-		fmt.Sprintf("%s Rebuild full history", cursorMark(m.overlayCursor, lastfmRebuildRow)),
-		fmt.Sprintf("%s Last sync report", cursorMark(m.overlayCursor, lastfmReportRow)),
-		fmt.Sprintf("%s Export unresolved: %s", cursorMark(m.overlayCursor, lastfmExportRow), m.lastfmExportScopeLabel()),
-		fmt.Sprintf("%s Import agent decisions", cursorMark(m.overlayCursor, lastfmImportRow)),
-		fmt.Sprintf("%s Reset agent decisions", cursorMark(m.overlayCursor, lastfmResetRow)),
+	labels := [...]string{"Sync new plays", "Rebuild full history", "Last sync report", "Export unresolved: " + m.lastfmExportScopeLabel(), "Import agent decisions", "Reset agent decisions"}
+	actions := make([]string, 0, len(labels))
+	for row, label := range labels {
+		actions = append(actions, fmt.Sprintf("%s %c %s", cursorMark(m.overlayCursor, row), lastfmRowKeys[row], label))
 	}
+	footer := lastFMFooter(overlayContentWidth(width))
 	if height < 20 {
 		summary := fmt.Sprintf("%d scrobbles • %d matched • %d unresolved", m.lastfmStatus.Scrobbles, m.lastfmStatus.Matched, m.lastfmStatus.Unresolved)
 		if m.lastfmStatus.CheckpointPages > 0 {
@@ -352,7 +379,7 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 		}
 		lines = []string{summary}
 		lines = append(lines, overlayWindow(actions, m.overlayCursor, height)...)
-		lines = append(lines, "", "enter activate • L/esc close")
+		lines = append(lines, "", footer)
 	} else {
 		lines = []string{"Last.fm: " + configured, fmt.Sprintf("Cached scrobbles: %d", m.lastfmStatus.Scrobbles), "Cached range: " + rangeLabel, fmt.Sprintf("Matched identities: %d", m.lastfmStatus.Matched), fmt.Sprintf("Unresolved identities: %d", m.lastfmStatus.Unresolved), "Last successful sync: " + syncLabel, "Spotify evidence: " + evidence, ""}
 		if m.lastfmStatus.CheckpointPages > 0 {
@@ -362,9 +389,19 @@ func (m Model) lastFMOverlay(height int) (string, []string) {
 		if m.lastfmStatus.Error != "" {
 			lines = append(lines, m.theme.warning.Render("Cache error: "+m.lastfmStatus.Error))
 		}
-		lines = append(lines, "", "j/k move • h/l export scope • enter activate • L/esc close")
+		lines = append(lines, "", footer)
 	}
 	return title, lines
+}
+
+// lastFMFooter fits whole so the closing key, which no row shows, is never
+// cut off.
+func lastFMFooter(contentWidth int) string {
+	return fittedFooter(contentWidth,
+		"j/k move • letter run • h/l export scope • enter activate • L/esc close",
+		"letter run • h/l export scope • L/esc close",
+		"letter run • L close",
+	)
 }
 
 func (m Model) lastfmExportScopeLabel() string {

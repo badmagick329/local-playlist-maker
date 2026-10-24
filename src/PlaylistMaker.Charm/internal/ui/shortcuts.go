@@ -10,6 +10,7 @@ var shortcuts = []shortcut{
 	{"Views", "U", "update Spotify links"}, {"Spotify updates", "enter / search / skip / ignore", "confirm, find, defer, or persistently ignore a link"},
 	{"Views", "R", "refresh history"},
 	{"Views", "L", "Last.fm sync and matching"},
+	{"Last.fm", "s / b / r", "sync new plays / rebuild full history / last sync report"}, {"Last.fm", "e / i", "export unresolved with the chosen scope / import agent decisions"}, {"Last.fm", "x, then x or Enter", "reset agent decisions"}, {"Last.fm", "h/l", "cycle the export scope"}, {"Last.fm", "Enter / L / Esc", "run the highlighted row / close"},
 	{"Categories", "letter shown on the row", "toggle that category"}, {"Categories", "Shift+letter", "show only that category; again to restore the previous set"},
 	{"Sort", "letter shown on the row", "sort by that field"}, {"Sort", "Shift+letter", "sort by that field in reverse"}, {"Sort", "Enter / Space", "sort by the highlighted field; on the active field, reverse it"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a", "all videos from current track"}, {"Queue", "A", "one video per filtered track"}, {"Queue", "Ctrl+A", "all videos from all filtered tracks"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
@@ -98,7 +99,11 @@ func footerHint(current mode, width int) string {
 	case modeSpotifySearch:
 		hint = "type query or Spotify track URL/URI  •  enter submit  •  / or esc cancel"
 	case modeLastFM:
-		hint = "j/k move  •  enter activate  •  L/esc close"
+		if width < 80 {
+			hint = "letter run  •  h/l scope  •  L/esc close"
+		} else {
+			hint = "j/k move  •  letter run  •  h/l export scope  •  enter activate  •  L/esc close"
+		}
 	}
 	return truncate(hint, width)
 }
