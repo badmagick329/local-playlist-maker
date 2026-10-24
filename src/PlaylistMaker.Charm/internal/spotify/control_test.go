@@ -14,11 +14,12 @@ import (
 )
 
 type controlFixture struct {
-	player   *Player
-	now      time.Time
-	state    PlaybackState
-	commands []string
-	limited  bool
+	player    *Player
+	now       time.Time
+	state     PlaybackState
+	commands  []string
+	limited   bool
+	failPause bool
 }
 
 func newControlFixture(t *testing.T) *controlFixture {
@@ -26,6 +27,7 @@ func newControlFixture(t *testing.T) *controlFixture {
 	f := &controlFixture{now: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	f.state = PlaybackState{IsPlaying: true, ProgressMS: 45000, RepeatState: "off", Item: &Track{URI: "spotify:track:fixture", DurationMS: 180000}}
 	f.state.Device.ID = "device"
+	f.state.Item.Album.URI = "spotify:album:fixture"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if f.limited {
 			w.Header().Set("Retry-After", "3600")
@@ -35,6 +37,9 @@ func newControlFixture(t *testing.T) *controlFixture {
 		if r.Method == "PUT" {
 			body, _ := io.ReadAll(r.Body)
 			f.commands = append(f.commands, r.URL.Path+":"+string(body))
+			if f.failPause && r.URL.Path == "/me/player/pause" {
+				w.WriteHeader(http.StatusInternalServerError)
+			}
 			return
 		}
 		json.NewEncoder(w).Encode(f.state)

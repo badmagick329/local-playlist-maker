@@ -52,6 +52,7 @@ type Track struct {
 	DurationMS int    `json:"duration_ms"`
 	IsPlayable *bool  `json:"is_playable"`
 	Album      struct {
+		URI         string `json:"uri"`
 		Name        string `json:"name"`
 		ReleaseDate string `json:"release_date"`
 	} `json:"album"`
@@ -71,8 +72,11 @@ func (c *Client) Devices(ctx context.Context) ([]Device, error) {
 	return payload.Devices, nil
 }
 
-func (c *Client) Play(ctx context.Context, deviceID, uri string) error {
-	return c.do(ctx, http.MethodPut, "/me/player/play?device_id="+url.QueryEscape(deviceID), map[string]any{"uris": []string{uri}, "position_ms": 0}, nil)
+// Play starts the track inside its album: Connect accepts a bare-track play
+// (uris) with 204 but never starts it.
+func (c *Client) Play(ctx context.Context, deviceID, albumURI, trackURI string) error {
+	body := map[string]any{"context_uri": albumURI, "offset": map[string]string{"uri": trackURI}, "position_ms": 0}
+	return c.do(ctx, http.MethodPut, "/me/player/play?device_id="+url.QueryEscape(deviceID), body, nil)
 }
 
 // Resume preserves the current occurrence: no URI or position is sent.
@@ -94,7 +98,10 @@ type PlaybackState struct {
 	RepeatState string `json:"repeat_state"`
 	Timestamp   int64  `json:"timestamp"`
 	Item        *Track `json:"item"`
-	Device      struct {
+	Context     *struct {
+		URI string `json:"uri"`
+	} `json:"context"`
+	Device struct {
 		ID string `json:"id"`
 	} `json:"device"`
 }

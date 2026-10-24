@@ -408,6 +408,66 @@ func TestDeliberatePauseAfterRewindIsNotCompletion(t *testing.T) {
 	}
 }
 
+// After a near-end sample, Spotify moves on to the next item in context.
+func nextAfterNearEnd(t *testing.T, contextURI string, failPause bool) (bool, *controlFixture, *[]string) {
+	t.Helper()
+	f := newControlFixture(t)
+	f.failPause = failPause
+	diagnostics := []string{}
+	f.player.SetDiagnostic(func(message string) { diagnostics = append(diagnostics, message) })
+	f.player.albumURI = f.state.Item.Album.URI
+	if f.sample(t, true, 175000, 0) {
+		t.Fatal("near-end playing sample completed the occurrence")
+	}
+	f.state.Item = &Track{URI: "spotify:track:next", Name: "Next", DurationMS: 200000}
+	if contextURI != "" {
+		f.state.Context = &struct {
+			URI string `json:"uri"`
+		}{contextURI}
+	}
+	return f.sample(t, true, 1000, time.Second), f, &diagnostics
+}
+
+func TestCompletionPausesNextTrackInStartedAlbum(t *testing.T) {
+	done, f, diagnostics := nextAfterNearEnd(t, "spotify:album:fixture", false)
+	if !done {
+		t.Fatal("transition with near-end evidence was not accepted")
+	}
+	if len(f.commands) != 1 || f.commands[0] != "/me/player/pause:" {
+		t.Fatalf("album follow-on was not paused: %v", f.commands)
+	}
+	if !strings.Contains(strings.Join(*diagnostics, "\n"), "completion follow-on pause: paused next album track") {
+		t.Fatalf("missing follow-on pause diagnostic: %v", *diagnostics)
+	}
+}
+
+func TestCompletionLeavesNextTrackOutsideStartedAlbum(t *testing.T) {
+	for name, contextURI := range map[string]string{"other-context": "spotify:playlist:other", "no-context": ""} {
+		t.Run(name, func(t *testing.T) {
+			done, f, _ := nextAfterNearEnd(t, contextURI, false)
+			if !done {
+				t.Fatal("transition with near-end evidence was not accepted")
+			}
+			if len(f.commands) != 0 {
+				t.Fatalf("unrelated playback was mutated: %v", f.commands)
+			}
+		})
+	}
+}
+
+func TestCompletionStandsWhenFollowOnPauseFails(t *testing.T) {
+	done, f, diagnostics := nextAfterNearEnd(t, "spotify:album:fixture", true)
+	if !done {
+		t.Fatal("failed follow-on pause undid completion")
+	}
+	if len(f.commands) != 1 || f.commands[0] != "/me/player/pause:" {
+		t.Fatalf("follow-on pause was not attempted: %v", f.commands)
+	}
+	if !strings.Contains(strings.Join(*diagnostics, "\n"), "completion follow-on pause failed") {
+		t.Fatalf("missing follow-on pause failure diagnostic: %v", *diagnostics)
+	}
+}
+
 func TestNewOccurrenceDoesNotInheritRewindEvidence(t *testing.T) {
 	f, _ := rewoundAtEnd(t)
 	p := f.player

@@ -37,7 +37,7 @@ func newSpotifyQueueFixture(t *testing.T) *spotifyQueueFixture {
 		case r.URL.Path == "/me/player/devices":
 			json.NewEncoder(w).Encode(map[string]any{"devices": []spotify.Device{{ID: "device", Name: "fixture"}}})
 		case strings.HasPrefix(r.URL.Path, "/tracks/"):
-			json.NewEncoder(w).Encode(spotify.Track{URI: "spotify:track:" + strings.TrimPrefix(r.URL.Path, "/tracks/"), DurationMS: 180000})
+			json.NewEncoder(w).Encode(map[string]any{"uri": "spotify:track:" + strings.TrimPrefix(r.URL.Path, "/tracks/"), "duration_ms": 180000, "album": map[string]string{"uri": "spotify:album:fixture"}})
 		case r.Method == http.MethodGet:
 			json.NewEncoder(w).Encode(f.state)
 		default:
@@ -48,14 +48,16 @@ func newSpotifyQueueFixture(t *testing.T) *spotifyQueueFixture {
 					f.resumes++
 				} else {
 					var request struct {
-						URIs []string `json:"uris"`
+						Offset struct {
+							URI string `json:"uri"`
+						} `json:"offset"`
 					}
 					if err := json.Unmarshal(body, &request); err != nil {
 						t.Error(err)
 						return
 					}
-					f.starts = append(f.starts, request.URIs[0])
-					f.state = spotify.PlaybackState{IsPlaying: true, RepeatState: "off", Timestamp: f.now.UnixMilli(), Item: &spotify.Track{URI: request.URIs[0], DurationMS: 180000}}
+					f.starts = append(f.starts, request.Offset.URI)
+					f.state = spotify.PlaybackState{IsPlaying: true, RepeatState: "off", Timestamp: f.now.UnixMilli(), Item: &spotify.Track{URI: request.Offset.URI, DurationMS: 180000}}
 					f.state.Device.ID = "device"
 				}
 			}

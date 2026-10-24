@@ -91,6 +91,7 @@ func (p *Player) Restore(ctx context.Context, data json.RawMessage) error {
 	}
 	p.deviceID, p.trackURI, p.stateTrackURI = e.Device, e.URI, e.URI
 	p.requestedTrack, p.observed, p.repeatConfirmed = e.Requested, true, true
+	p.albumURI = e.Requested.Album.URI
 	p.prepared, p.attempted = true, true
 	p.startedAt = e.Started
 	p.lastProgress, p.maxProgress, p.playDurationMS = state.ProgressMS, max(e.Maximum, state.ProgressMS), e.Duration

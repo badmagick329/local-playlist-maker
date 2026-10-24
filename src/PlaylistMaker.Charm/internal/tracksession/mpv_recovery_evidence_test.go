@@ -55,7 +55,7 @@ func TestMPVRecoveryEvidenceHoldsUntilProgressOrCompletion(t *testing.T) {
 				case r.URL.Path == "/me/player/devices":
 					json.NewEncoder(w).Encode(map[string]any{"devices": []spotify.Device{{ID: "device", Name: "fixture"}}})
 				case strings.HasPrefix(r.URL.Path, "/tracks/"):
-					json.NewEncoder(w).Encode(spotify.Track{URI: "spotify:track:fixture", DurationMS: 2000})
+					json.NewEncoder(w).Encode(map[string]any{"uri": "spotify:track:fixture", "duration_ms": 2000, "album": map[string]string{"uri": "spotify:album:fixture"}})
 				case r.Method == http.MethodGet:
 					if scenario == "early-pause" {
 						if !resumed.IsZero() && time.Since(resumed) >= 2*time.Second {

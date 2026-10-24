@@ -35,6 +35,7 @@ type Player struct {
 	trackURI           string
 	stateTrackURI      string
 	requestedTrack     Track
+	albumURI           string
 	startedAt          time.Time
 	nextCheck          time.Time
 	rateUntil          time.Time
@@ -104,6 +105,11 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 		}
 		p.requestedTrack = requested
 	}
+	// A bare-track play is accepted but never starts, so without an album there
+	// is no way to start this track.
+	if p.requestedTrack.Album.URI == "" {
+		return fmt.Errorf("Spotify track %s has no album to start it in", track.SpotifyURI)
+	}
 	// The session queue owns repetitions; inherited Spotify repeat would prevent
 	// a play from finishing and hold every later video in the tracking queue.
 	repeatDeferred := false
@@ -132,7 +138,8 @@ func (p *Player) Start(ctx context.Context, track tracking.Track) error {
 	p.lastProgress, p.maxProgress, p.lastProgressLogged, p.playDurationMS = 0, 0, 0, 0
 	p.lastProgressTimestamp, p.rewind = 0, nil
 	p.staleLogged, p.candidateLogged = false, false
-	if err := p.Client.Play(ctx, p.deviceID, track.SpotifyURI); err != nil {
+	p.albumURI = p.requestedTrack.Album.URI
+	if err := p.Client.Play(ctx, p.deviceID, p.albumURI, track.SpotifyURI); err != nil {
 		return p.block("Spotify start acceptance is uncertain: " + err.Error())
 	}
 	p.startAccepted = true
@@ -235,6 +242,7 @@ func (p *Player) finished(ctx context.Context) (bool, error) {
 		}
 		if p.repeatConfirmed && p.nearEnd() && !p.control.deliberateStop {
 			p.report("completion decision: accepted transition with near-end evidence")
+			p.pauseAlbumFollowOn(ctx, state)
 			return true, nil
 		}
 		if state.Device.ID != "" && (state.Item != nil || state.Device.ID != p.deviceID) {
@@ -311,6 +319,7 @@ func (p *Player) finished(ctx context.Context) (bool, error) {
 		}
 		if p.repeatConfirmed && p.nearEnd() && !p.control.deliberateStop {
 			p.report(fmt.Sprintf("completion decision: accepted observed transition after reaching %dms of %dms", p.maxProgress, p.playDurationMS))
+			p.pauseAlbumFollowOn(ctx, state)
 			return true, nil
 		}
 		// Must precede controlPlayback: resuming here would replay the song.
@@ -347,6 +356,22 @@ func (p *Player) finished(ctx context.Context) (bool, error) {
 		p.nextCheck = now.Add(max(250*time.Millisecond, min(time.Second, remainingTarget)))
 	}
 	return false, nil
+}
+
+// With repeat off, the album context makes Spotify continue into the album's
+// next track. Stop pauses only the owned item, so if the session ends here that
+// track would keep playing and scrobble. The completion itself already stands,
+// so a failed pause is only reported.
+func (p *Player) pauseAlbumFollowOn(ctx context.Context, state PlaybackState) {
+	if p.albumURI == "" || state.Device.ID != p.deviceID || !state.IsPlaying || state.Item == nil || p.matchesTrack(*state.Item) ||
+		state.Context == nil || state.Context.URI != p.albumURI {
+		return
+	}
+	if err := p.Client.Pause(ctx, p.deviceID); err != nil {
+		p.report("completion follow-on pause failed: " + err.Error())
+		return
+	}
+	p.report(fmt.Sprintf("completion follow-on pause: paused next album track %q (%s)", state.Item.Name, state.Item.URI))
 }
 
 // librespot ends a song by rewinding it to the start, still reported as
