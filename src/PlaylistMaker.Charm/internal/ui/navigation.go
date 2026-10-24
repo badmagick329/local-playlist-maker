@@ -1,11 +1,8 @@
 package ui
 
 import (
-	"slices"
-
 	tea "charm.land/bubbletea/v2"
 
-	"playlistmaker/charm/internal/library"
 	"playlistmaker/charm/internal/updater"
 )
 
@@ -115,7 +112,7 @@ func (m Model) handleNavigationKey(key tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.overlayCursor = 0
 	case "s":
 		m.mode = modeSort
-		m.overlayCursor = slices.Index(library.Sorts, m.sort)
+		m.overlayCursor = sortFieldIndex(m.sort)
 	case "o":
 		return m.launchQueue()
 	case "p":

@@ -617,7 +617,6 @@ func TestSortEnterAppliesSelectionAndClosesOverlay(t *testing.T) {
 	m.cursor = 20
 	m = updateKey(t, m, "s")
 	m = updateKey(t, m, "j")
-	m = updateKey(t, m, "j")
 	m = updateKey(t, m, "enter")
 
 	if m.sort != library.ArtistAscending {
@@ -628,6 +627,139 @@ func TestSortEnterAppliesSelectionAndClosesOverlay(t *testing.T) {
 	}
 	if m.cursor != 0 {
 		t.Fatalf("cursor = %d, want top of newly sorted list", m.cursor)
+	}
+}
+
+func TestSortLetterAppliesFieldAndShiftLetterReverses(t *testing.T) {
+	for _, test := range []struct {
+		letter            rune
+		forward, reversed library.Sort
+	}{
+		{'m', library.ModifiedNewest, library.ModifiedOldest},
+		{'a', library.ArtistAscending, library.ArtistDescending},
+		{'t', library.TitleAscending, library.TitleDescending},
+		{'r', library.ReleaseNewest, library.ReleaseOldest},
+		{'v', library.VideoNewest, library.VideoOldest},
+		{'e', library.Relevance, library.Relevance},
+	} {
+		for _, shifted := range []bool{false, true} {
+			m := New(library.Generate(50, 200))
+			// Start from a sort outside the field so the press, not the
+			// starting state, decides the result.
+			m.sort = library.VideoOldest
+			if test.letter == 'v' {
+				m.sort = library.TitleDescending
+			}
+			m.cursor = 20
+			m = updateKey(t, m, "s")
+			want := test.forward
+			if shifted {
+				m = shiftLetter(t, m, test.letter)
+				want = test.reversed
+			} else {
+				m = updateKey(t, m, string(test.letter))
+			}
+			if m.sort != want || m.mode != modeNavigate || m.cursor != 0 || m.status != "Sorted by "+want.String() {
+				t.Fatalf("%c shifted=%v: sort %s, mode %s, cursor %d, status %q; want %s, closed, top", test.letter, shifted, m.sort, m.mode, m.cursor, m.status, want)
+			}
+		}
+	}
+}
+
+func TestSortEnterOnActiveFieldFlipsDirection(t *testing.T) {
+	m := New(library.Generate(50, 200))
+	m.sort = library.ArtistAscending
+	m = updateKey(t, m, "s")
+	if sortFields[m.overlayCursor].forward != library.ArtistAscending {
+		t.Fatalf("opened on row %d, want the active Artist field", m.overlayCursor)
+	}
+	m = updateKey(t, m, "enter")
+	if m.sort != library.ArtistDescending || m.mode != modeNavigate {
+		t.Fatalf("first enter: sort %s, mode %s", m.sort, m.mode)
+	}
+	m = updateKey(t, m, "s")
+	m = updateKey(t, m, "space")
+	if m.sort != library.ArtistAscending {
+		t.Fatalf("second enter: sort %s, want back to Artist A-Z", m.sort)
+	}
+
+	// Relevance has no reverse, so Enter on it keeps Relevance.
+	m.sort = library.Relevance
+	m = updateKey(t, m, "s")
+	m = updateKey(t, m, "enter")
+	if m.sort != library.Relevance {
+		t.Fatalf("enter on Relevance gave %s", m.sort)
+	}
+}
+
+func TestSortViewClosesWithSAndEscapeKeepingSort(t *testing.T) {
+	for _, key := range []string{"s", "esc"} {
+		m := New(library.Generate(50, 200))
+		m.sort = library.TitleDescending
+		m = updateKey(t, m, "s")
+		m = updateKey(t, m, "j")
+		m = updateKey(t, m, key)
+		if m.mode != modeNavigate || m.sort != library.TitleDescending {
+			t.Fatalf("%s: mode %s, sort %s", key, m.mode, m.sort)
+		}
+	}
+}
+
+func TestSortIgnoresCtrlAndAltLetters(t *testing.T) {
+	m := New(library.Generate(50, 200))
+	m = updateKey(t, m, "s")
+	for _, mod := range []tea.KeyMod{tea.ModCtrl, tea.ModAlt} {
+		next, _ := m.Update(tea.KeyPressMsg{Code: 'a', Mod: mod, Text: "a"})
+		m = next.(Model)
+		if m.mode != modeSort || m.sort != library.ModifiedNewest {
+			t.Fatalf("mod %v: mode %s, sort %s", mod, m.mode, m.sort)
+		}
+	}
+}
+
+func TestSortFieldsCoverEverySortWithoutCollidingWithViewKeys(t *testing.T) {
+	seen := map[rune]string{}
+	covered := map[library.Sort]bool{}
+	for _, field := range sortFields {
+		if field.key < 'a' || field.key > 'z' || strings.ContainsRune("jks", field.key) {
+			t.Fatalf("%s letter %q is not a free lowercase letter", field.name, field.key)
+		}
+		if other, dup := seen[field.key]; dup {
+			t.Fatalf("%s and %s share %q", field.name, other, field.key)
+		}
+		seen[field.key] = field.name
+		for _, sort := range []library.Sort{field.forward, field.reverse} {
+			if covered[sort] && field.forward != field.reverse {
+				t.Fatalf("%s repeats sort %s", field.name, sort)
+			}
+			covered[sort] = true
+		}
+	}
+	for _, sort := range library.Sorts {
+		if !covered[sort] {
+			t.Fatalf("sort %s has no field", sort)
+		}
+	}
+}
+
+func TestSortOverlayShowsLettersActiveDirectionAndFittingFooter(t *testing.T) {
+	for _, size := range []struct {
+		width int
+		want  string
+	}{{40, "key sort  Shift flips"}, {80, "letter sort • Shift reverse • s/esc close"}, {120, "j/k move  •  letter sort  •  Shift+letter reverse  •  s/esc close"}} {
+		m := New(library.Generate(20, 80))
+		m.sort = library.TitleDescending
+		m.mode = modeSort
+		m.overlayCursor = sortFieldIndex(m.sort)
+		content := stripStyles(m.renderOverlay("", size.width, 24))
+		if !strings.Contains(content, "› ● t  Title Z-A") || !strings.Contains(content, "  a  Artist A-Z") || !strings.Contains(content, "  e  Relevance") || !strings.Contains(content, size.want) {
+			t.Fatalf("width %d overlay = %q", size.width, content)
+		}
+		for _, line := range strings.Split(content, "\n") {
+			if ansi.StringWidth(line) > size.width {
+				t.Fatalf("overlay line exceeds width %d: %q", size.width, line)
+			}
+		}
 	}
 }
 

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"slices"
 	"unicode"
 	"unicode/utf8"
 
@@ -126,20 +127,34 @@ var categoryKeys = map[library.Category]rune{
 	library.LiveAudio:    'a',
 }
 
-// categoryKeyPress reports which category a letter key names and whether
-// Shift was held. Bubble Tea's legacy and Windows console decoders deliver
-// Shift+letter as the uppercase letter in Text, and String() returns that Text
-// ("X", not "shift+x"), so the case of Text is the test. Caps Lock also
-// uppercases Text, so with it on a letter solos.
-func categoryKeyPress(key tea.KeyPressMsg) (category library.Category, solo bool, ok bool) {
+// letterKeyPress reports the lowercase letter a key types and whether Shift
+// was held, for the overlays' row letters. Bubble Tea's legacy and Windows
+// console decoders deliver Shift+letter as the uppercase letter in Text, and
+// String() returns that Text ("X", not "shift+x"), so the case of Text is the
+// test. Caps Lock also uppercases Text, so with it on a letter reads as
+// Shift+letter. Ctrl and Alt chords are never row letters.
+func letterKeyPress(key tea.KeyPressMsg) (letter rune, shifted bool, ok bool) {
 	if key.Mod.Contains(tea.ModCtrl) || key.Mod.Contains(tea.ModAlt) || utf8.RuneCountInString(key.Text) != 1 {
-		return "", false, false
+		return 0, false, false
 	}
 	pressed, _ := utf8.DecodeRuneInString(key.Text)
-	letter := unicode.ToLower(pressed)
+	if !unicode.IsLetter(pressed) {
+		return 0, false, false
+	}
+	letter = unicode.ToLower(pressed)
+	return letter, pressed != letter, true
+}
+
+// categoryKeyPress reports which category a letter key names and whether
+// Shift was held, which solos it.
+func categoryKeyPress(key tea.KeyPressMsg) (category library.Category, solo bool, ok bool) {
+	letter, shifted, ok := letterKeyPress(key)
+	if !ok {
+		return "", false, false
+	}
 	for category, bound := range categoryKeys {
 		if bound == letter {
-			return category, pressed != letter, true
+			return category, shifted, true
 		}
 	}
 	return "", false, false
@@ -207,21 +222,77 @@ func (m Model) onlyCategoryEnabled(category library.Category) bool {
 	return true
 }
 
+// sortField is one row of the Sort view: a field the library sorts by, in its
+// default direction and its reverse.
+type sortField struct {
+	key     rune
+	name    string
+	forward library.Sort
+	reverse library.Sort
+}
+
+// sortFields lists the Sort view's rows, pairing the eleven library.Sorts into
+// six fields; a row's letter applies the default direction and Shift+letter
+// the reverse. Relevance has no reverse, so both directions are Relevance.
+// The letters avoid every key the view already handles (j/k move, s closes).
+var sortFields = []sortField{
+	{'m', "Modified", library.ModifiedNewest, library.ModifiedOldest},
+	{'a', "Artist", library.ArtistAscending, library.ArtistDescending},
+	{'t', "Title", library.TitleAscending, library.TitleDescending},
+	{'r', "Track release", library.ReleaseNewest, library.ReleaseOldest},
+	{'v', "Video date", library.VideoNewest, library.VideoOldest},
+	{'e', "Relevance", library.Relevance, library.Relevance},
+}
+
+// sortFieldIndex is the row of the field that sort belongs to.
+func sortFieldIndex(sort library.Sort) int {
+	return slices.IndexFunc(sortFields, func(field sortField) bool { return field.holds(sort) })
+}
+
+func (field sortField) holds(sort library.Sort) bool {
+	return sort == field.forward || sort == field.reverse
+}
+
 func (m Model) handleSortKey(key tea.KeyPressMsg) Model {
 	switch key.String() {
 	case "j", "down", "ctrl+j":
-		m.overlayCursor = min(m.overlayCursor+1, len(library.Sorts)-1)
+		m.overlayCursor = min(m.overlayCursor+1, len(sortFields)-1)
+		return m
 	case "k", "up", "ctrl+k":
 		m.overlayCursor = max(m.overlayCursor-1, 0)
+		return m
 	case "enter", "space":
-		m.sort = library.Sorts[m.overlayCursor]
-		m.refreshResults()
-		m.cursor = 0
-		m.mode = modeNavigate
-		m.status = "Sorted by " + m.sort.String()
+		// Enter on the field already sorted its default way flips it, so the
+		// reverse is reachable without Shift.
+		field := sortFields[m.overlayCursor]
+		if m.sort == field.forward {
+			return m.applySort(field.reverse)
+		}
+		return m.applySort(field.forward)
 	case "esc", "s":
 		m.mode = modeNavigate
+		return m
 	}
+	if letter, shifted, ok := letterKeyPress(key); ok {
+		for _, field := range sortFields {
+			if field.key != letter {
+				continue
+			}
+			if shifted {
+				return m.applySort(field.reverse)
+			}
+			return m.applySort(field.forward)
+		}
+	}
+	return m
+}
+
+func (m Model) applySort(sort library.Sort) Model {
+	m.sort = sort
+	m.refreshResults()
+	m.cursor = 0
+	m.mode = modeNavigate
+	m.status = "Sorted by " + m.sort.String()
 	return m
 }
 
@@ -247,11 +318,16 @@ func (m Model) categoriesOverlay(width int, height int) (string, []string) {
 // categoriesFooter picks the longest hint that fits whole, because a truncated
 // hint would cut off the Shift-solo part that the rows themselves do not show.
 func categoriesFooter(contentWidth int) string {
-	footers := []string{
+	return fittedFooter(contentWidth,
 		"j/k move  •  space/letter toggle  •  Shift+letter solo  •  c/esc close",
 		"letter toggle • Shift+letter solo • c/esc close",
 		"key toggle  Shift solo",
-	}
+	)
+}
+
+// fittedFooter returns the first footer, longest first, that fits contentWidth
+// whole, falling back to the last.
+func fittedFooter(contentWidth int, footers ...string) string {
 	for _, footer := range footers[:len(footers)-1] {
 		if utf8.RuneCountInString(footer) <= contentWidth {
 			return footer
@@ -260,23 +336,35 @@ func categoriesFooter(contentWidth int) string {
 	return footers[len(footers)-1]
 }
 
-func (m Model) sortOverlay(height int) (string, []string) {
+func (m Model) sortOverlay(width int, height int) (string, []string) {
 	var lines []string
 	title := "Sort tracks"
-	items := make([]string, 0, len(library.Sorts))
-	for index, option := range library.Sorts {
+	items := make([]string, 0, len(sortFields))
+	for index, field := range sortFields {
 		prefix := "  "
 		if index == m.overlayCursor {
 			prefix = "› "
 		}
-		selected := " "
-		if option == m.sort {
-			selected = "●"
+		// The active field shows the direction in use; the others show what
+		// their letter would apply.
+		selected, shown := " ", field.forward
+		if field.holds(m.sort) {
+			selected, shown = "●", m.sort
 		}
-		items = append(items, fmt.Sprintf("%s%s  %s", prefix, selected, option))
+		items = append(items, fmt.Sprintf("%s%s %c  %s", prefix, selected, field.key, shown))
 	}
-	lines = append(overlayWindow(items, m.overlayCursor, height), "", "j/k move  •  enter/space apply  •  s/esc close")
+	lines = append(overlayWindow(items, m.overlayCursor, height), "", sortFooter(overlayContentWidth(width)))
 	return title, lines
+}
+
+// sortFooter fits whole for the same reason as categoriesFooter: the rows do
+// not show that Shift reverses.
+func sortFooter(contentWidth int) string {
+	return fittedFooter(contentWidth,
+		"j/k move  •  letter sort  •  Shift+letter reverse  •  s/esc close",
+		"letter sort • Shift reverse • s/esc close",
+		"key sort  Shift flips",
+	)
 }
 
 func (m Model) filtersOverlay() (string, []string) {

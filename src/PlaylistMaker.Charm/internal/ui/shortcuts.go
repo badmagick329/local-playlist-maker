@@ -11,6 +11,7 @@ var shortcuts = []shortcut{
 	{"Views", "R", "refresh history"},
 	{"Views", "L", "Last.fm sync and matching"},
 	{"Categories", "letter shown on the row", "toggle that category"}, {"Categories", "Shift+letter", "show only that category; again to restore the previous set"},
+	{"Sort", "letter shown on the row", "sort by that field"}, {"Sort", "Shift+letter", "sort by that field in reverse"}, {"Sort", "Enter / Space", "sort by the highlighted field; on the active field, reverse it"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a", "all videos from current track"}, {"Queue", "A", "one video per filtered track"}, {"Queue", "Ctrl+A", "all videos from all filtered tracks"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
 	{"Options", "o / a", "play / add generated mix to queue"}, {"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or track count"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / p, Esc", "reset / activate / close, keeping changes"},
 	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / f / Esc", "apply / cancel"},
@@ -55,7 +56,11 @@ func footerHint(current mode, width int) string {
 			hint = "j/k move  •  space/enter or letter toggle  •  Shift+letter solo  •  c/esc close"
 		}
 	case modeSort:
-		hint = "j/k move  •  enter/space apply  •  s/esc close"
+		if width < 80 {
+			hint = "letter sort  •  Shift+letter reverse  •  s/esc close"
+		} else {
+			hint = "j/k move  •  enter/space or letter sort  •  Shift+letter reverse  •  s/esc close"
+		}
 	case modeQueue:
 		hint = "j/k move  •  shift+j/k reorder  •  delete/backspace/space remove  •  C clear  •  q/esc close"
 	case modePlaybackOptions:

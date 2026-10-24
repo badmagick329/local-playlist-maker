@@ -63,7 +63,7 @@ func (m *Model) clampOverlayState() {
 	case modeCategories:
 		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Categories)-1)
 	case modeSort:
-		m.overlayCursor = min(max(m.overlayCursor, 0), len(library.Sorts)-1)
+		m.overlayCursor = min(max(m.overlayCursor, 0), len(sortFields)-1)
 	case modeQueue:
 		m.overlayCursor = min(max(m.overlayCursor, 0), max(len(m.queueOrder)-1, 0))
 	case modePlaybackOptions:
@@ -105,7 +105,7 @@ func (m Model) overlayContent(width, height int) (string, []string) {
 	case modeCategories:
 		return m.categoriesOverlay(width, height)
 	case modeSort:
-		return m.sortOverlay(height)
+		return m.sortOverlay(width, height)
 	case modeQueue:
 		return m.queueOverlay(height)
 	case modePlaybackOptions:
