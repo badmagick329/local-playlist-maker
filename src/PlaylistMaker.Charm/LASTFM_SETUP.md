@@ -55,7 +55,7 @@ Date ranges include both endpoints and apply to scrobble timestamps. The builder
 
 ## Playback presets and controls
 
-The `p` panel contains manual queue playback, Familiar songs/unseen performances, Balanced rotation, Forgotten favourites, Current obsessions, and listening-period mixes. Move with `j/k`, change choices with `h/l`, and use digits or Backspace for numbers. Period dates accept typed dates and ranges; `Ctrl+U` clears a date field. Press `o` or select Play to replace the queue with a generated mix and launch it, or press `a` or select Add to queue to append without repeating tracks already queued. Changes are kept for this application session as they are made; `p` or Escape closes the panel without building a queue.
+The `p` panel contains manual queue playback, Familiar songs/unseen performances, Balanced rotation, Forgotten favourites, Current obsessions, and listening-period mixes. Move with `j/k`, change choices with `h/l`, and use digits or Backspace for numbers. Each row also shows a letter that jumps to it: a choice steps forward as you arrive (`Shift` steps back), a switch toggles, and a number or date field takes focus. Period dates accept typed dates and ranges; `Ctrl+U` clears a date field. Press `o` or select Play to replace the queue with a generated mix and launch it, or press `a` or select Add to queue to append without repeating tracks already queued. Changes are kept for this application session as they are made; `p` or Escape closes the panel without building a queue.
 
 Familiar songs/unseen performances requires at least three cached Last.fm plays and an eligible video with no counted local play. It never falls back to a watched video. Song selection is weighted by Last.fm play count.
 

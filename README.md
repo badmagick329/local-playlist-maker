@@ -28,6 +28,7 @@ The main controls are:
 - `/` searches; `c`, `s`, and `f` open categories, sorting, and filters; `p` opens playback and mixes. Search results rank in tiers: artist or title words first, then video filename words, then partial-word and fuzzy matches. The chosen sort orders tracks within each tier; the Relevance sort orders them by search score.
 - In the Categories view, press the letter shown on a row to turn that category on or off. `Shift` with the letter shows only that category; press it again to bring back the categories you had before.
 - In the Sort view, each row is a field such as Artist or Track release. Press the letter shown on a row to sort by that field, or `Shift` with the letter to sort the other way. `Enter` on the field already in use reverses it.
+- In the playback panel, each row shows a letter. Pressing it moves to that row and acts on it: `m` steps to the next mix, `s` toggles Shuffle, and a number or period row such as Repeat each (`x`) takes the cursor so you can type digits. `Shift` with the Mix, Performances or Selection letter steps back instead. A setting the chosen mix fixes keeps its value.
 - `q` opens the queue; `Shift+J`/`Shift+K` reorder; `Delete` removes; `C` clears.
 - `m` on a video row opens the catalogue picker to change its track link; Enter saves and Esc cancels.
 - `u` updates video mappings; `U` updates Spotify links; `R` refreshes local history; uppercase `L` opens Last.fm sync and matching; `?` opens help; `Ctrl+Q` quits.

@@ -109,7 +109,7 @@ func (m Model) overlayContent(width, height int) (string, []string) {
 	case modeQueue:
 		return m.queueOverlay(height)
 	case modePlaybackOptions:
-		return m.playbackOptionsOverlay(height)
+		return m.playbackOptionsOverlay(width, height)
 	case modeFilters:
 		return m.filtersOverlay()
 	case modeHelp:
@@ -135,7 +135,7 @@ func (m Model) renderOverlay(base string, width, height int) string {
 
 	overlayWidth := overlayBoxWidth(width)
 	if m.mode == modePlaybackOptions {
-		overlayWidth = min(88, width)
+		overlayWidth = playbackPanelBoxWidth(width)
 	}
 	contentWidth := max(overlayWidth-6, 1)
 	title = truncate(title, contentWidth)
@@ -160,6 +160,12 @@ func overlayBoxWidth(width int) int {
 // overlays can choose copy that fits rather than be truncated.
 func overlayContentWidth(width int) int {
 	return max(overlayBoxWidth(width)-6, 1)
+}
+
+// playbackPanelBoxWidth is wider than the standard box because the Playback
+// panel's rows and mix explanations are long.
+func playbackPanelBoxWidth(width int) int {
+	return min(88, width)
 }
 
 func overlayWindow(items []string, cursor, height int) []string {

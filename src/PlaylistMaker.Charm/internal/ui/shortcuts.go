@@ -13,7 +13,7 @@ var shortcuts = []shortcut{
 	{"Categories", "letter shown on the row", "toggle that category"}, {"Categories", "Shift+letter", "show only that category; again to restore the previous set"},
 	{"Sort", "letter shown on the row", "sort by that field"}, {"Sort", "Shift+letter", "sort by that field in reverse"}, {"Sort", "Enter / Space", "sort by the highlighted field; on the active field, reverse it"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a", "all videos from current track"}, {"Queue", "A", "one video per filtered track"}, {"Queue", "Ctrl+A", "all videos from all filtered tracks"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
-	{"Options", "o / a", "play / add generated mix to queue"}, {"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or track count"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / p, Esc", "reset / activate / close, keeping changes"},
+	{"Options", "o / a", "play / add generated mix to queue"}, {"Options", "letter shown on the row", "go to that row: cycle a choice, toggle a switch, or focus a number or period"}, {"Options", "Shift+letter", "cycle Mix, Performances or Selection backwards"}, {"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or track count"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / p, Esc", "reset / activate / close, keeping changes"},
 	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / f / Esc", "apply / cancel"},
 	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
 	{"Playback", "o", "play queue or highlighted media"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
@@ -64,7 +64,14 @@ func footerHint(current mode, width int) string {
 	case modeQueue:
 		hint = "j/k move  •  shift+j/k reorder  •  delete/backspace/space remove  •  C clear  •  q/esc close"
 	case modePlaybackOptions:
-		hint = "o play  •  a add mix  •  j/k move  •  h/l change  •  enter activate  •  p/esc close"
+		switch {
+		case width >= 105:
+			hint = "o play  •  a add mix  •  j/k move  •  letter row  •  Shift+letter reverse  •  h/l change  •  p/esc close"
+		case width >= 80:
+			hint = "o play  •  a add mix  •  letter row  •  Shift+letter reverse  •  p/esc close"
+		default:
+			hint = "letter row  •  Shift+letter reverse  •  p/esc close"
+		}
 	case modeFilters:
 		hint = "j/k move  •  type date/range  •  ctrl+u clear  •  r reset  •  enter apply  •  f/esc cancel"
 	case modeHelp:

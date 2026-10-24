@@ -113,10 +113,10 @@ func (m *Model) commitOptionEdit() bool {
 	return true
 }
 
-func (m Model) playbackOptionsOverlay(height int) (string, []string) {
+func (m Model) playbackOptionsOverlay(width, height int) (string, []string) {
 	var lines []string
 	title := "Playback"
-	lines = m.playbackPanelLines(height)
+	lines = m.playbackPanelLines(width, height)
 	return title, lines
 }
 
