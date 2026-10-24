@@ -5,7 +5,7 @@ PlaylistMaker uses Spotify Connect as its preferred tracking player. mpv remains
 ## What you need
 
 - A Spotify Premium account. Spotify requires Premium for Web API playback control.
-- A Spotify Connect device to track on: librespot (recommended), the Spotify desktop app, or another device.
+- A Spotify Connect device to track on: the Spotify desktop app (recommended), librespot, or another device.
 - Your own app in the [Spotify Developer Dashboard](https://developer.spotify.com/dashboard).
 
 ## 1. Create the Spotify app
@@ -26,9 +26,13 @@ PlaylistMaker uses Spotify's PKCE login flow, so it does not need the Client Sec
 
 ## 2. Set up the tracking device
 
-PlaylistMaker plays each song on one Spotify Connect device, the one `spotifyDeviceName` names. The recommended device is [librespot](https://github.com/librespot-org/librespot), an open-source Spotify Connect receiver written in Rust. The Spotify desktop app also works, but during tracking it has gone blank and stopped playing.
+PlaylistMaker plays each song on one Spotify Connect device, the one `spotifyDeviceName` names. The recommended device is the Spotify desktop app. [librespot](https://github.com/librespot-org/librespot), an open-source Spotify Connect receiver written in Rust, is the alternative, but librespot 0.8.0 currently plays nothing: Spotify refuses its audio keys and it logs `error audio key 0 1` for every track ([librespot#1649](https://github.com/librespot-org/librespot/issues/1649)).
 
-### librespot (recommended)
+### Spotify desktop app (recommended)
+
+Open the Spotify desktop app on this computer and set `spotifyDeviceName` to the name shown for it in Spotify's device picker. Mute it if you want silent tracking, and leave it running while using PlaylistMaker.
+
+### librespot (alternative)
 
 1. Install Rust with [rustup](https://rustup.rs/).
 2. Install librespot:
@@ -52,10 +56,6 @@ PlaylistMaker plays each song on one Spotify Connect device, the one `spotifyDev
    ```
 
 Set `spotifyDeviceName` to the `--name` value, here `PlaylistMaker`. Spotify's Web API lists the device as `PlaylistMaker (Speaker)`. Keep the librespot terminal open while tracking; closing it removes the device. `--initial-volume 0` keeps librespot silent, so there is nothing to mute. A freshly started librespot needs no priming: PlaylistMaker can start the first play on it directly. Plays on librespot scrobble through Spotify's Last.fm integration like plays on any other Spotify device.
-
-### Spotify desktop app (alternative)
-
-Open the Spotify desktop app on this computer and set `spotifyDeviceName` to the name shown for it in Spotify's device picker. Mute it if you want silent tracking, and leave it running while using PlaylistMaker.
 
 ## 3. Configure PlaylistMaker
 
@@ -138,7 +138,7 @@ A confirmed deliberate pause releases the shared tracking lock after one minute.
 ## Quick fixes
 
 - **Spotify login rejects the callback:** confirm the dashboard and `config.yaml` both use `http://127.0.0.1:43827/callback` exactly.
-- **No device found:** check that librespot is still running in its terminal, or, for the desktop app, open Spotify on that device, play and pause something, then try again.
+- **No device found:** for the desktop app, open Spotify on that device, play and pause something, then try again; for librespot, check that it is still running in its terminal.
 - **More than one device found:** give the target device a unique name and update `spotifyDeviceName`.
 - **403 errors:** confirm the app owner has Premium. If signing in with another Spotify account, add that account under the app's **Users Management** settings. Spotify explains this in its [development-mode guide](https://developer.spotify.com/documentation/web-api/concepts/quota-modes).
 - **You need to sign in again:** close PlaylistMaker, remove `spotify-auth.json` from the configured data directory, restart, and press `U`.
