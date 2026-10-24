@@ -159,11 +159,7 @@ func (m *Model) editLastFMExportRange(k, text string) {
 		}
 		return
 	}
-	for _, r := range text {
-		if r >= '0' && r <= '9' || r == '-' || r == '.' {
-			m.lastfmExportRange += string(r)
-		}
-	}
+	m.lastfmExportRange += dateRangeText(text)
 }
 
 func (m Model) lastfmExportPeriod() (*library.DateRange, error) {

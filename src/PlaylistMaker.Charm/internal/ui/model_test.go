@@ -933,6 +933,114 @@ func TestCategoriesOverlayShowsLettersAndFittingFooter(t *testing.T) {
 	}
 }
 
+func TestFiltersFieldLettersFocusWithoutTyping(t *testing.T) {
+	m := New(library.Generate(20, 80))
+	m = updateKey(t, m, "f")
+	m = typeKeys(t, m, "2024")
+	m = updateKey(t, m, "v")
+	if m.overlayCursor != 1 || m.filterDraft != [2]string{"2024", ""} {
+		t.Fatalf("v: cursor %d, drafts %q", m.overlayCursor, m.filterDraft)
+	}
+	m = typeKeys(t, m, "2025")
+	m = updateKey(t, m, "t")
+	if m.overlayCursor != 0 || m.filterDraft != [2]string{"2024", "2025"} || m.mode != modeFilters {
+		t.Fatalf("t: cursor %d, drafts %q, mode %s", m.overlayCursor, m.filterDraft, m.mode)
+	}
+	m = shiftLetter(t, m, 'v')
+	if m.overlayCursor != 1 || m.filterDraft != [2]string{"2024", "2025"} {
+		t.Fatalf("Shift+v: cursor %d, drafts %q", m.overlayCursor, m.filterDraft)
+	}
+}
+
+func TestFiltersALetterAppliesAndReportsParseErrorsLikeEnter(t *testing.T) {
+	m := New(library.Generate(20, 80))
+	m = updateKey(t, m, "f")
+	m = typeKeys(t, m, "2024")
+	m = updateKey(t, m, "v")
+	m = typeKeys(t, m, "2020..2021")
+	m = updateKey(t, m, "a")
+	if m.mode != modeNavigate || m.trackDate == nil || m.trackDate.Label != "2024" || m.videoDate == nil || m.videoDate.Label != "2020..2021" {
+		t.Fatalf("a did not apply both drafts: mode %s, track %v, video %v", m.mode, m.trackDate, m.videoDate)
+	}
+	for _, test := range []struct {
+		row    string
+		status string
+	}{{"t", "Track release"}, {"v", "Video date"}} {
+		m = updateKey(t, m, "f")
+		m = updateKey(t, m, test.row)
+		m = updateKey(t, m, "ctrl+u")
+		m = typeKeys(t, m, "2026..2025")
+		m = updateKey(t, m, "a")
+		if m.mode != modeFilters || !strings.HasPrefix(m.status, test.status+": ") {
+			t.Fatalf("%s: mode %s, status %q", test.row, m.mode, m.status)
+		}
+		if m.trackDate.Label != "2024" || m.videoDate.Label != "2020..2021" {
+			t.Fatalf("%s: a failed parse changed the active filters", test.row)
+		}
+		m = updateKey(t, m, "esc")
+	}
+}
+
+func TestFiltersDateFieldsKeepOnlyDateCharacters(t *testing.T) {
+	m := New(library.Generate(20, 80))
+	m = updateKey(t, m, "f")
+	// b, q, x and z name no row; uppercase and space are what dictation and
+	// stray keys would otherwise leave in the date.
+	for _, key := range []string{"2", "b", "0", "space", "2", "q", "4", "-", "X", "0", "1", "z", ".", ".", "2", "0", "2", "5"} {
+		m = updateKey(t, m, key)
+	}
+	if m.filterDraft[0] != "2024-01..2025" || m.overlayCursor != 0 || m.mode != modeFilters {
+		t.Fatalf("draft %q, cursor %d, mode %s", m.filterDraft[0], m.overlayCursor, m.mode)
+	}
+	for _, mod := range []tea.KeyMod{tea.ModCtrl, tea.ModAlt} {
+		for _, letter := range filterRowKeys {
+			next, _ := m.Update(tea.KeyPressMsg{Code: letter, Mod: mod, Text: string(letter)})
+			if got := next.(Model); got.mode != modeFilters || got.overlayCursor != 0 || got.filterDraft[0] != "2024-01..2025" {
+				t.Fatalf("mod %v letter %c: mode %s, cursor %d, draft %q", mod, letter, got.mode, got.overlayCursor, got.filterDraft[0])
+			}
+		}
+	}
+}
+
+func TestFilterRowKeysAvoidViewKeysAndDoNotRepeat(t *testing.T) {
+	seen := map[rune]int{}
+	for row, letter := range filterRowKeys {
+		if letter < 'a' || letter > 'z' || strings.ContainsRune("jkf", letter) {
+			t.Fatalf("row %d letter %q is not a free lowercase letter", row, letter)
+		}
+		if other, dup := seen[letter]; dup {
+			t.Fatalf("rows %d and %d share %q", row, other, letter)
+		}
+		seen[letter] = row
+	}
+}
+
+func TestFiltersOverlayShowsLettersAndFittingFooter(t *testing.T) {
+	for _, size := range []struct {
+		width int
+		want  string
+	}{{40, "a apply • f/esc cancel"}, {80, "t/v field • a apply • r reset • f/esc cancel"}, {120, "t/v field • type date or range • a/enter apply • r reset • f/esc cancel"}} {
+		m := New(library.Generate(20, 80))
+		m.mode = modeFilters
+		m.filterDraft[0] = "2024"
+		content := stripStyles(m.renderOverlay("", size.width, 24))
+		// At width 40 the draft value is truncated, as it was before letters.
+		for _, row := range []string{"› t Track release: 20", "  v Video date: Any", "  a Apply", "  r Reset all", size.want} {
+			if !strings.Contains(content, row) {
+				t.Fatalf("width %d overlay missing %q: %q", size.width, row, content)
+			}
+		}
+		for _, line := range strings.Split(content, "\n") {
+			if ansi.StringWidth(line) > size.width {
+				t.Fatalf("overlay line exceeds width %d: %q", size.width, line)
+			}
+		}
+		if hint := footerHint(modeFilters, size.width); ansi.StringWidth(hint) > size.width || size.width >= 80 && !strings.Contains(hint, "a/enter apply") {
+			t.Fatalf("width %d footer hint = %q", size.width, hint)
+		}
+	}
+}
+
 func TestVimListJumps(t *testing.T) {
 	m := New(library.Generate(100, 400))
 	m.height = 30

@@ -14,7 +14,7 @@ var shortcuts = []shortcut{
 	{"Sort", "letter shown on the row", "sort by that field"}, {"Sort", "Shift+letter", "sort by that field in reverse"}, {"Sort", "Enter / Space", "sort by the highlighted field; on the active field, reverse it"},
 	{"Queue", "Space", "toggle current and move down"}, {"Queue", "a", "all videos from current track"}, {"Queue", "A", "one video per filtered track"}, {"Queue", "Ctrl+A", "all videos from all filtered tracks"}, {"Queue", "q", "queue overlay"}, {"Queue overlay", "Shift+J/K", "reorder"}, {"Queue overlay", "Delete / Backspace / C", "remove / clear"},
 	{"Options", "o / a", "play / add generated mix to queue"}, {"Options", "letter shown on the row", "go to that row: cycle a choice, toggle a switch, or focus a number or period"}, {"Options", "Shift+letter", "cycle Mix, Performances or Selection backwards"}, {"Options", "Space", "toggle boolean or cycle version choice"}, {"Options", "Version choice", "Default, Favourite, Fresh, Unseen, or Latest"}, {"Options", "digits / Backspace", "edit repeat or track count"}, {"Options", "h/l, left/right", "adjust numeric value or choice"}, {"Options", "r / Enter / p, Esc", "reset / activate / close, keeping changes"},
-	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "Enter / f / Esc", "apply / cancel"},
+	{"Filters", "Track release / Video date", "independent FLAC release and video-date filters"}, {"Filters", "t / v", "focus Track release / Video date"}, {"Filters", "type date or range", "YYYY, YYYY-MM, YYYY-MM-DD, or START..END; letters never enter a date"}, {"Filters", "Ctrl+U / r", "clear field / reset all"}, {"Filters", "a or Enter / f / Esc", "apply / cancel"},
 	{"Help", "j/k, Ctrl+U/D, PgUp/Dn", "scroll or page"}, {"Help", "gg/G", "first/last"}, {"Help", "? / Esc", "close"},
 	{"Playback", "o", "play queue or highlighted media"}, {"Modes", "Esc", "cancel/close"}, {"Modes", "Ctrl+Q", "quit"},
 }
@@ -73,7 +73,14 @@ func footerHint(current mode, width int) string {
 			hint = "letter row  •  Shift+letter reverse  •  p/esc close"
 		}
 	case modeFilters:
-		hint = "j/k move  •  type date/range  •  ctrl+u clear  •  r reset  •  enter apply  •  f/esc cancel"
+		switch {
+		case width >= 110:
+			hint = "j/k move  •  t/v field  •  type date or range  •  ctrl+u clear  •  a/enter apply  •  r reset  •  f/esc cancel"
+		case width >= 80:
+			hint = "t/v field  •  type date or range  •  a/enter apply  •  r reset  •  f/esc cancel"
+		default:
+			hint = "t/v field  •  a apply  •  r reset  •  f/esc cancel"
+		}
 	case modeHelp:
 		hint = "j/k scroll  •  ctrl+u/d or pgup/dn page  •  gg/G first/last  •  ?/esc close"
 	case modeDetails:

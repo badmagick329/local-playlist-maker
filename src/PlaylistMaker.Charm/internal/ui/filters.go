@@ -33,31 +33,65 @@ func (m Model) handleFiltersKey(key tea.KeyPressMsg) Model {
 			m.filterDraft[m.overlayCursor] = m.filterDraft[m.overlayCursor][:len(m.filterDraft[m.overlayCursor])-s]
 		}
 		return m
-	case "r":
-		m.resetFilters()
-		return m
 	case "enter":
 		if m.overlayCursor == 3 {
 			m.resetFilters()
 			return m
 		}
-		track, err := library.ParseDateRange(m.filterDraft[0])
-		if err != nil {
-			m.status = "Track release: " + err.Error()
-			return m
+		return m.applyFilters()
+	}
+	if letter, _, ok := letterKeyPress(key); ok {
+		// No row has a reverse, so Shift+letter (and Caps Lock) acts as the
+		// plain letter, as rows without one do in the Playback panel.
+		switch row := slices.Index(filterRowKeys[:], letter); row {
+		case 0, 1:
+			m.overlayCursor = row
+		case 2:
+			return m.applyFilters()
+		case 3:
+			m.resetFilters()
 		}
-		video, err := library.ParseDateRange(m.filterDraft[1])
-		if err != nil {
-			m.status = "Video date: " + err.Error()
-			return m
-		}
-		m.trackDate, m.videoDate, m.mode = track, video, modeNavigate
-		m.refreshResults()
 		return m
 	}
-	if m.overlayCursor < 2 && key.Text != "" {
-		m.filterDraft[m.overlayCursor] += key.Text
+	if m.overlayCursor < 2 {
+		m.filterDraft[m.overlayCursor] += dateRangeText(key.Text)
 	}
+	return m
+}
+
+// filterRowKeys is the Filters view's letter for each row, by index: the date
+// fields take focus, Apply applies and Reset all resets. Date drafts accept no
+// letters, so typing never competes with them; they also avoid the view's
+// other keys (j/k move, f closes).
+var filterRowKeys = [...]rune{'t', 'v', 'a', 'r'}
+
+// dateRangeText keeps only the characters library.ParseDateRange formats use,
+// so row letters, spaces and dictated words cannot land in a date draft.
+func dateRangeText(text string) string {
+	kept := []rune{}
+	for _, r := range text {
+		if r >= '0' && r <= '9' || r == '-' || r == '.' {
+			kept = append(kept, r)
+		}
+	}
+	return string(kept)
+}
+
+// applyFilters applies both drafts, or keeps the view open on the first that
+// does not parse so it can be corrected.
+func (m Model) applyFilters() Model {
+	track, err := library.ParseDateRange(m.filterDraft[0])
+	if err != nil {
+		m.status = "Track release: " + err.Error()
+		return m
+	}
+	video, err := library.ParseDateRange(m.filterDraft[1])
+	if err != nil {
+		m.status = "Video date: " + err.Error()
+		return m
+	}
+	m.trackDate, m.videoDate, m.mode = track, video, modeNavigate
+	m.refreshResults()
 	return m
 }
 
@@ -367,9 +401,22 @@ func sortFooter(contentWidth int) string {
 	)
 }
 
-func (m Model) filtersOverlay() (string, []string) {
-	var lines []string
+func (m Model) filtersOverlay(width int) (string, []string) {
 	title := "Filters"
-	lines = []string{fmt.Sprintf("%s Track release: %s", cursorMark(m.overlayCursor, 0), emptyAny(m.filterDraft[0])), fmt.Sprintf("%s Video date: %s", cursorMark(m.overlayCursor, 1), emptyAny(m.filterDraft[1])), fmt.Sprintf("%s Apply", cursorMark(m.overlayCursor, 2)), fmt.Sprintf("%s Reset all", cursorMark(m.overlayCursor, 3)), "", "YYYY or START..END • enter apply • f/esc cancel"}
-	return title, lines
+	labels := [...]string{"Track release: " + emptyAny(m.filterDraft[0]), "Video date: " + emptyAny(m.filterDraft[1]), "Apply", "Reset all"}
+	lines := make([]string, 0, len(labels)+2)
+	for row, label := range labels {
+		lines = append(lines, fmt.Sprintf("%s %c %s", cursorMark(m.overlayCursor, row), filterRowKeys[row], label))
+	}
+	return title, append(lines, "", filtersFooter(overlayContentWidth(width)))
+}
+
+// filtersFooter fits whole so the closing key, which no row shows, is never
+// cut off.
+func filtersFooter(contentWidth int) string {
+	return fittedFooter(contentWidth,
+		"t/v field • type date or range • a/enter apply • r reset • f/esc cancel",
+		"t/v field • a apply • r reset • f/esc cancel",
+		"a apply • f/esc cancel",
+	)
 }

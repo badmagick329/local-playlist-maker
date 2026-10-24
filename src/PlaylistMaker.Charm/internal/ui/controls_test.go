@@ -219,9 +219,7 @@ func TestFiltersResetAndBulkQueueRespectCurrentResults(t *testing.T) {
 	}
 	m = updateKey(t, m, "f")
 	m = updateKey(t, m, "ctrl+u")
-	for _, key := range []string{"x"} {
-		m = updateKey(t, m, key)
-	}
+	m = typeKeys(t, m, "2026..2025")
 	m = updateKey(t, m, "enter")
 	if m.mode != modeFilters || !strings.Contains(m.status, "Track release") {
 		t.Fatal("invalid filter did not remain open with an error")

@@ -111,7 +111,7 @@ func (m Model) overlayContent(width, height int) (string, []string) {
 	case modePlaybackOptions:
 		return m.playbackOptionsOverlay(width, height)
 	case modeFilters:
-		return m.filtersOverlay()
+		return m.filtersOverlay(width)
 	case modeHelp:
 		return m.helpOverlay(height)
 	case modeDetails:
