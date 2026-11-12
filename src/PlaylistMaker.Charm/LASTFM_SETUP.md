@@ -17,7 +17,7 @@ Press uppercase `L` to open the Last.fm screen; `L` or `Esc` closes it. Move wit
 
 `Sync new plays` downloads the full history when no cache exists. Later runs request only scrobbles at or after the latest cached timestamp. `Rebuild full history` downloads every page again.
 
-PlaylistMaker stores completed scrobbles in `lastfm-scrobbles.jsonl` under the configured data directory. It skips Last.fm's currently playing entry. Each downloaded page is checkpointed. A failed or cancelled download leaves the existing cache untouched, and `Sync new plays` or `Rebuild full history` resumes the compatible checkpoint instead of starting again.
+PlaylistMaker stores completed scrobbles in `lastfm-scrobbles.jsonl` under the configured data directory. It skips Last.fm's currently playing entry. Each downloaded page is checkpointed. A page request that takes over 30 seconds, or a response over 8 MB, fails the sync. A failed or cancelled download leaves the existing cache untouched, and `Sync new plays` or `Rebuild full history` resumes the compatible checkpoint instead of starting again.
 
 After the download, the step `Caching Spotify metadata for linked catalogue tracks` fetches Spotify artist, title and ISRC for catalogue tracks that already have a Spotify link, so matching can use them as aliases. It never links a scrobble or a track to Spotify; `U` does that.
 

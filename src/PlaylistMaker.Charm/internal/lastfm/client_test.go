@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -102,6 +103,18 @@ func TestClientReportsAPIErrorAndHonoursCancellation(t *testing.T) {
 	cancel()
 	if _, err := c.RecentTracks(ctx, "u", "k", 1, nil, 1); err == nil {
 		t.Fatal("expected cancellation")
+	}
+}
+
+func TestClientRejectsOversizedResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write(make([]byte, maxResponseBytes+1))
+	}))
+	defer server.Close()
+	c := Client{HTTP: server.Client(), APIBase: server.URL}
+	_, err := c.RecentTracks(context.Background(), "u", "k", 1, nil, 1)
+	if err == nil || !strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("expected size-limit error, got %v", err)
 	}
 }
 

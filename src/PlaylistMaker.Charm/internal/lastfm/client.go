@@ -12,6 +12,12 @@ import (
 	"time"
 )
 
+const (
+	requestTimeout = 30 * time.Second
+	// A 200-scrobble page is a few hundred KB; anything near this cap is not a real page.
+	maxResponseBytes = 8 << 20
+)
+
 type Client struct {
 	HTTP    *http.Client
 	APIBase string
@@ -27,6 +33,10 @@ func (c *Client) RecentTracks(ctx context.Context, username, apiKey string, page
 	if from != nil {
 		q.Set("from", strconv.FormatInt(*from, 10))
 	}
+	// Bound each page on the request context rather than on the http.Client, so
+	// injected clients get the same budget and a stalled upstream cannot hang a sync.
+	ctx, cancel := context.WithTimeout(ctx, requestTimeout)
+	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base()+"?"+q.Encode(), nil)
 	if err != nil {
 		return Page{}, err
@@ -36,9 +46,12 @@ func (c *Client) RecentTracks(ctx context.Context, username, apiKey string, page
 		return Page{}, fmt.Errorf("Last.fm request failed: %w", err)
 	}
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return Page{}, err
+		return Page{}, fmt.Errorf("Last.fm response read failed: %w", err)
+	}
+	if len(body) > maxResponseBytes {
+		return Page{}, fmt.Errorf("Last.fm response exceeded %d bytes", maxResponseBytes)
 	}
 	var apiErr struct {
 		Error   int    `json:"error"`
