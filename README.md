@@ -4,7 +4,7 @@ PlaylistMaker is a self-contained Go application with a Bubble Tea/Charm termina
 
 ## Setup
 
-Install Go 1.25.0 or newer. Copy `sample_config.yaml` to the ignored local file `config.yaml`, then set the video, audio, data, player, and optional Spotify paths and commands for the machine.
+Install Go 1.27.4 or newer; an older Go 1.21+ install downloads that toolchain automatically. Copy `sample_config.yaml` to the ignored local file `config.yaml`, then set the video, audio, data, player, and optional Spotify paths and commands for the machine.
 
 The normal launcher builds a cached executable and passes the repository configuration:
 
