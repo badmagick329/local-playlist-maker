@@ -347,6 +347,48 @@ func TestRecoverLeavesActiveStateAndCleansInactiveState(t *testing.T) {
 	}
 }
 
+func TestStartWithIdleSpotifyBlocksOnLiveOwnerAndReplacesDeadOwner(t *testing.T) {
+	plays := 0
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		switch request.URL.Path {
+		case "/me/player/devices":
+			_ = json.NewEncoder(writer).Encode(map[string]any{"devices": []map[string]any{{"id": "device", "name": "Player"}}})
+		case "/tracks/abc":
+			_, _ = writer.Write([]byte(`{"uri":"spotify:track:abc","name":"Song","album":{"uri":"spotify:album:record"},"artists":[{"name":"Artist"}]}`))
+		case "/me/player/play":
+			plays++
+			writer.WriteHeader(http.StatusNoContent)
+		default:
+			writer.WriteHeader(http.StatusNoContent)
+		}
+	}))
+	defer server.Close()
+	statePath := filepath.Join(t.TempDir(), "active.json")
+	stale, _ := json.Marshal(ActiveState{SessionID: "earlier", HelperPID: 42, DeviceID: "device", TrackURI: "spotify:track:old"})
+	if err := os.WriteFile(statePath, stale, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ownerAlive := true
+	client := &Client{Auth: validAuth(t, server), HTTP: server.Client(), APIBase: server.URL}
+	player := &Player{Client: client, StatePath: statePath, SessionID: "session", HelperPID: 123, alive: func(pid int) bool { return pid == 42 && ownerAlive }}
+	if err := player.Preflight(context.Background(), "Player"); err != nil {
+		t.Fatal(err)
+	}
+	var blocked *tracking.StartBlocked
+	if err := player.Start(context.Background(), tracking.Track{SpotifyURI: "spotify:track:abc"}); !errors.As(err, &blocked) || plays != 0 {
+		t.Fatalf("live owner: error = %v, plays = %d", err, plays)
+	}
+	ownerAlive = false
+	if err := player.Start(context.Background(), tracking.Track{SpotifyURI: "spotify:track:abc"}); err != nil {
+		t.Fatal(err)
+	}
+	var owner ActiveState
+	contents, _ := os.ReadFile(statePath)
+	if json.Unmarshal(contents, &owner) != nil || owner.SessionID != "session" || plays != 1 {
+		t.Fatalf("dead owner: state = %s, plays = %d", contents, plays)
+	}
+}
+
 func TestRecoverPausesOnlyMatchingPlayingDevice(t *testing.T) {
 	requests := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {

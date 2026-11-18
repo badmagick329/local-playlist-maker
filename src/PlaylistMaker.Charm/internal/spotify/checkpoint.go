@@ -56,6 +56,17 @@ func (p *Player) checkPreviousOwner(ctx context.Context) error {
 		return &tracking.StartBlocked{Message: "Cannot verify that the previous tracking occurrence stopped: " + err.Error()}
 	}
 	if state.Item == nil || state.Device.ID == "" {
+		// Idle Spotify cannot show whether a live helper's occurrence is merely
+		// between states, but a dead helper can no longer resume it: the record is
+		// stale. Startup recovery clears it only when the app restarts, so without
+		// this every session blocks until then.
+		alive := p.alive
+		if alive == nil {
+			alive = processAlive
+		}
+		if owner.HelperPID <= 0 || !alive(owner.HelperPID) {
+			return nil
+		}
 		return &tracking.StartBlocked{Message: "Previous Spotify ownership is ambiguous; open Spotify before retrying"}
 	}
 	if state.IsPlaying && state.Device.ID == owner.DeviceID && state.Item.URI == owner.TrackURI {

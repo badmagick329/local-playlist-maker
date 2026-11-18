@@ -28,7 +28,8 @@ type Player struct {
 	StatePath          string
 	SessionID          string
 	HelperPID          int
-	deviceID           string
+	alive              func(int) bool
+	deviceID          string
 	prepared           bool
 	attempted          bool
 	startAccepted      bool

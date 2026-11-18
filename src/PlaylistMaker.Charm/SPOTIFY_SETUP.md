@@ -135,6 +135,8 @@ Blocked sessions retain a private checkpoint of active/pending occurrence IDs an
 
 A confirmed deliberate pause releases the shared tracking lock after one minute. The session retains its queue and reacquires ownership on resume or a changed ceiling. If another session has replaced the Spotify song, the old session blocks instead of overwriting it. Automatic recovery is bounded after mpv closes; exhausted detached recovery exits and releases ownership while retaining the checkpoint. Preflight/start failures known to precede a Spotify play can still use local fallback. An uncertain Spotify play request cannot switch providers mid-occurrence.
 
+A session that ends while Spotify is unreachable can leave its ownership record (`spotify-active-session.json`) behind. A later session inspects that record before starting. If the earlier song is still playing on its device, the start blocks until you pause it. If Spotify reports nothing playing, the start blocks with `Previous Spotify ownership is ambiguous` only while the earlier session's helper is still running; once that helper has exited, the record is stale and the new session replaces it. Starting PlaylistMaker also clears a stale record.
+
 ## Quick fixes
 
 - **Spotify login rejects the callback:** confirm the dashboard and `config.yaml` both use `http://127.0.0.1:43827/callback` exactly.
